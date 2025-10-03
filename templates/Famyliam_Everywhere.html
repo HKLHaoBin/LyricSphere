@@ -494,15 +494,17 @@
                 {% endif %}
             </div>
             <div class="style-buttons">
-                <button class="style-button am-style" 
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fsam')">AM歌词样式</button>
-                <button class="style-button fs-style" 
+                <!--<button class="style-button am-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fsam')">AM歌词样式</button>-->
+                <button class="style-button fs-style"
                     onclick="openFamyliamCloud('{{ file.filename|e }}', 'fs')">全屏歌词样式</button>
-                <button class="style-button fslr-style" 
+                <button class="style-button fslr-style"
                     onclick="openFamyliamCloud('{{ file.filename|e }}', 'fslr')">全屏对唱歌词样式</button>
+                <button class="style-button am-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'amll')">AMLL-web</button>
                 <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', '亮起')">亮起</button>
                 <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', 'Kok')">Kok</button>
-                <!-- <button class="style-button am-style" 
+                <!-- <button class="style-button am-style"
                     onclick="openFamyliamCloud('{{ file.filename|e }}', 'am')">visual-lyric歌词样式</button> -->
             </div>
             <div class="file-actions">
@@ -559,6 +561,9 @@
                                 更新路径</button>
                             <button class="lyrics-action-btn path-update-btn" onclick="convertTTML()">
                                 🔄 TTML转LYS/LRC
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="convertToTTML()">
+                                🔄 LYS/LRC转TTML
                             </button>
                             <button class="lyrics-action-btn path-update-btn" id="mergeLQEButton" style="display: none;" onclick="mergeToLQE()">
                                 🔄 合并为LQE
@@ -882,10 +887,140 @@
         }
 
         function openFamyliamCloud(filename, preset) {
-            const baseUrl = preset === 'am' ? 
-                `http://localhost:8081/app/?#http://127.0.0.1:5000/` : 
-                `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#http://127.0.0.1:5000/`;
-            window.open(baseUrl + filename)
+            // 如果是AMLL规则编写网址
+            if (preset === 'amll') {
+                // 获取歌曲信息
+                fetch('/get_json_data?filename=' + encodeURIComponent(filename))
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            const jsonData = data.jsonData;
+
+                            // 获取当前服务器的基础URL（包含端口）
+                            const baseUrl = `http://${location.hostname}:${location.port}/songs/`;
+
+                            // 提取歌曲信息
+                            const title = encodeURIComponent(jsonData.meta.title || '');
+                            const artists = encodeURIComponent((jsonData.meta.artists || []).join(' / '));
+
+                            // 处理音乐路径
+                            let musicPath = '';
+                            if (jsonData.song) {
+                                if (jsonData.song.startsWith('http://127.0.0.1:5000/songs/')) {
+                                    // 如果是旧格式，替换为当前端口
+                                    musicPath = encodeURIComponent(jsonData.song.replace('http://127.0.0.1:5000/songs/', baseUrl));
+                                } else if (jsonData.song.startsWith('/songs/')) {
+                                    // 如果是相对路径，添加完整基础URL
+                                    musicPath = encodeURIComponent(baseUrl + jsonData.song.substring(8));
+                                } else {
+                                    // 其他情况直接使用
+                                    musicPath = encodeURIComponent(jsonData.song);
+                                }
+                            }
+
+                            // 处理歌词路径
+                            let lyricsPath = '';
+                            let originalLyricsPath = '';
+                            if (jsonData.meta.lyrics) {
+                                if (jsonData.meta.lyrics.includes('::')) {
+                                    // 格式为 "::歌词路径::翻译路径::罗马音路径::"
+                                    const parts = jsonData.meta.lyrics.split('::');
+                                    if (parts[1]) {
+                                        originalLyricsPath = parts[1];
+                                        if (parts[1].startsWith('http://127.0.0.1:5000/songs/')) {
+                                            // 如果是旧格式，替换为当前端口
+                                            lyricsPath = encodeURIComponent(parts[1].replace('http://127.0.0.1:5000/songs/', baseUrl));
+                                        } else if (parts[1].startsWith('/songs/')) {
+                                            // 如果是相对路径，添加完整基础URL
+                                            lyricsPath = encodeURIComponent(baseUrl + parts[1].substring(8));
+                                        } else {
+                                            // 其他情况直接使用
+                                            lyricsPath = encodeURIComponent(parts[1]);
+                                        }
+                                    }
+                                } else {
+                                    // 直接是歌词路径
+                                    originalLyricsPath = jsonData.meta.lyrics;
+                                    if (jsonData.meta.lyrics.startsWith('http://127.0.0.1:5000/songs/')) {
+                                        // 如果是旧格式，替换为当前端口
+                                        lyricsPath = encodeURIComponent(jsonData.meta.lyrics.replace('http://127.0.0.1:5000/songs/', baseUrl));
+                                    } else if (jsonData.meta.lyrics.startsWith('/songs/')) {
+                                        // 如果是相对路径，添加完整基础URL
+                                        lyricsPath = encodeURIComponent(baseUrl + jsonData.meta.lyrics.substring(8));
+                                    } else {
+                                        // 其他情况直接使用
+                                        lyricsPath = encodeURIComponent(jsonData.meta.lyrics);
+                                    }
+                                }
+                            }
+
+                            // 处理封面路径
+                            let coverPath = '';
+                            if (jsonData.meta.albumImgSrc) {
+                                if (jsonData.meta.albumImgSrc.startsWith('http://127.0.0.1:5000/songs/')) {
+                                    // 如果是旧格式，替换为当前端口
+                                    coverPath = encodeURIComponent(jsonData.meta.albumImgSrc.replace('http://127.0.0.1:5000/songs/', baseUrl));
+                                } else if (jsonData.meta.albumImgSrc.startsWith('/songs/')) {
+                                    // 如果是相对路径，添加完整基础URL
+                                    coverPath = encodeURIComponent(baseUrl + jsonData.meta.albumImgSrc.substring(8));
+                                } else {
+                                    // 其他情况直接使用
+                                    coverPath = encodeURIComponent(jsonData.meta.albumImgSrc);
+                                }
+                            }
+
+                            // 检查歌词文件格式，如果不是TTML则临时转换
+                            if (originalLyricsPath && !originalLyricsPath.toLowerCase().endsWith('.ttml')) {
+                                // 提取文件名
+                                let fileName = originalLyricsPath.split('/').pop();
+                                if (fileName.startsWith('http://127.0.0.1:5000/songs/')) {
+                                    fileName = fileName.replace('http://127.0.0.1:5000/songs/', '');
+                                }
+
+                                // 请求后端将歌词临时转换为TTML格式
+                                fetch('/convert_to_ttml_temp', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: fileName })
+                                })
+                                .then(response => response.json())
+                                .then(convertData => {
+                                    if (convertData.status === 'success') {
+                                        // 使用转换后的TTML文件路径
+                                        const convertedLyricsPath = encodeURIComponent(convertData.ttmlPath.replace('http://127.0.0.1:5000/songs/', baseUrl));
+                                        // 构建AMLL规则编写网址
+                                        const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${convertedLyricsPath}&cover=${coverPath}&title=${title}&artist=${artists}`;
+                                        // 打开网址
+                                        window.open(amllUrl, '_blank');
+                                    } else {
+                                        alert('歌词转换失败: ' + convertData.message);
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('歌词转换请求失败:', error);
+                                    alert('歌词转换请求失败');
+                                });
+                            } else {
+                                // 构建AMLL规则编写网址
+                                const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${lyricsPath}&cover=${coverPath}&title=${title}&artist=${artists}`;
+                                // 打开网址
+                                window.open(amllUrl, '_blank');
+                            }
+                        } else {
+                            alert('无法获取歌曲信息');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取歌曲信息失败:', error);
+                        alert('获取歌曲信息失败');
+                    });
+            } else {
+                // 原有的处理逻辑
+                const baseUrl = preset === 'am' ?
+                    `http://localhost:8081/app/?#http://127.0.0.1:5000/` :
+                    `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#http://127.0.0.1:5000/`;
+                window.open(baseUrl + filename);
+            }
         }
 
         // 搜索功能
@@ -1391,6 +1526,54 @@
             })
             .catch(error => {
                 alert('自动转换失败：' + error);
+            });
+        }
+
+        function convertToTTML() {
+            const lyricsPath = document.getElementById('lyricsPath').value.trim();
+            if (!lyricsPath) {
+                alert('请先在"歌词文件路径"输入框中填写文件名');
+                return;
+            }
+
+            // 检查文件扩展名
+            const fileExt = lyricsPath.toLowerCase().substring(lyricsPath.lastIndexOf('.'));
+            if (fileExt !== '.lys' && fileExt !== '.lrc') {
+                alert('只支持LYS和LRC格式的歌词文件');
+                return;
+            }
+
+            fetch('/convert_to_ttml', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: lyricsPath })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 更新歌词路径为TTML文件
+                    document.getElementById('lyricsPath').value = data.ttmlPath.replace('http://127.0.0.1:5000/songs/', '');
+
+                    // 自动获取并应用转换后的TTML内容
+                    fetch('/get_lyrics', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: data.ttmlPath })
+                    })
+                    .then(response => response.json())
+                    .then(lyricsData => {
+                        if (lyricsData.status === 'success') {
+                            document.getElementById('lyricsEditor').value = lyricsData.content;
+                        }
+                    });
+
+                    alert('LYS/LRC转TTML转换成功！需要点击"保存全部"应用，若转换出错请直接点击关闭!');
+                } else {
+                    alert('转换失败：' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('转换失败：' + error);
             });
         }
 
@@ -2191,21 +2374,36 @@
                 // 歌词样式按钮
                 document.querySelectorAll('.am-style, .fs-style, .fslr-style').forEach(btn => {
                     console.log('[updatePortUI] 处理按钮', btn, '当前mode:', data.mode, 'classList:', btn.classList.value);
+                    // 检查是否为 AMLL 规则编写按钮（通过 onclick 属性判断）
+                    const isAMLLButton = btn.getAttribute('onclick') && btn.getAttribute('onclick').includes("'amll'");
+
                     if (data.mode === 'random') {
-                        btn.disabled = true;
-                        btn.classList.add('disabled-style');
-                        btn.title = '随机端口下不可用';
-                        btn.addEventListener('mouseenter', function() {
-                            btn.textContent = '不可用';
-                        });
-                        btn.addEventListener('mouseleave', function() {
-                            btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
-                        });
+                        // AMLL 规则编写按钮在随机端口下仍然可用
+                        if (isAMLLButton) {
+                            btn.disabled = false;
+                            btn.classList.remove('disabled-style');
+                            btn.title = '';
+                            //btn.textContent = 'AMLL规则编写';
+                        } else {
+                            btn.disabled = true;
+                            btn.classList.add('disabled-style');
+                            btn.title = '随机端口下不可用';
+                            btn.addEventListener('mouseenter', function() {
+                                btn.textContent = '不可用';
+                            });
+                            btn.addEventListener('mouseleave', function() {
+                                btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
+                            });
+                        }
                     } else {
                         btn.disabled = false;
                         btn.classList.remove('disabled-style');
                         btn.title = '';
-                        btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
+                        if (isAMLLButton) {
+                            //btn.textContent = 'AMLL规则编写';
+                        } else {
+                            btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
+                        }
                     }
                     // 变色后立即打印样式
                     console.log('[updatePortUI] 变色后 style.background:', btn.style.background, 'computed:', getComputedStyle(btn).background);

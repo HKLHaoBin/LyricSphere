@@ -1092,9 +1092,25 @@ class TTMLLine:
         # 返回元组(str, str或None)
         try:
             # 安全地生成字符串，确保__orig_line不为空
-            line_text = ''.join([str(v) for v in self.__orig_line]) if self.__orig_line else ''
-            return (f'[{self.__role()}]{line_text}',
-                    f'[{self.__begin}]{self.__ts_line}' if self.__ts_line else None)
+            # 过滤掉纯空格和换行符的字符串，只保留有意义的内容
+            filtered_line = []
+            for v in self.__orig_line:
+                if isinstance(v, str):
+                    # 如果是字符串，只在非空且不是纯空白字符时添加
+                    if v.strip():
+                        filtered_line.append(v)
+                else:
+                    # 如果是TTMLSyl对象，直接添加
+                    filtered_line.append(v)
+
+            line_text = ''.join([str(v) for v in filtered_line]) if filtered_line else ''
+            # 确保每行都是独立的，严格按照LYS格式要求
+            main_line = f'[{self.__role()}]{line_text}'
+            # 背景行不生成翻译行，因为翻译应该与主歌词关联
+            translation_line = None
+            if not self.__is_bg and self.__ts_line:
+                translation_line = f'[{self.__begin}]{self.__ts_line}'
+            return (main_line, translation_line)
         except Exception as e:
             # 如果生成过程中出现错误，返回一个安全的默认值
             app.logger.error(f"生成歌词行时出错: {str(e)}")
@@ -1194,9 +1210,7 @@ def ttml_to_lys(input_path, songs_dir):
                         if bg_line[0]:
                             lyric_file.write(bg_line[0] + '\n')
                             lyric_file.flush()
-                        if bg_line[1] and trans_file:
-                            trans_file.write(bg_line[1] + '\n')
-                            trans_file.flush()
+                        # 背景歌词不生成独立的翻译行，因为它应该与主歌词共享翻译
                         count += 1
             except Exception as e:
                 app.logger.error(f"写入歌词文件时出错: {str(e)}")
@@ -1213,8 +1227,685 @@ def ttml_to_lys(input_path, songs_dir):
     except Exception as e:
         app.logger.error(f"无法解析TTML文件: {input_path}. 错误: {str(e)}")
         return False, None, None
-            
+
     return True, lyric_path, trans_path
+
+def preprocess_brackets(content):
+    """
+    预处理特殊括号模式，按照用户建议处理：
+    "((" → 删除第一个"("，保留第二个"("，结果为"("
+    ")(" → 删除")"，保留"("，结果为"("
+    同时处理更复杂的嵌套情况
+    """
+    # 处理 "((" 模式
+    content = re.sub(r'\(\(', '(', content)
+    # 处理 ")(" 模式
+    content = re.sub(r'\)\(', '(', content)
+    return content
+
+
+def parse_syllable_info(content, marker='', offset=0):
+    """解析LYS内容中的音节信息，返回音节列表；offset 为毫秒，正负皆可。"""
+    content = preprocess_brackets(content)
+    syllables = []
+
+    if marker in ['6', '7', '8']:
+        pattern = r'\(([^()]+?)\)\((\d+),(\d+)\)'
+        matches = re.finditer(pattern, content)
+        for match in matches:
+            text_part = match.group(1)
+            start_ms = int(match.group(2))
+            duration_ms = int(match.group(3))
+            start_ms += offset  # 应用 offset
+            syllables.append({
+                'text': text_part,
+                'start_ms': start_ms,
+                'duration_ms': duration_ms
+            })
+
+    if not syllables:
+        pattern = r'([^()]*?)\((\d+),(\d+)\)'
+        matches = re.finditer(pattern, content)
+        for match in matches:
+            text_part = match.group(1)
+            start_ms = int(match.group(2))
+            duration_ms = int(match.group(3))
+            start_ms += offset  # 应用 offset
+            syllables.append({
+                'text': text_part,
+                'start_ms': start_ms,
+                'duration_ms': duration_ms
+            })
+
+    if not syllables:
+        line_match = re.search(r'^(.*)\((\d+),(\d+)\)$', content)
+        if line_match:
+            text = line_match.group(1)
+            start_ms = int(line_match.group(2))
+            duration_ms = int(line_match.group(3))
+            start_ms += offset  # 应用 offset
+            if text or start_ms > 0 or duration_ms > 0:
+                syllables.append({
+                    'text': text,
+                    'start_ms': start_ms,
+                    'duration_ms': duration_ms
+                })
+
+    return syllables
+
+
+def ms_to_ttml_time(ms):
+    """将毫秒转换为TTML时间格式（Apple风格）"""
+    total_seconds = ms / 1000.0
+    ms_part = int(round((total_seconds - int(total_seconds)) * 1000))
+    s_part = int(total_seconds) % 60
+    m_part = int(total_seconds) // 60
+
+    # <60s 用 s.mmm；>=60s 用 m:ss.mmm
+    if m_part == 0:
+        if ms_part == 0 and total_seconds == int(total_seconds):
+            return str(int(total_seconds))
+        else:
+            return f"{int(total_seconds)}.{ms_part:03d}"
+    else:
+        return f"{m_part}:{s_part:02d}.{ms_part:03d}"
+
+
+def _nearest_translation(begin_ms, trans_map, tol_ms=300):
+    """
+    在 translation dict 里找与 begin_ms 最接近的键（容差 ±tol_ms）。
+    命中后从字典中移除该键，避免重复匹配。
+    """
+    if not trans_map:
+        return None
+    # 先试精确命中
+    if begin_ms in trans_map:
+        return trans_map.pop(begin_ms)
+    # 找最近
+    nearest_key = min(trans_map.keys(), key=lambda k: abs(k - begin_ms))
+    if abs(nearest_key - begin_ms) <= tol_ms:
+        return trans_map.pop(nearest_key)
+    return None
+
+
+def ttml_time_to_ms(time_str):
+    """将TTML时间格式转换为毫秒（支持多种格式）"""
+    if not time_str:
+        return 0
+
+    time_str = time_str.strip()
+
+    # H:MM:SS.mmm 格式
+    m = re.match(r"^(?:(\d+):)?(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)$", time_str)
+    if m:
+        h = int(m.group(1) or 0)
+        mm = int(m.group(2))
+        ss = float(m.group(3))
+        return int((h*3600 + mm*60 + ss) * 1000)
+
+    # MM:SS.mmm 格式
+    m = re.match(r"^(\d{1,2}):(\d{1,2}(?:\.\d{1,3})?)$", time_str)
+    if m:
+        mm = int(m.group(1))
+        ss = float(m.group(2))
+        return int((mm*60 + ss) * 1000)
+
+    # SS.mmm 格式
+    try:
+        sec = float(time_str)
+        return int(sec * 1000)
+    except ValueError:
+        return 0
+
+
+
+
+def text_tail_space(txt):
+    """返回 (清理后的文本, 是否末尾有空格)"""
+    if txt is None:
+        return "", False
+    has_space = len(txt) > 0 and txt[-1].isspace()
+    return txt.rstrip(), has_space
+
+
+def find_translation_file(lyrics_path):
+    """查找关联的翻译文件"""
+    lyrics_path = Path(lyrics_path)
+    # 尝试查找同名但带有_trans后缀的LRC文件
+    trans_path = lyrics_path.parent / f"{lyrics_path.stem}_trans.lrc"
+    if trans_path.exists():
+        return str(trans_path)
+
+    # 尝试查找同目录下的LRC文件（不带_trans后缀）
+    lrc_files = list(lyrics_path.parent.glob("*.lrc"))
+    for lrc_file in lrc_files:
+        if lrc_file.name != lyrics_path.name and lrc_file.name.startswith(lyrics_path.stem):
+            return str(lrc_file)
+
+    return None
+
+
+def lys_to_ttml(input_path, output_path):
+    """将LYS格式转换为TTML格式（Apple风格）"""
+    try:
+        with open(input_path, 'r', encoding='utf-8') as f:
+            lys_content = f.read()
+
+        # ---- 提取 offset（毫秒） ----
+        offset = 0
+        offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', lys_content)
+        if offset_match:
+            try:
+                offset = int(offset_match.group(1))
+            except Exception:
+                offset = 0
+
+        # ---- 读取并解析翻译 LRC：转成 毫秒→文本 的字典，供"容差匹配" ----
+        trans_path = find_translation_file(input_path)
+        translation_dict_ms = {}
+        trans_offset = 0
+        if trans_path:
+            try:
+                with open(trans_path, 'r', encoding='utf-8') as f:
+                    trans_content = f.read()
+
+                # 提取翻译文件自身的 offset（毫秒）
+                trans_offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', trans_content)
+                if trans_offset_match:
+                    try:
+                        trans_offset = int(trans_offset_match.group(1))
+                    except Exception:
+                        trans_offset = 0
+
+                trans_lines = [line.strip() for line in trans_content.split('\n') if line.strip()]
+                for line in trans_lines:
+                    begin_time_str, content = parse_lrc_line(line)  # "mm:ss.mmm"
+                    if begin_time_str and content is not None:
+                        begin_ms = ttml_time_to_ms(begin_time_str)
+                        # 给翻译时间叠加翻译文件自身的 offset
+                        begin_ms += trans_offset
+                        translation_dict_ms[begin_ms] = content
+            except Exception as e:
+                app.logger.warning(f"读取翻译文件时出错: {trans_path}. 错误: {str(e)}")
+
+        # ---- 解析 LYS 主体 ----
+        lines = [line.strip() for line in lys_content.split('\n') if line.strip()]
+        parsed_lines = []
+
+        for i, line in enumerate(lines):
+            # 跳过元数据
+            if line.startswith('[from:') or line.startswith('[id:') or line.startswith('[offset:'):
+                continue
+
+            m_line = re.match(r'\[([^\]]*)\](.*)', line)
+            if not m_line:
+                continue
+
+            marker = m_line.group(1)       # 可能为空
+            content = m_line.group(2)
+
+            # 解析音节 + 应用 offset
+            syllables = parse_syllable_info(content, marker, offset=offset)
+
+            if syllables:
+                begin_time_ms = syllables[0]['start_ms']
+                # 给翻译时间也叠加 LYS 的 offset（与歌词同步）
+                begin_time_ms_with_offset = begin_time_ms + offset
+                # 使用容差匹配（±300ms）找最接近的翻译
+                translation_content = _nearest_translation(begin_time_ms_with_offset, translation_dict_ms, 300)
+
+                parsed_lines.append({
+                    'marker': marker,
+                    'content': content,
+                    'syllables': syllables,
+                    'is_duet': marker in ['2', '5'],
+                    'is_background': marker in ['6', '7', '8'],
+                    'translation': translation_content
+                })
+
+        # ---- 统计时长范围 ----
+        has_duet = any(line['is_duet'] for line in parsed_lines)
+        dom, div = create_ttml_document(has_duet)
+
+        first_begin = None
+        last_end = 0
+        for line_info in parsed_lines:
+            s = line_info['syllables']
+            if not s:
+                continue
+            b_ms = s[0]['start_ms']
+            e_ms = s[-1]['start_ms'] + s[-1]['duration_ms']
+            if first_begin is None:
+                first_begin = b_ms
+            if e_ms > last_end:
+                last_end = e_ms
+
+        body_elements = dom.getElementsByTagName('body')
+        if body_elements:
+            body = body_elements[0]
+            body.setAttribute('dur', ms_to_ttml_time(last_end))
+
+        if first_begin is not None:
+            div.setAttribute('begin', ms_to_ttml_time(first_begin))
+            div.setAttribute('end',   ms_to_ttml_time(last_end))
+
+        # ---- 写入每一行 ----
+        key_idx = 1
+        prev_main_p = None
+
+        for line_info in parsed_lines:
+            s = line_info['syllables']
+            if not s:
+                continue
+
+            begin_ms = s[0]['start_ms']
+            end_ms   = s[-1]['start_ms'] + s[-1]['duration_ms']
+            begin = ms_to_ttml_time(begin_ms)
+            end   = ms_to_ttml_time(end_ms)
+
+            if not line_info['is_background']:
+                p = dom.createElement('p')
+                p.setAttribute('begin', begin)
+                p.setAttribute('end', end)
+                p.setAttribute('itunes:key', f'L{key_idx}')
+                p.setAttribute('ttm:agent', 'v1' if not line_info['is_duet'] else 'v2')
+                key_idx += 1
+
+                # 逐音节 span（Apple 风格）
+                for syl in s:
+                    text = syl['text']
+                    if text is not None:
+                        span = dom.createElement('span')
+                        span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
+                        span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
+                        txt, tail = text_tail_space(text)
+                        span.appendChild(dom.createTextNode(txt))
+                        if tail:
+                            span.appendChild(dom.createTextNode(' '))
+                        p.appendChild(span)
+
+                # 有翻译就加翻译 span；没有就不加（精确匹配）
+                if line_info.get('translation'):
+                    trans_span = dom.createElement('span')
+                    trans_span.setAttribute('ttm:role', 'x-translation')
+                    trans_span.setAttribute('xml:lang', 'zh-CN')
+                    trans_span.appendChild(dom.createTextNode(line_info['translation']))
+                    p.appendChild(trans_span)
+
+                div.appendChild(p)
+                prev_main_p = p
+            else:
+                # 背景行：塞到上一主行 <span ttm:role="x-bg">
+                if prev_main_p is None:
+                    p = dom.createElement('p')
+                    p.setAttribute('begin', begin)
+                    p.setAttribute('end', end)
+                    p.setAttribute('itunes:key', f'L{key_idx}')
+                    p.setAttribute('ttm:agent', 'v1')
+                    key_idx += 1
+                    div.appendChild(p)
+                    prev_main_p = p
+
+                bg_span = dom.createElement('span')
+                bg_span.setAttribute('ttm:role', 'x-bg')
+                bg_span.setAttribute('begin', begin)
+                bg_span.setAttribute('end', end)
+
+                for syl in s:
+                    text = syl['text']
+                    if text is not None:
+                        span = dom.createElement('span')
+                        span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
+                        span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
+                        txt, tail = text_tail_space(text)
+                        span.appendChild(dom.createTextNode(txt))
+                        if tail:
+                            span.appendChild(dom.createTextNode(' '))
+                        bg_span.appendChild(span)
+
+                # 背景行的翻译（如果这一行也刚好有对应时间翻译）
+                if line_info.get('translation'):
+                    trans_span = dom.createElement('span')
+                    trans_span.setAttribute('ttm:role', 'x-translation')
+                    trans_span.setAttribute('xml:lang', 'zh-CN')
+                    trans_span.appendChild(dom.createTextNode(line_info['translation']))
+                    bg_span.appendChild(trans_span)
+
+                prev_main_p.appendChild(bg_span)
+
+        # 单行输出
+        with open(output_path, 'w', encoding='utf-8') as f:
+            dom.writexml(f, indent='', addindent='', newl='', encoding='utf-8')
+
+        return True, None
+
+    except Exception as e:
+        app.logger.error(f"无法转换LYS到TTML: {input_path}. 错误: {str(e)}")
+        return False, str(e)
+
+def create_ttml_document(has_duet=False):
+    """创建TTML文档基础结构（Apple风格）"""
+    # 创建TTML文档
+    dom = xml.dom.minidom.Document()
+
+    # 创建根元素tt（添加Apple风格的命名空间）
+    tt = dom.createElement('tt')
+    tt.setAttribute('xmlns', 'http://www.w3.org/ns/ttml')
+    tt.setAttribute('xmlns:ttm', 'http://www.w3.org/ns/ttml#metadata')
+    tt.setAttribute('xmlns:itunes', 'http://music.apple.com/lyric-ttml-internal')
+    tt.setAttribute('xmlns:amll', 'http://www.example.com/ns/amll')
+    tt.setAttribute('itunes:timing', 'Word')
+    tt.setAttribute('xml:space', 'preserve')  # 保留空白字符
+    dom.appendChild(tt)
+
+    # 创建head元素
+    head = dom.createElement('head')
+    tt.appendChild(head)
+
+    # 创建metadata元素
+    metadata = dom.createElement('metadata')
+    head.appendChild(metadata)
+
+    # 创建agent元素
+    agent1 = dom.createElement('ttm:agent')
+    agent1.setAttribute('type', 'person')
+    agent1.setAttribute('xml:id', 'v1')
+    metadata.appendChild(agent1)
+
+    # 创建背景人声agent
+    agent2 = dom.createElement('ttm:agent')
+    agent2.setAttribute('type', 'other')
+    agent2.setAttribute('xml:id', 'v2')
+    metadata.appendChild(agent2)
+
+    # 创建styling元素（保持但可以为空）
+    styling = dom.createElement('styling')
+    head.appendChild(styling)
+
+    # 创建body元素
+    body = dom.createElement('body')
+    body.setAttribute('xml:space', 'preserve')  # 保留空白字符
+    tt.appendChild(body)
+
+    # 创建div元素
+    div = dom.createElement('div')
+    div.setAttribute('xml:space', 'preserve')  # 保留空白字符
+    body.appendChild(div)
+
+    return dom, div
+
+
+def parse_lrc_line(line):
+    """解析LRC行，返回时间戳和内容"""
+    time_match = re.match(r'\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)', line)
+    if time_match:
+        min, sec, ms, content = time_match.groups()
+        # 确保毫秒是3位数
+        if len(ms) == 2:
+            ms = ms + '0'
+        begin_time = f"{min}:{sec}.{ms}"
+        # 只去除末尾的回车，保留所有空格
+        return begin_time, content.rstrip('\r')
+    return None, None
+
+
+def _extract_lrc_marker_and_clean(content):
+    """提取LRC行的标记并清理内容"""
+    # 匹配行首的标记，如 [6]content
+    marker_match = re.match(r'^\[(\d+)\](.*)', content)
+    if marker_match:
+        marker = marker_match.group(1)
+        # 保留空格
+        clean_content = marker_match.group(2)
+        return marker, clean_content
+    # 保留空格
+    return '', content
+
+
+def calculate_lrc_end_time(begin_time_str, next_begin_time_str=None, default_duration_ms=5000):
+    """计算LRC行的结束时间"""
+    # 解析当前开始时间
+    time_parts = begin_time_str.split(':')
+    min = int(time_parts[0])
+    sec_parts = time_parts[1].split('.')
+    sec = int(sec_parts[0])
+    ms = int(sec_parts[1])
+
+    begin_ms = (min * 60 + sec) * 1000 + ms
+
+    # 如果有下一行时间，使用下一行时间作为结束时间
+    if next_begin_time_str:
+        next_time_parts = next_begin_time_str.split(':')
+        next_min = int(next_time_parts[0])
+        next_sec_parts = next_time_parts[1].split('.')
+        next_sec = int(next_sec_parts[0])
+        next_ms = int(next_sec_parts[1])
+
+        next_begin_ms = (next_min * 60 + next_sec) * 1000 + next_ms
+
+        # 如果时间间隔合理（不超过30秒），使用实际间隔
+        if 0 < next_begin_ms - begin_ms < 30000:
+            end_ms = next_begin_ms
+        else:
+            end_ms = begin_ms + default_duration_ms
+    else:
+        # 没有下一行，使用默认持续时间
+        end_ms = begin_ms + default_duration_ms
+
+    # 转换回时间格式
+    total_seconds = end_ms // 1000
+    end_min = total_seconds // 60
+    end_sec = total_seconds % 60
+    end_ms_part = end_ms % 1000
+
+    return f"{end_min:02d}:{end_sec:02d}.{end_ms_part:03d}"
+
+
+def lrc_to_ttml(input_path, output_path):
+    """将LRC格式转换为TTML格式（Apple风格）"""
+    try:
+        with open(input_path, 'r', encoding='utf-8') as f:
+            lrc_content = f.read()
+
+        # ---- 读取并解析翻译 LRC：转成 毫秒→文本 的字典，供"精确匹配" ----
+        trans_path = find_translation_file(input_path)
+        translation_dict_ms = {}
+        if trans_path:
+            try:
+                with open(trans_path, 'r', encoding='utf-8') as f:
+                    trans_content = f.read()
+                trans_lines = [line.strip() for line in trans_content.split('\n') if line.strip()]
+                for line in trans_lines:
+                    begin_time_str, content = parse_lrc_line(line)  # "mm:ss.mmm"
+                    if begin_time_str and content is not None:
+                        begin_ms = ttml_time_to_ms(begin_time_str)
+                        translation_dict_ms[begin_ms] = content
+            except Exception as e:
+                app.logger.warning(f"读取翻译文件时出错: {trans_path}. 错误: {str(e)}")
+
+        # 解析LRC内容，提取有效行
+        lines = [line.strip() for line in lrc_content.split('\n') if line.strip()]
+        valid_lines = []
+
+        # 收集所有行的时间范围
+        begin_times_ms = []
+        end_times_ms = []
+        for i, line in enumerate(lines):
+            begin_time_str, content = parse_lrc_line(line)
+            if begin_time_str and content:
+                begin_ms = ttml_time_to_ms(begin_time_str)
+                begin_times_ms.append(begin_ms)
+
+                # 计算结束时间
+                next_time = None
+                if i+1 < len(lines):
+                    next_begin_time_str, _ = parse_lrc_line(lines[i+1])
+                    if next_begin_time_str:
+                        next_time = next_begin_time_str
+                end_time_str = calculate_lrc_end_time(begin_time_str, next_time)
+                end_ms = ttml_time_to_ms(end_time_str)
+                end_times_ms.append(end_ms)
+
+        first_begin = min(begin_times_ms) if begin_times_ms else 0
+        last_end = max(end_times_ms) if end_times_ms else 0
+
+        # 重新解析有效行，使用毫秒级精确翻译匹配
+        for line in lines:
+            begin_time_str, content = parse_lrc_line(line)
+            if begin_time_str and content:
+                # 提取标记和清理内容
+                marker, clean_content = _extract_lrc_marker_and_clean(content)
+
+                # 检查是否为背景行
+                is_background = marker in ['6', '7', '8']
+
+                # 基于时间戳获取对应的翻译内容（毫秒级精确匹配）
+                begin_ms = ttml_time_to_ms(begin_time_str)
+                translation_content = translation_dict_ms.get(begin_ms)
+
+                valid_lines.append({
+                    'begin_time_str': begin_time_str,
+                    'content': content,
+                    'marker': marker,
+                    'clean_content': clean_content,
+                    'is_duet': '[2]' in content or '[5]' in content or marker in ['2', '5'],
+                    'is_background': is_background,
+                    'translation_content': translation_content
+                })
+
+        # 检查是否有对唱标记
+        has_duet = any(line['is_duet'] for line in valid_lines)
+
+        # 创建TTML文档
+        dom, div = create_ttml_document(has_duet)
+
+        # 设置body和div的时间范围
+        body_elements = dom.getElementsByTagName('body')
+        if body_elements:
+            body = body_elements[0]
+            body.setAttribute('dur', ms_to_ttml_time(last_end))
+
+        if first_begin is not None:
+            div.setAttribute('begin', ms_to_ttml_time(first_begin))
+            div.setAttribute('end', ms_to_ttml_time(last_end))
+
+        # 转换每一行
+        key_idx = 1
+        prev_main_p = None
+
+        for i, line_info in enumerate(valid_lines):
+            begin_time_str = line_info['begin_time_str']
+            clean_content = line_info['clean_content']
+            marker = line_info['marker']
+            is_duet = line_info['is_duet']
+            is_background = line_info['is_background']
+            translation_content = line_info['translation_content']
+
+            if clean_content:
+                # 计算结束时间
+                next_time = valid_lines[i+1]['begin_time_str'] if i+1 < len(valid_lines) else None
+                end_time_str = calculate_lrc_end_time(begin_time_str, next_time)
+                begin_ms = ttml_time_to_ms(begin_time_str)
+                end_ms = ttml_time_to_ms(end_time_str)
+
+                if not is_background:
+                    # 创建主行p元素（Apple风格）
+                    p = dom.createElement('p')
+                    p.setAttribute('begin', begin_time_str)
+                    p.setAttribute('end', end_time_str)
+                    p.setAttribute('itunes:key', f'L{key_idx}')
+                    p.setAttribute('ttm:agent', 'v1' if not is_duet else 'v2')
+                    key_idx += 1
+
+                    # 添加文本节点（Apple风格）
+                    txt, tail_space = text_tail_space(clean_content)
+                    if txt:
+                        text_node = dom.createTextNode(txt)
+                        p.appendChild(text_node)
+                        if tail_space:
+                            p.appendChild(dom.createTextNode(' '))
+
+                    # 如果有翻译内容，添加翻译span（Apple风格）- 精确匹配
+                    if translation_content:
+                        trans_span = dom.createElement('span')
+                        trans_span.setAttribute('ttm:role', 'x-translation')
+                        trans_span.setAttribute('xml:lang', 'zh-CN')
+                        trans_text = translation_content
+                        trans_span.appendChild(dom.createTextNode(trans_text))
+                        p.appendChild(trans_span)
+
+                    div.appendChild(p)
+                    prev_main_p = p
+                else:
+                    # 背景行：作为内嵌span添加到上一主行
+                    if prev_main_p is not None:
+                        bg_span = dom.createElement('span')
+                        bg_span.setAttribute('ttm:role', 'x-bg')
+                        bg_span.setAttribute('begin', begin_time_str)
+                        bg_span.setAttribute('end', end_time_str)
+
+                        # 添加文本节点（背景）
+                        txt, tail_space = text_tail_space(clean_content)
+                        if txt:
+                            text_node = dom.createTextNode(txt)
+                            bg_span.appendChild(text_node)
+                            if tail_space:
+                                bg_span.appendChild(dom.createTextNode(' '))
+
+                        # 如果有翻译内容，添加到背景span中（精确匹配）
+                        if translation_content:
+                            trans_span = dom.createElement('span')
+                            trans_span.setAttribute('ttm:role', 'x-translation')
+                            trans_span.setAttribute('xml:lang', 'zh-CN')
+                            trans_text = translation_content
+                            trans_span.appendChild(dom.createTextNode(trans_text))
+                            bg_span.appendChild(trans_span)
+
+                        prev_main_p.appendChild(bg_span)
+                    else:
+                        # 如果没有上一主行，创建一个主行
+                        p = dom.createElement('p')
+                        p.setAttribute('begin', begin_time_str)
+                        p.setAttribute('end', end_time_str)
+                        p.setAttribute('itunes:key', f'L{key_idx}')
+                        p.setAttribute('ttm:agent', 'v1')
+                        key_idx += 1
+
+                        # 背景作为span内嵌
+                        bg_span = dom.createElement('span')
+                        bg_span.setAttribute('ttm:role', 'x-bg')
+                        bg_span.setAttribute('begin', begin_time_str)
+                        bg_span.setAttribute('end', end_time_str)
+
+                        # 添加文本节点（背景）
+                        txt, tail_space = text_tail_space(clean_content)
+                        if txt:
+                            text_node = dom.createTextNode(txt)
+                            bg_span.appendChild(text_node)
+                            if tail_space:
+                                bg_span.appendChild(dom.createTextNode(' '))
+
+                        # 如果有翻译内容，添加到背景span中（精确匹配）
+                        if translation_content:
+                            trans_span = dom.createElement('span')
+                            trans_span.setAttribute('ttm:role', 'x-translation')
+                            trans_span.setAttribute('xml:lang', 'zh-CN')
+                            trans_text = translation_content
+                            trans_span.appendChild(dom.createTextNode(trans_text))
+                            bg_span.appendChild(trans_span)
+
+                        p.appendChild(bg_span)
+                        div.appendChild(p)
+                        prev_main_p = p
+
+        # 写入TTML文件（单行格式，无换行符和缩进）
+        with open(output_path, 'w', encoding='utf-8') as f:
+            dom.writexml(f, indent='', addindent='', newl='', encoding='utf-8')
+
+        return True, None
+    except Exception as e:
+        app.logger.error(f"无法转换LRC到TTML: {input_path}. 错误: {str(e)}")
+        return False, str(e)
 
 @app.route('/convert_ttml', methods=['POST'])
 def convert_ttml():
@@ -1297,6 +1988,96 @@ def convert_ttml_by_path():
             return jsonify({'status': 'error', 'message': '转换失败，请检查TTML文件格式是否正确'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+@app.route('/convert_to_ttml', methods=['POST'])
+def convert_to_ttml():
+    if not is_request_allowed():
+        return abort(403)
+    try:
+        data = request.get_json()
+        lyrics_path = data.get('path')
+        if not lyrics_path:
+            return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
+
+        # 获取文件扩展名
+        file_ext = Path(lyrics_path).suffix.lower()
+        if file_ext not in ['.lys', '.lrc']:
+            return jsonify({'status': 'error', 'message': '只支持LYS和LRC格式'})
+
+        # 构建完整路径
+        input_path = SONGS_DIR / lyrics_path
+        if not input_path.exists():
+            return jsonify({'status': 'error', 'message': '歌词文件不存在'})
+
+        # 生成输出文件名
+        output_filename = input_path.stem + '.ttml'
+        output_path = SONGS_DIR / output_filename
+
+        # 根据文件类型调用相应的转换函数
+        success = False
+        error_msg = None
+        if file_ext == '.lys':
+            success, error_msg = lys_to_ttml(str(input_path), str(output_path))
+        elif file_ext == '.lrc':
+            success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'ttmlPath': f"http://127.0.0.1:5000/songs/{output_filename}"
+            })
+        else:
+            return jsonify({'status': 'error', 'message': f'转换失败: {error_msg}'})
+
+    except Exception as e:
+        app.logger.error(f"处理转换请求时出错: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'处理请求时出错: {str(e)}'})
+
+
+@app.route('/convert_to_ttml_temp', methods=['POST'])
+def convert_to_ttml_temp():
+    """将歌词临时转换为TTML格式，用于AMLL规则编写，不覆盖原文件"""
+    if not is_request_allowed():
+        return abort(403)
+    try:
+        data = request.get_json()
+        lyrics_path = data.get('path')
+        if not lyrics_path:
+            return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
+
+        # 获取文件扩展名
+        file_ext = Path(lyrics_path).suffix.lower()
+        if file_ext not in ['.lys', '.lrc']:
+            return jsonify({'status': 'error', 'message': '只支持LYS和LRC格式'})
+
+        # 构建完整路径
+        input_path = SONGS_DIR / lyrics_path
+        if not input_path.exists():
+            return jsonify({'status': 'error', 'message': '歌词文件不存在'})
+
+        # 生成带专用后缀的临时输出文件名，避免影响原文件
+        output_filename = input_path.stem + '_amll_temp.ttml'
+        output_path = SONGS_DIR / output_filename
+
+        # 根据文件类型调用相应的转换函数
+        success = False
+        error_msg = None
+        if file_ext == '.lys':
+            success, error_msg = lys_to_ttml(str(input_path), str(output_path))
+        elif file_ext == '.lrc':
+            success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
+
+        if success:
+            return jsonify({
+                'status': 'success',
+                'ttmlPath': f"http://127.0.0.1:5000/songs/{output_filename}"
+            })
+        else:
+            return jsonify({'status': 'error', 'message': f'转换失败: {error_msg}'})
+
+    except Exception as e:
+        app.logger.error(f"处理临时转换请求时出错: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'处理请求时出错: {str(e)}'})
 
 @app.route('/merge_to_lqe', methods=['POST'])
 def merge_to_lqe():
@@ -1626,29 +2407,34 @@ def translate_lyrics():
                         full_translation += content
                         app.logger.debug(f"收到翻译内容 [ID: {request_id}]: {content}")
 
-                        # 处理翻译内容
+                        # 处理翻译内容：使用字典按行号稳定对齐（后到的覆盖先到的）
                         lines = full_translation.split('\n')
-                        translated_lines = []
+                        translated_dict = {}  # 行号(0-based) -> 翻译内容
                         for line in lines:
                             if line.strip() and not line.startswith('思考'):
                                 # 提取序号和翻译内容
-                                match = re.match(r'^\d+\.(.*)', line)
+                                match = re.match(r'^(\d+)\.(.*)', line)
                                 if match:
-                                    translated_lines.append(match.group(1).strip())
+                                    line_num = int(match.group(1))  # 1-based
+                                    content = match.group(2).strip()
+                                    # 转为0-based索引并存储（后到的覆盖先到的）
+                                    translated_dict[line_num - 1] = content
 
-                        # 确保翻译行数与原文行数匹配
-                        if len(translated_lines) == len(lyrics):
-                            # 合并时间戳和翻译
+                        # 使用字典按行号稳定对齐，即使行号乱序或缺失也能正确处理
+                        if translated_dict:
+                            # 按时间戳顺序构建翻译结果（与原文词序一致）
                             final_lyrics = []
-                            for i, (timestamp, translation) in enumerate(zip(timestamps, translated_lines)):
-                                final_lyrics.append(f"{timestamp}{translation}")
-                            # 发送翻译内容
-                            yield f"content:{json.dumps({'translations': final_lyrics})}\n"
-                            app.logger.debug(f"成功合并 {len(final_lyrics)} 行翻译歌词")
+                            for i, timestamp in enumerate(timestamps):
+                                translation = translated_dict.get(i)  # 获取对应行的翻译（如果存在）
+                                if translation is not None:
+                                    final_lyrics.append(f"{timestamp}{translation}")
+
+                            # 发送翻译内容（只发送有翻译的行）
+                            if final_lyrics:
+                                yield f"content:{json.dumps({'translations': final_lyrics})}\n"
+                                app.logger.debug(f"成功合并 {len(final_lyrics)} 行翻译歌词")
                         else:
-                            app.logger.warning(f"翻译行数不匹配! 原文行数: {len(lyrics)}, 翻译行数: {len(translated_lines)}")
-                            app.logger.debug(f"原文行数详情: {len(lyrics)} 行")
-                            app.logger.debug(f"翻译行数详情: {len(translated_lines)} 行")
+                            app.logger.warning("未提取到有效的翻译内容")
                             app.logger.debug(f"当前完整翻译内容预览:\n{full_translation[:500]}..." if len(full_translation) > 500 else f"当前完整翻译内容:\n{full_translation}")
                 
                 # 记录流式响应完成
