@@ -77,6 +77,8 @@ pip install flask openai bcrypt waitress
 - `/lyrics`: API endpoint for retrieving parsed lyrics
 - `/amll/stream`: Server-Sent Events endpoint for real-time lyric updates
 - `/auth/*`: Authentication-related endpoints
+- `/convert_to_ttml`: API endpoint for converting LYS/LRC files to TTML format
+- `/convert_to_ttml_temp`: API endpoint for temporary TTML conversion for AMLL rule writing
 
 ### File Management
 
@@ -93,6 +95,12 @@ Backup functionality is built into most file operations, maintaining up to 7 ver
 1. **.lys Format**: Custom syllable-level timed lyrics format
 2. **.lrc Format**: Standard line-level timed lyrics format
 3. **.ttml Format**: XML-based timed text format with conversion capabilities
+
+### Format Conversion
+
+The application provides bidirectional conversion between different lyric formats:
+- **TTML to LYS/LRC**: Convert TTML files to LYS or LRC formats
+- **LYS/LRC to TTML**: Convert LYS or LRC files to TTML format (Apple style)
 
 ### Real-time Integration
 

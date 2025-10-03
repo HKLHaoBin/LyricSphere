@@ -11,6 +11,8 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - 设备认证和密码保护安全机制
 - 与 AMLL（Advanced Music Live Lyrics）集成的 WebSocket 服务器
 - Server-Sent Events (SSE) 实现实时歌词更新
+- LYS/LRC 与 TTML 格式双向转换功能
+- AMLL 规则编写支持
 
 ## 技术栈
 
@@ -70,6 +72,12 @@ LyricSphere/
 
 ### .ttml 格式
 基于 XML 的定时文本格式，具有转换功能。
+
+## 歌词格式转换
+
+应用支持多种歌词格式之间的双向转换：
+- **TTML 转 LYS/LRC**：将 TTML 文件转换为 LYS 或 LRC 格式
+- **LYS/LRC 转 TTML**：将 LYS 或 LRC 文件转换为 Apple 风格的 TTML 格式，用于 AMLL 规则编写
 
 ## 实时集成
 
