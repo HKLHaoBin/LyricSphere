@@ -1,0 +1,97 @@
+{
+ "version": "auto-py-to-exe-configuration_v1",
+ "pyinstallerOptions": [
+  {
+   "optionDest": "noconfirm",
+   "value": true
+  },
+  {
+   "optionDest": "filenames",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/backend.py"
+  },
+  {
+   "optionDest": "onefile",
+   "value": true
+  },
+  {
+   "optionDest": "console",
+   "value": true
+  },
+  {
+   "optionDest": "clean_build",
+   "value": false
+  },
+  {
+   "optionDest": "strip",
+   "value": false
+  },
+  {
+   "optionDest": "noupx",
+   "value": false
+  },
+  {
+   "optionDest": "disable_windowed_traceback",
+   "value": false
+  },
+  {
+   "optionDest": "uac_admin",
+   "value": false
+  },
+  {
+   "optionDest": "uac_uiaccess",
+   "value": false
+  },
+  {
+   "optionDest": "argv_emulation",
+   "value": false
+  },
+  {
+   "optionDest": "bootloader_ignore_signals",
+   "value": false
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/backend.py;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Famyliam_Everywhere.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML-AMLL.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML-v1.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere;LyricSphere/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static;static/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/songs;songs/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/backups;backups/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates;templates/"
+  }
+ ],
+ "nonPyinstallerOptions": {
+  "increaseRecursionLimit": true,
+  "manualArguments": ""
+ }
+}
