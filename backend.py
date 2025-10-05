@@ -315,21 +315,20 @@ def delete_json():
     json_path = BASE_PATH / 'static' / filename
 
     try:
-        related_files = get_related_files(str(json_path))
+        # 只备份和删除JSON文件本身，不删除关联的歌词、音乐等文件
         delete_backup_dir = BACKUP_DIR / 'permanent'
         delete_backup_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        for file_path in related_files:
-            if Path(file_path).exists():
-                relative_path = Path(file_path).relative_to(BASE_PATH)
-                backup_path = delete_backup_dir / f"{str(relative_path).replace('/', '__')}.{timestamp}"
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(file_path, backup_path)
+        if json_path.exists():
+            # 备份JSON文件
+            relative_path = json_path.relative_to(BASE_PATH)
+            backup_path = delete_backup_dir / f"{str(relative_path).replace('/', '__')}.{timestamp}"
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(json_path, backup_path)
 
-        for file_path in related_files:
-            if Path(file_path).exists():
-                Path(file_path).unlink()
+            # 删除JSON文件
+            json_path.unlink()
 
         return jsonify({'status': 'success'})
     except Exception as e:
@@ -1004,16 +1003,30 @@ class TTMLTime:
 class TTMLSyl:
     def __init__(self, element: Element):
         self.__element: Element = element
-
         self.__begin: TTMLTime = TTMLTime(element.getAttribute("begin"))
         self.__end: TTMLTime = TTMLTime(element.getAttribute("end"))
-        self.text: str = element.childNodes[0].nodeValue
+
+        # ✅ 安全访问子节点文本
+        node_val = None
+        try:
+            if element.childNodes and element.childNodes.length > 0:
+                first = element.childNodes[0]
+                # 3 = TEXT_NODE, 4 = CDATA_SECTION_NODE
+                if getattr(first, "nodeType", None) in (3, 4):
+                    node_val = first.nodeValue
+        except Exception:
+            node_val = None
+        self.text: str = node_val or ""
 
     def __str__(self) -> str:
         return f'{self.text}({int(self.__begin)},{self.__end - self.__begin})'
 
     def get_begin(self) -> TTMLTime:
         return self.__begin
+
+    # 👉 新增：
+    def get_end(self) -> TTMLTime:
+        return self.__end
 
 class TTMLLine:
     have_ts: bool = False
@@ -1040,48 +1053,75 @@ class TTMLLine:
         # 获取 <p> 元素的所有子节点，包括文本节点
         child_elements = element.childNodes  # iter() 会返回所有子元素和文本节点
 
-        # 遍历所有子元素
+        # 遍历所有子节点
         for child in child_elements:
-            if child.nodeType == 3 and child.nodeValue:  # 如果是文本节点（例如空格或换行）
+            # TEXT_NODE
+            if getattr(child, "nodeType", None) == 3 and getattr(child, "nodeValue", None) is not None:
+                # 合并极短的空白到上一 syl
                 if len(self.__orig_line) > 0 and len(child.nodeValue) < 2:
-                    self.__orig_line[-1].text += child.nodeValue
+                    try:
+                        last = self.__orig_line[-1]
+                        if isinstance(last, TTMLSyl):
+                            last.text = (last.text or "") + child.nodeValue
+                        elif isinstance(last, str):
+                            self.__orig_line[-1] = last + child.nodeValue
+                    except Exception:
+                        pass
                 else:
                     self.__orig_line.append(child.nodeValue)
-            else:
-                # 获取 <span> 中的属性
-                role:str = child.getAttribute("ttm:role")
+                continue
 
-                # 没有role代表是一个syl
-                if role == "":
-                    if child.childNodes[0].nodeValue:
+            # 只处理 ELEMENT_NODE
+            if getattr(child, "nodeType", None) != 1:
+                continue
+
+            role = child.getAttribute("ttm:role") if child.hasAttribute("ttm:role") else ""
+
+            if role == "":
+                # 普通 syllable：必须有文本子节点
+                if child.childNodes and child.childNodes.length > 0:
+                    try:
+                        # TTMLSyl 内部也做了判空
                         self.__orig_line.append(TTMLSyl(child))
+                    except Exception as e:
+                        app.logger.debug(f"TTMLSyl 构造跳过空节点: {e!r}")
+                continue
 
-                elif role == "x-bg":
-                    # 和声行
-                    self.__bg_line = TTMLLine(child, True)
-                    self.__bg_line.__is_duet = self.__is_duet
-                elif role == "x-translation":
-                    # 翻译行
-                    TTMLLine.have_ts = True
-                    self.__ts_line = f'{child.childNodes[0].data}'
+            if role == "x-bg":
+                self.__bg_line = TTMLLine(child, True)
+                self.__bg_line.__is_duet = self.__is_duet
+                continue
 
-        # 确保__orig_line不为空且第一个元素是TTMLSyl对象
-        # 否则可能会出现'str'没有get_begin属性的错误或索引错误
-        if self.__orig_line and len(self.__orig_line) > 0 and isinstance(self.__orig_line[0], TTMLSyl):
+            if role == "x-translation":
+                TTMLLine.have_ts = True
+                try:
+                    if child.childNodes and child.childNodes.length > 0:
+                        first = child.childNodes[0]
+                        if getattr(first, "nodeType", None) in (3, 4) and first.nodeValue:
+                            self.__ts_line = f'{first.nodeValue}'
+                except Exception as e:
+                    app.logger.debug(f"翻译行解析失败：{e!r}")
+                continue
+
+        # ✅ 正确设置本行 begin/end
+        if self.__orig_line and isinstance(self.__orig_line[0], TTMLSyl):
             self.__begin = self.__orig_line[0].get_begin()
+            # 取该行最后一个 syl 的 end 更稳妥
+            last_syl = next((x for x in reversed(self.__orig_line) if isinstance(x, TTMLSyl)), None)
+            self.__end = last_syl.get_end() if last_syl else self.__begin
         else:
-            # 如果__orig_line为空或第一个元素不是TTMLSyl对象，使用默认的TTMLTime
-            self.__begin = TTMLTime()
-            # 如果__orig_line为空，添加一个空字符串防止后续处理出错
+            # 纯文本 p：直接读 p 的属性
+            self.__begin = TTMLTime(element.getAttribute("begin"))
+            self.__end   = TTMLTime(element.getAttribute("end"))
             if not self.__orig_line:
                 self.__orig_line.append('')
 
-        if is_bg:
+        if is_bg and self.__orig_line and isinstance(self.__orig_line[0], TTMLSyl):
             if TTMLLine.__before.search(self.__orig_line[0].text):
-                self.__orig_line[0].text = TTMLLine.__before.sub(self.__orig_line[0].text, '(')
+                self.__orig_line[0].text = TTMLLine.__before.sub('(', self.__orig_line[0].text)
                 TTMLLine.have_pair += 1
             if TTMLLine.__after.search(self.__orig_line[-1].text):
-                self.__orig_line[-1].text = TTMLLine.__after.sub(self.__orig_line[-1].text, ')')
+                self.__orig_line[-1].text = TTMLLine.__after.sub(')', self.__orig_line[-1].text)
                 TTMLLine.have_pair += 1
 
     def __role(self) -> int:
@@ -1089,30 +1129,30 @@ class TTMLLine:
                 + int(TTMLLine.have_duet) + int(self.__is_duet))
 
     def __raw(self):
-        # 返回元组(str, str或None)
         try:
-            # 安全地生成字符串，确保__orig_line不为空
-            # 过滤掉纯空格和换行符的字符串，只保留有意义的内容
             filtered_line = []
+            has_syl = False
             for v in self.__orig_line:
                 if isinstance(v, str):
-                    # 如果是字符串，只在非空且不是纯空白字符时添加
                     if v.strip():
                         filtered_line.append(v)
                 else:
-                    # 如果是TTMLSyl对象，直接添加
+                    has_syl = True
                     filtered_line.append(v)
 
             line_text = ''.join([str(v) for v in filtered_line]) if filtered_line else ''
-            # 确保每行都是独立的，严格按照LYS格式要求
+
+            # 👉 纯文本行：补上 (begin,duration)
+            if not has_syl and line_text:
+                duration_ms = self.__end - self.__begin
+                line_text = f"{line_text}({int(self.__begin)},{duration_ms})"
+
             main_line = f'[{self.__role()}]{line_text}'
-            # 背景行不生成翻译行，因为翻译应该与主歌词关联
             translation_line = None
             if not self.__is_bg and self.__ts_line:
                 translation_line = f'[{self.__begin}]{self.__ts_line}'
             return (main_line, translation_line)
         except Exception as e:
-            # 如果生成过程中出现错误，返回一个安全的默认值
             app.logger.error(f"生成歌词行时出错: {str(e)}")
             return (f'[{self.__role()}]错误的行', None)
 
@@ -1176,7 +1216,7 @@ def ttml_to_lys(input_path, songs_dir):
                 try:
                     lines.append(TTMLLine(p))
                 except Exception as e:
-                    app.logger.error(f"处理TTML行时出错: {str(e)}，跳过此行")
+                    app.logger.error(f"处理TTML行时出错: {type(e).__name__}: {e!s}，已跳过")
                     continue
             
             # 确保songs目录存在
@@ -2481,6 +2521,17 @@ def lyrics_animate():
     style = request.args.get('style', 'Kok')  # 默认为 'Kok'
     if not file:
         return "缺少文件参数", 400
+
+    # ✅ 读取临时转换得到的参数，并存入 session，供 /lyrics 使用
+    lys_override = request.args.get('lys')
+    lrc_override = request.args.get('lrc')
+    if lys_override or lrc_override:
+        session['override_lys_url'] = lys_override or None
+        session['override_lrc_url'] = lrc_override or None
+    else:
+        session.pop('override_lys_url', None)
+        session.pop('override_lrc_url', None)
+
     session['lyrics_json_file'] = file
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
@@ -2494,49 +2545,61 @@ def get_lyrics():
     支持的音乐格式：.mp3, .wav, .ogg, .mp4
     """
     json_file = session.get('lyrics_json_file', '测试 - 测试.json')
-    json_path = os.path.join(app.static_folder, json_file)
+
+    # ✅ 优先使用临时转换得到的覆盖地址（来自 /lyrics-animate）
+    lys_url = session.get('override_lys_url')
+    lrc_url = session.get('override_lrc_url')
+
+    # 如果没有覆盖地址，再走旧逻辑：从 JSON 的 meta.lyrics 里找
+    if not lys_url:
+        json_path = os.path.join(app.static_folder, json_file)
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                meta_data = json.load(f)
+            lyrics_info = meta_data.get('meta', {}).get('lyrics', '')
+            lyric_sources = [src for src in lyrics_info.split('::') if src and src != '!']
+            for src in lyric_sources:
+                if src.endswith('.lys'):
+                    lys_url = src
+                if src.endswith('.lrc'):
+                    lrc_url = lrc_url or src  # JSON 里也可能有翻译
+        except FileNotFoundError:
+            return jsonify({'error': '元数据JSON未找到'}), 404
+        except json.JSONDecodeError:
+            return jsonify({'error': '解析元数据JSON时出错'}), 500
+
+    if not lys_url:
+        return jsonify({'error': '.lys 文件链接未在元数据或覆盖参数中找到'}), 404
+
+    # 读取 LYS 内容
+    from urllib.parse import urlparse
+    parsed_url = urlparse(lys_url)
+    lyrics_path = os.path.join(app.static_folder, parsed_url.path.lstrip('/'))
     try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            meta_data = json.load(f)
-        lyrics_info = meta_data.get('meta', {}).get('lyrics', '')
-        lyric_sources = [src for src in lyrics_info.split('::') if src and src != '!']
-        lys_url = None
-        lrc_url = None
-        for src in lyric_sources:
-            if src.endswith('.lys'):
-                lys_url = src
-            if src.endswith('.lrc'):
-                lrc_url = src
-        if not lys_url:
-            return jsonify({'error': '.lys 文件链接未在元数据中找到'}), 404
-        from urllib.parse import urlparse
-        parsed_url = urlparse(lys_url)
-        lyrics_path = os.path.join(app.static_folder, parsed_url.path.lstrip('/'))
         with open(lyrics_path, 'r', encoding='utf-8-sig') as f:
             lys_content = f.read()
-        parsed_lyrics = parse_lys(lys_content)
-
-        # 新增：提取 offset
-        offset = 0
-        offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', lys_content)
-        if offset_match:
-            offset = int(offset_match.group(1))
-
-        # 解析翻译
-        translation = []
-        if lrc_url:
-            parsed_lrc_url = urlparse(lrc_url)
-            lrc_path = os.path.join(app.static_folder, parsed_lrc_url.path.lstrip('/'))
-            if os.path.exists(lrc_path):
-                with open(lrc_path, 'r', encoding='utf-8') as f:
-                    lrc_content = f.read()
-                translation = parse_lrc(lrc_content, offset=offset)  # 传递 offset
-
-        return jsonify({'lyrics': parsed_lyrics, 'translation': translation})
     except FileNotFoundError:
-        return jsonify({'error': '歌词文件未找到'}), 404
-    except json.JSONDecodeError:
-        return jsonify({'error': '解析元数据JSON时出错'}), 500
+        return jsonify({'error': 'LYS 歌词文件未找到'}), 404
+
+    parsed_lyrics = parse_lys(lys_content)
+
+    # 新增：提取 offset
+    offset = 0
+    offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', lys_content)
+    if offset_match:
+        offset = int(offset_match.group(1))
+
+    # 解析翻译（优先使用覆盖的 lrc_url）
+    translation = []
+    if lrc_url:
+        parsed_lrc_url = urlparse(lrc_url)
+        lrc_path = os.path.join(app.static_folder, parsed_lrc_url.path.lstrip('/'))
+        if os.path.exists(lrc_path):
+            with open(lrc_path, 'r', encoding='utf-8') as f:
+                lrc_content = f.read()
+            translation = parse_lrc(lrc_content, offset=offset)  # 传递 offset
+
+    return jsonify({'lyrics': parsed_lyrics, 'translation': translation})
 
 @app.route('/export_lyrics_csv', methods=['POST'])
 def export_lyrics_csv():
