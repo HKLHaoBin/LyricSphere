@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LyricSphere歌词管理</title>
+    <title>Famyliam Everywhere</title>
     <style>
         :root {
             --bg-color: #ffffff;
@@ -527,8 +527,8 @@
                     onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
                 <button class="action-button" 
                     onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
-                <button class="action-button" 
-                    onclick="if(confirm('确定要删除整个歌曲条目及其所有关联文件吗？')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
+                <button class="action-button"
+                    onclick="if(confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
             </div>
             <div class="file-preview" id="preview-{{ file.filename }}">
                 <div class="preview-content"></div>
@@ -989,7 +989,7 @@
                                         // 使用转换后的TTML文件路径
                                         const convertedLyricsPath = encodeURIComponent(convertData.ttmlPath.replace('http://127.0.0.1:5000/songs/', baseUrl));
                                         // 构建AMLL规则编写网址
-                                        const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${convertedLyricsPath}&cover=${coverPath}&title=${title}&artist=${artists}`;
+                                        const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}`;
                                         // 打开网址
                                         window.open(amllUrl, '_blank');
                                     } else {
@@ -1002,7 +1002,7 @@
                                 });
                             } else {
                                 // 构建AMLL规则编写网址
-                                const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${lyricsPath}&cover=${coverPath}&title=${title}&artist=${artists}`;
+                                const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${lyricsPath}&title=${title}&artist=${artists}`;
                                 // 打开网址
                                 window.open(amllUrl, '_blank');
                             }
@@ -2315,23 +2315,95 @@
             });
         }
 
-        function openLyricsAnimate(filename, style) {
-            // 获取歌词文件路径
-            fetch('/get_json_data?filename=' + encodeURIComponent(filename))
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        const lyricsPath = data.jsonData.meta.lyrics.split('::')[1];
-                        if (lyricsPath && !lyricsPath.toLowerCase().endsWith('.lys')) {
-                            alert('警告：当前歌词文件不是LYS格式，可能无法正常显示动态效果！');
+        async function openLyricsAnimate(filename, style) {
+            try {
+                // 1) 读取歌曲 JSON，拿到歌词路径
+                const res = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error('获取歌曲信息失败');
+
+                // 兼容两种写法：单路径 或 "::歌词::翻译::罗马音::"
+                let rawLyricsPath = data.jsonData?.meta?.lyrics || '';
+                let mainPath = '';
+                if (rawLyricsPath.includes('::')) {
+                    const parts = rawLyricsPath.split('::');
+                    mainPath = parts[1] || '';  // 主歌词
+                } else {
+                    mainPath = rawLyricsPath;
+                }
+
+                // 兜底：没有主歌词路径，直接打开动画页（保持原行为）
+                if (!mainPath) {
+                    window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
+                                '&style=' + encodeURIComponent(style), '_blank');
+                    return;
+                }
+
+                // 2) 如果是 TTML，调用后端转换接口（不修改原 JSON，仅生成转换产物）
+                const isTTML = mainPath.toLowerCase().endsWith('.ttml');
+                if (isTTML) {
+                    // 取 /songs/ 下的相对路径传给后端：支持 http://127.0.0.1:5000/songs/xxx 和 /songs/xxx 两种
+                    let relative = '';
+                    try {
+                        if (mainPath.startsWith('http://') || mainPath.startsWith('https://')) {
+                            const u = new URL(mainPath);
+                            relative = u.pathname.startsWith('/songs/') ? u.pathname.slice('/songs/'.length) : u.pathname.replace(/^\//, '');
+                        } else {
+                            // 形如 /songs/xxx 或 songs/xxx
+                            relative = mainPath.replace(/^\/?songs\//i, '');
                         }
+                        // 确保正确解码URL编码的文件名
+                        relative = decodeURIComponent(relative);
+                    } catch (e) {
+                        console.error('解析URL失败:', e);
+                        // 解析失败也尽量取 basename
+                        relative = mainPath.split('/').pop();
+                        // 确保正确解码URL编码的文件名
+                        relative = decodeURIComponent(relative);
                     }
-                    window.open('/lyrics-animate?file=' + encodeURIComponent(filename) + '&style=' + encodeURIComponent(style), '_blank');
-                })
-                .catch(error => {
-                    console.error('获取歌词信息失败:', error);
-                    window.open('/lyrics-animate?file=' + encodeURIComponent(filename) + '&style=' + encodeURIComponent(style), '_blank');
-                });
+
+                    console.log('TTML转换 - 文件名:', filename, '相对路径:', relative);
+
+                    // 调用后端：把相对路径交给 /convert_ttml_by_path
+                    const conv = await fetch('/convert_ttml_by_path', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ path: relative })
+                    }).then(r => r.json());
+
+                    if (conv.status === 'success' && conv.lyricPath) {
+                        // 3) 成功：把转换好的 LYS/LRC 用查询参数传给动画页渲染（不改原文件/JSON）
+                        const params = new URLSearchParams({
+                            file: filename,
+                            style: style,
+                            lys: conv.lyricPath,          // e.g. http://<host>/songs/xxx.lys
+                        });
+                        if (conv.transPath) params.set('lrc', conv.transPath);
+
+                        // ✅ 打开动画页，并把"临时转换"的路径带过去
+                        window.open('/lyrics-animate?' + params.toString(), '_blank');
+                        return;
+                    } else {
+                        console.error('TTML转换失败:', conv.message || '未知错误');
+                        alert('TTML 转换失败：' + (conv.message || '请检查文件格式'));
+                    }
+                } else {
+                    // 非 TTML：若不是 LYS，给个提示（保持你原逻辑）
+                    if (!mainPath.toLowerCase().endsWith('.lys')) {
+                        alert('警告：当前歌词文件不是 LYS 格式，可能无法正常显示动态效果！');
+                    }
+                }
+
+                // 4) 兜底：按老逻辑打开
+                window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
+                            '&style=' + encodeURIComponent(style), '_blank');
+
+            } catch (error) {
+                console.error('打开动画页失败：', error);
+                // 兜底：按老逻辑打开
+                window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
+                            '&style=' + encodeURIComponent(style), '_blank');
+            }
         }
 
         function openAMLL() {
