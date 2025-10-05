@@ -59,16 +59,24 @@ pip install flask openai bcrypt waitress
    - Support for .lrc (Lyric) format with line-level timing
    - Support for .ttml (Timed Text Markup Language) format
    - Conversion between different lyric formats
+   - TTML processing with advanced features like background vocals and duet support
 
 3. **Real-time Features**:
    - WebSocket server on port 11444 for AMLL integration
    - Server-Sent Events (SSE) for real-time lyric updates
    - Progress tracking and synchronization
+   - Real-time lyric animation with disappearing effects
 
-4. **Security System**:
+4. **AI Integration**:
+   - AI-powered lyric translation using DeepSeek API
+   - Customizable system prompts for translation
+   - Streaming translation responses
+
+5. **Security System**:
    - Device-based authentication with trusted device management
    - Password protection using bcrypt hashing
    - Local access restrictions for sensitive operations
+   - Session management for secure operations
 
 ### Key Routes
 
@@ -79,6 +87,10 @@ pip install flask openai bcrypt waitress
 - `/auth/*`: Authentication-related endpoints
 - `/convert_to_ttml`: API endpoint for converting LYS/LRC files to TTML format
 - `/convert_to_ttml_temp`: API endpoint for temporary TTML conversion for AMLL rule writing
+- `/convert_ttml`: API endpoint for converting TTML files to LYS/LRC format
+- `/merge_to_lqe`: API endpoint for merging lyrics and translation into LQE format
+- `/export_lyrics_csv`: API endpoint for exporting lyrics to CSV format
+- `/translate_lyrics`: API endpoint for AI-powered lyric translation
 
 ### File Management
 
@@ -95,13 +107,24 @@ Backup functionality is built into most file operations, maintaining up to 7 ver
 1. **.lys Format**: Custom syllable-level timed lyrics format
 2. **.lrc Format**: Standard line-level timed lyrics format
 3. **.ttml Format**: XML-based timed text format with conversion capabilities
+4. **LQE Format**: Combined lyrics and translation format
 
 ### Format Conversion
 
 The application provides bidirectional conversion between different lyric formats:
-- **TTML to LYS/LRC**: Convert TTML files to LYS or LRC formats
-- **LYS/LRC to TTML**: Convert LYS or LRC files to TTML format (Apple style)
+- **TTML to LYS/LRC**: Convert TTML files to LYS or LRC formats with background vocals and duet support
+- **LYS/LRC to TTML**: Convert LYS or LRC files to TTML format (Apple style) with translation support
+- **LYS/LRC to LQE**: Merge lyrics and translation into LQE format
 
 ### Real-time Integration
 
-The application includes a WebSocket server (port 11444) for integration with AMLL (Advanced Music Live Lyrics) and supports Server-Sent Events for real-time lyric display updates.
+The application includes a WebSocket server (port 11444) for integration with AMLL (Advanced Music Live Lyrics) and supports Server-Sent Events for real-time lyric display updates. It also provides real-time lyric animation with calculated disappearing times for smooth transitions.
+
+### AI Translation Features
+
+The application supports AI-powered lyric translation with:
+- Integration with DeepSeek API for high-quality translations
+- Customizable system prompts for translation style control
+- Streaming responses for real-time translation display
+- Support for various lyric formats (LYS, LRC)
+- Automatic timestamp alignment with original lyrics
