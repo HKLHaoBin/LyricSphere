@@ -13,7 +13,7 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - Server-Sent Events (SSE) 实现实时歌词更新
 - LYS/LRC 与 TTML 格式双向转换功能
 - AMLL 规则编写支持
-- AI 驱动的歌词翻译功能（支持 DeepSeek API）
+- AI 驱动的歌词翻译功能（支持多个AI提供商）
 - 歌词导出为 CSV 格式功能
 - 支持背景人声和对唱歌词的处理
 
@@ -23,7 +23,7 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - 前端：HTML、CSS、JavaScript
 - 服务器：Waitress（生产环境）
 - 安全：bcrypt 哈希加密
-- AI：DeepSeek API（用于歌词翻译）
+- AI：支持多个AI提供商（DeepSeek、OpenAI、OpenRouter、Together、Groq）
 
 ## 安装与运行
 
@@ -94,10 +94,12 @@ LyricSphere/
 ## AI 歌词翻译
 
 应用支持使用 AI 进行歌词翻译：
-- 集成 DeepSeek API 实现高质量翻译
+- 集成多个AI提供商（DeepSeek、OpenAI、OpenRouter、Together、Groq）实现高质量翻译
 - 支持自定义系统提示词控制翻译风格
 - 流式响应实现实时翻译显示
 - 自动对齐时间戳与原始歌词
+- 支持API连接测试功能
+- 支持AI模型的思维链内容
 
 ## 安全特性
 
