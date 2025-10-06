@@ -123,8 +123,10 @@ The application includes a WebSocket server (port 11444) for integration with AM
 ### AI Translation Features
 
 The application supports AI-powered lyric translation with:
-- Integration with DeepSeek API for high-quality translations
+- Integration with multiple AI providers (DeepSeek, OpenAI, OpenRouter, Together, Groq)
 - Customizable system prompts for translation style control
 - Streaming responses for real-time translation display
 - Support for various lyric formats (LYS, LRC)
 - Automatic timestamp alignment with original lyrics
+- API connection testing functionality
+- Support for reasoning chain content from AI models
