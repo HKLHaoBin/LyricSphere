@@ -838,10 +838,34 @@
             <h2>AI翻译设置</h2>
             <div style="display: flex; flex-direction: column; gap: 15px;">
                 <div>
+                    <label>API提供商：</label>
+                    <select id="aiProvider" class="file-path-input">
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="together">Together</option>
+                        <option value="groq">Groq</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                <div>
+                    <label>基础URL：</label>
+                    <input type="text" id="aiBaseUrl" class="file-path-input" placeholder="例如: https://api.deepseek.com">
+                </div>
+                <div>
+                    <label>模型名称：</label>
+                    <input type="text" id="aiModel" class="file-path-input" placeholder="例如: deepseek-reasoner">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExpectReasoning"> 期望思维链内容（仅部分模型支持）
+                    </label>
+                </div>
+                <div>
                     <label>API密钥：</label>
-                    <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入您的 DeepSeek API 密钥">
+                    <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入API密钥">
                     <div style="margin-top: 5px; font-size: 12px; color: #666;">
-                        <a href="https://platform.deepseek.com/usage" target="_blank" style="color: #0066cc; text-decoration: none;">点击这里获取 API 密钥 →</a>
+                        <a href="https://platform.deepseek.com/usage" target="_blank" style="color: #0066cc; text-decoration: none;">点击这里获取 DeepSeek API 密钥 →</a>
                     </div>
                 </div>
                 <div>
@@ -849,6 +873,7 @@
                     <textarea id="aiSystemPrompt" class="lyrics-editor" style="height: 150px;" placeholder="设置AI翻译的提示词，用于指导AI如何翻译歌词"></textarea>
                 </div>
                 <div class="editor-buttons">
+                    <button onclick="probeAIConnection()">测试连接</button>
                     <button onclick="saveAISettings()">保存设置</button>
                     <button onclick="closeAISettings()">取消</button>
                 </div>
@@ -2176,9 +2201,13 @@
                 translationEditor.value = '';
 
                 console.log('发送翻译请求到服务器...');
-                // 优先从localStorage获取提示词
+                // 从localStorage获取所有AI设置
                 const systemPrompt = localStorage.getItem('aiSystemPrompt');
-                
+                const provider = localStorage.getItem('aiProvider') || 'deepseek';
+                const baseUrl = localStorage.getItem('aiBaseUrl') || 'https://api.deepseek.com';
+                const model = localStorage.getItem('aiModel') || 'deepseek-reasoner';
+                const expectReasoning = localStorage.getItem('aiExpectReasoning') === 'true';
+
                 const response = await fetch('/translate_lyrics', {
                     method: 'POST',
                     headers: {
@@ -2187,7 +2216,11 @@
                     body: JSON.stringify({
                         content: lyricsContent,
                         api_key: apiKey,
-                        system_prompt: systemPrompt
+                        system_prompt: systemPrompt,
+                        provider: provider,
+                        base_url: baseUrl,
+                        model: model,
+                        expect_reasoning: expectReasoning
                     })
                 });
 
@@ -2250,7 +2283,11 @@
             // 从localStorage获取API密钥和提示词
             const savedApiKey = localStorage.getItem('aiApiKey');
             const savedSystemPrompt = localStorage.getItem('aiSystemPrompt');
-            
+            const savedProvider = localStorage.getItem('aiProvider');
+            const savedBaseUrl = localStorage.getItem('aiBaseUrl');
+            const savedModel = localStorage.getItem('aiModel');
+            const savedExpectReasoning = localStorage.getItem('aiExpectReasoning');
+
             // 获取当前设置
             fetch('/get_ai_settings')
                 .then(response => response.json())
@@ -2259,7 +2296,12 @@
                         // 优先使用localStorage中的API密钥和提示词
                         document.getElementById('aiApiKey').value = savedApiKey || data.settings.api_key;
                         document.getElementById('aiSystemPrompt').value = savedSystemPrompt || data.settings.system_prompt;
+                        document.getElementById('aiProvider').value = savedProvider || data.settings.provider || 'deepseek';
+                        document.getElementById('aiBaseUrl').value = savedBaseUrl || data.settings.base_url || 'https://api.deepseek.com';
+                        document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
+                        document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
                         document.getElementById('aiSettingsModal').style.display = 'block';
+                        updateBaseUrlAndModel(); // 根据选择的提供商更新URL和模型
                     }
                 })
                 .catch(error => {
@@ -2272,23 +2314,90 @@
             document.getElementById('aiSettingsModal').style.display = 'none';
         }
 
+        // 根据选择的提供商更新基础URL和模型
+        function updateBaseUrlAndModel() {
+            const provider = document.getElementById('aiProvider').value;
+            const baseUrlInput = document.getElementById('aiBaseUrl');
+            const modelInput = document.getElementById('aiModel');
+
+            // 预设提供商的默认配置
+            const presets = {
+                'deepseek': {
+                    baseUrl: 'https://api.deepseek.com',
+                    model: 'deepseek-reasoner'
+                },
+                'openai': {
+                    baseUrl: 'https://api.openai.com/v1',
+                    model: 'gpt-4o-mini'
+                },
+                'openrouter': {
+                    baseUrl: 'https://openrouter.ai/api/v1',
+                    model: 'openai/gpt-4o-mini'
+                },
+                'together': {
+                    baseUrl: 'https://api.together.xyz/v1',
+                    model: 'mistralai/Mistral-7B-Instruct-v0.3'
+                },
+                'groq': {
+                    baseUrl: 'https://api.groq.com/openai/v1',
+                    model: 'llama-3.1-70b-versatile'
+                }
+            };
+
+            if (provider === 'custom') {
+                // 自定义模式下启用输入框
+                baseUrlInput.readOnly = false;
+                modelInput.readOnly = false;
+            } else {
+                // 预设模式下自动填充并禁用输入框
+                const preset = presets[provider];
+                if (preset) {
+                    baseUrlInput.value = preset.baseUrl;
+                    modelInput.value = preset.model;
+                    baseUrlInput.readOnly = true;
+                    modelInput.readOnly = true;
+                }
+            }
+        }
+
+        // 页面加载完成后添加事件监听器
+        document.addEventListener('DOMContentLoaded', function() {
+            const providerSelect = document.getElementById('aiProvider');
+            if (providerSelect) {
+                providerSelect.addEventListener('change', updateBaseUrlAndModel);
+            }
+        });
+
         function saveAISettings() {
             const apiKey = document.getElementById('aiApiKey').value;
             const systemPrompt = document.getElementById('aiSystemPrompt').value;
+            const provider = document.getElementById('aiProvider').value;
 
-            // 保存API密钥到localStorage
+            // 清洗 base_url，去掉用户误填的 /chat/completions 或 /responses/...
+            let baseUrl = document.getElementById('aiBaseUrl').value.trim();
+            baseUrl = baseUrl.replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
+            document.getElementById('aiBaseUrl').value = baseUrl;
+
+            const model = document.getElementById('aiModel').value;
+            const expectReasoning = document.getElementById('aiExpectReasoning').checked;
+
+            // 保存设置到localStorage
             if (apiKey) {
                 localStorage.setItem('aiApiKey', apiKey);
             } else {
                 localStorage.removeItem('aiApiKey');
             }
 
-            // 保存提示词到localStorage
             if (systemPrompt) {
                 localStorage.setItem('aiSystemPrompt', systemPrompt);
             } else {
                 localStorage.removeItem('aiSystemPrompt');
             }
+
+            localStorage.setItem('aiProvider', provider);
+            localStorage.setItem('aiBaseUrl', baseUrl);
+            localStorage.setItem('aiModel', model);
+            localStorage.setItem('aiExpectReasoning', expectReasoning);
 
             fetch('/save_ai_settings', {
                 method: 'POST',
@@ -2297,7 +2406,11 @@
                 },
                 body: JSON.stringify({
                     api_key: apiKey,
-                    system_prompt: systemPrompt
+                    system_prompt: systemPrompt,
+                    provider: provider,
+                    base_url: baseUrl,
+                    model: model,
+                    expect_reasoning: expectReasoning
                 })
             })
             .then(response => response.json())
@@ -2313,6 +2426,61 @@
                 console.error('保存AI设置失败：', error);
                 alert('保存AI设置失败，请查看控制台获取详细信息。');
             });
+        }
+
+        // 测试AI连接
+        async function probeAIConnection() {
+            const apiKey = document.getElementById('aiApiKey').value;
+            const baseUrl = document.getElementById('aiBaseUrl').value.trim();
+
+            if (!apiKey) {
+                alert('请先填写API密钥');
+                return;
+            }
+
+            if (!baseUrl) {
+                alert('请先填写Base URL');
+                return;
+            }
+
+            // 显示测试中状态
+            const probeBtn = document.querySelector('button[onclick="probeAIConnection()"]');
+            const originalText = probeBtn.textContent;
+            probeBtn.textContent = '测试中...';
+            probeBtn.disabled = true;
+
+            try {
+                const response = await fetch('/probe_ai', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        base_url: baseUrl
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    // 显示前10个模型作为示例
+                    const modelList = data.models.slice(0, 10).join('\n');
+                    const moreCount = Math.max(0, data.models.length - 10);
+                    const moreText = moreCount > 0 ? `\n...还有${moreCount}个模型` : '';
+
+                    alert(`连接成功！\n可用模型（前10个）:\n${modelList}${moreText}`);
+                } else {
+                    alert(`连接失败：${data.message}`);
+                }
+            } catch (error) {
+                console.error('测试连接失败：', error);
+                alert('测试连接失败，请查看控制台获取详细信息。');
+            } finally {
+                // 恢复按钮状态
+                probeBtn.textContent = originalText;
+                probeBtn.disabled = false;
+            }
         }
 
         async function openLyricsAnimate(filename, style) {

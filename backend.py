@@ -101,7 +101,11 @@ AI_TRANSLATION_SETTINGS = {
 2. 确保每行翻译都准确对应原文
 3. 翻译结果必须保持序号格式，例如：1.翻译内容
 4. 不要添加任何额外的解释或说明
-5. 确保每行翻译都是独立的，不要将多行合并'''
+5. 确保每行翻译都是独立的，不要将多行合并''',
+    'provider': 'deepseek',
+    'base_url': 'https://api.deepseek.com',
+    'model': 'deepseek-reasoner',
+    'expect_reasoning': True
 }
 
 # ===== 解析.lys格式歌词的工具函数 =====
@@ -2309,13 +2313,50 @@ def save_ai_settings():
         global AI_TRANSLATION_SETTINGS
         AI_TRANSLATION_SETTINGS['api_key'] = data.get('api_key', '')
         AI_TRANSLATION_SETTINGS['system_prompt'] = data.get('system_prompt', AI_TRANSLATION_SETTINGS['system_prompt'])
+        AI_TRANSLATION_SETTINGS['provider'] = data.get('provider', AI_TRANSLATION_SETTINGS['provider'])
+        AI_TRANSLATION_SETTINGS['base_url'] = data.get('base_url', AI_TRANSLATION_SETTINGS['base_url'])
+        AI_TRANSLATION_SETTINGS['model'] = data.get('model', AI_TRANSLATION_SETTINGS['model'])
+        AI_TRANSLATION_SETTINGS['expect_reasoning'] = data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
         return jsonify({
             'status': 'success',
             'api_key': AI_TRANSLATION_SETTINGS['api_key'],
-            'system_prompt': AI_TRANSLATION_SETTINGS['system_prompt']
+            'system_prompt': AI_TRANSLATION_SETTINGS['system_prompt'],
+            'provider': AI_TRANSLATION_SETTINGS['provider'],
+            'base_url': AI_TRANSLATION_SETTINGS['base_url'],
+            'model': AI_TRANSLATION_SETTINGS['model'],
+            'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning']
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+@app.route('/probe_ai', methods=['POST'])
+def probe_ai():
+    if not is_request_allowed():
+        return abort(403)
+    try:
+        request_data = request.get_json(silent=True) or {}
+        api_key = request_data.get('api_key', '')
+        base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
+
+        # 规范化 base_url，去掉用户误填的 /chat/completions 等尾巴
+        def _normalize_base_url(u: str) -> str:
+            if not u: return u
+            u = u.strip().rstrip('/')
+            import re
+            return re.sub(r'/(chat|responses)/(completions|streams?)$', '', u, flags=re.I)
+
+        base_url = _normalize_base_url(base_url_raw)
+        if not api_key:
+            return jsonify({'status': 'error', 'message': '未提供API密钥'})
+
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        models = client.models.list()
+        names = [m.id for m in getattr(models, 'data', [])]
+        return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url})
+    except Exception as e:
+        app.logger.error(f"探活AI服务时出错: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'探活失败: {e}', 'base_url': base_url_raw})
 
 @app.route('/translate_lyrics', methods=['POST'])
 def translate_lyrics():
@@ -2326,6 +2367,24 @@ def translate_lyrics():
         api_key = request_data.get('api_key', '')
         # 优先用前端传的 system_prompt，没有则用全局默认
         system_prompt = request_data.get('system_prompt') or AI_TRANSLATION_SETTINGS['system_prompt']
+
+        # 获取API配置参数，优先使用请求数据中的参数，否则使用全局默认值
+        provider = request_data.get('provider') or AI_TRANSLATION_SETTINGS['provider']
+        base_url = request_data.get('base_url') or AI_TRANSLATION_SETTINGS['base_url']
+        model = request_data.get('model') or AI_TRANSLATION_SETTINGS['model']
+        expect_reasoning = request_data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+
+        # 规范化 base_url，自动剔除多余路径
+        def _normalize_base_url(u: str) -> str:
+            if not u:
+                return u
+            u = u.strip().rstrip('/')
+            # 去掉用户误填的 /chat/completions 或 /responses/...
+            import re
+            u = re.sub(r'/(chat|responses)/(completions|streams?)$', '', u, flags=re.I)
+            return u
+
+        base_url = _normalize_base_url(base_url)
 
         if not content:
             return jsonify({'status': 'error', 'message': '未提供歌词内容'})
@@ -2388,17 +2447,17 @@ def translate_lyrics():
                 app.logger.debug(f"用户输入摘要:\n{numbered_lyrics[:500]}..." if len(numbered_lyrics) > 500 else f"用户输入:\n{numbered_lyrics}")
 
                 # 记录API调用详细信息
-                app.logger.info(f"准备调用DeepSeek API [ID: {request_id}]")
-                app.logger.info(f"模型: deepseek-reasoner, 歌词行数: {len(lyrics)}")
+                app.logger.info(f"准备调用 {provider} API [ID: {request_id}]")
+                app.logger.info(f"基础URL: {base_url}, 模型: {model}, 歌词行数: {len(lyrics)}")
                 app.logger.info(f"提示词长度: {len(numbered_lyrics)} 字符")
                 app.logger.info(f"系统提示词摘要: {system_prompt[:200]}..." if len(system_prompt) > 200 else f"系统提示词: {system_prompt}")
-                
+
                 # 调用AI服务
                 api_start_time = time.time()
                 try:
-                    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+                    client = OpenAI(api_key=api_key, base_url=base_url)
                     response = client.chat.completions.create(
-                        model="deepseek-reasoner",
+                        model=model,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": numbered_lyrics}
@@ -2434,7 +2493,7 @@ def translate_lyrics():
                         total_tokens = getattr(chunk.usage, 'total_tokens', 0)
                         
                     # 检查是否有思维链内容
-                    if hasattr(chunk.choices[0].delta, 'reasoning_content') and chunk.choices[0].delta.reasoning_content:
+                    if expect_reasoning and hasattr(chunk.choices[0].delta, 'reasoning_content') and chunk.choices[0].delta.reasoning_content:
                         content = chunk.choices[0].delta.reasoning_content
                         current_reasoning += content
                         app.logger.debug(f"收到思维链内容 [ID: {request_id}]: {content}")
@@ -2492,6 +2551,7 @@ def translate_lyrics():
                 total_duration = time.time() - api_start_time
                 app.logger.info(f"翻译成功完成 [ID: {request_id}], 总耗时: {total_duration:.2f}秒")
                 app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
+                app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}")
 
         return Response(generate(), mimetype='text/event-stream')
 
