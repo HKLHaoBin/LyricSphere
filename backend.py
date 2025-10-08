@@ -105,8 +105,19 @@ AI_TRANSLATION_SETTINGS = {
     'provider': 'deepseek',
     'base_url': 'https://api.deepseek.com',
     'model': 'deepseek-reasoner',
-    'expect_reasoning': True
+    'expect_reasoning': True,
+    'compat_mode': False
 }
+
+def parse_bool(value, default=False):
+    """Parse falsy/truthy inputs coming from JSON or form submissions."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
 
 # ===== 解析.lys格式歌词的工具函数 =====
 def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=700):
@@ -2317,6 +2328,7 @@ def save_ai_settings():
         AI_TRANSLATION_SETTINGS['base_url'] = data.get('base_url', AI_TRANSLATION_SETTINGS['base_url'])
         AI_TRANSLATION_SETTINGS['model'] = data.get('model', AI_TRANSLATION_SETTINGS['model'])
         AI_TRANSLATION_SETTINGS['expect_reasoning'] = data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+        AI_TRANSLATION_SETTINGS['compat_mode'] = parse_bool(data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
         return jsonify({
             'status': 'success',
             'api_key': AI_TRANSLATION_SETTINGS['api_key'],
@@ -2324,7 +2336,8 @@ def save_ai_settings():
             'provider': AI_TRANSLATION_SETTINGS['provider'],
             'base_url': AI_TRANSLATION_SETTINGS['base_url'],
             'model': AI_TRANSLATION_SETTINGS['model'],
-            'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning']
+            'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning'],
+            'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode']
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -2374,6 +2387,8 @@ def translate_lyrics():
         model = request_data.get('model') or AI_TRANSLATION_SETTINGS['model']
         expect_reasoning = request_data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
 
+        compat_mode = parse_bool(request_data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
+
         # 规范化 base_url，自动剔除多余路径
         def _normalize_base_url(u: str) -> str:
             if not u:
@@ -2414,6 +2429,7 @@ def translate_lyrics():
         app.logger.info(f"提取的时间戳数量: {len(timestamps)}")
         app.logger.info(f"提取的歌词行数: {len(lyrics)}")
         app.logger.info(f"系统提示词: {system_prompt[:100]}..." if len(system_prompt) > 100 else f"系统提示词: {system_prompt}")
+        app.logger.info(f"兼容模式: {'开启' if compat_mode else '关闭'}")
 
         # 验证提取的内容
         if not timestamps:
@@ -2446,6 +2462,22 @@ def translate_lyrics():
                 app.logger.debug(f"系统提示词: {system_prompt}")
                 app.logger.debug(f"用户输入摘要:\n{numbered_lyrics[:500]}..." if len(numbered_lyrics) > 500 else f"用户输入:\n{numbered_lyrics}")
 
+                if compat_mode:
+                    combined_prompt_parts = []
+                    if system_prompt:
+                        combined_prompt_parts.append(system_prompt.strip())
+                    combined_prompt_parts.append(numbered_lyrics)
+                    combined_prompt = '\n\n'.join(part for part in combined_prompt_parts if part)
+                    messages = [
+                        {"role": "user", "content": combined_prompt}
+                    ]
+                    app.logger.debug("兼容模式启用：系统提示词已合并到用户消息")
+                else:
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": numbered_lyrics}
+                    ]
+
                 # 记录API调用详细信息
                 app.logger.info(f"准备调用 {provider} API [ID: {request_id}]")
                 app.logger.info(f"基础URL: {base_url}, 模型: {model}, 歌词行数: {len(lyrics)}")
@@ -2458,10 +2490,7 @@ def translate_lyrics():
                     client = OpenAI(api_key=api_key, base_url=base_url)
                     response = client.chat.completions.create(
                         model=model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": numbered_lyrics}
-                        ],
+                        messages=messages,
                         stream=True
                     )
                     api_call_success = True
@@ -2551,7 +2580,7 @@ def translate_lyrics():
                 total_duration = time.time() - api_start_time
                 app.logger.info(f"翻译成功完成 [ID: {request_id}], 总耗时: {total_duration:.2f}秒")
                 app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
-                app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}")
+                app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}, compat_mode: {compat_mode}")
 
         return Response(generate(), mimetype='text/event-stream')
 
