@@ -862,6 +862,11 @@
                     </label>
                 </div>
                 <div>
+                    <label>
+                        <input type="checkbox" id="aiCompatMode"> 兼容模式：将提示词合并到用户消息中
+                    </label>
+                </div>
+                <div>
                     <label>API密钥：</label>
                     <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入API密钥">
                     <div style="margin-top: 5px; font-size: 12px; color: #666;">
@@ -2207,6 +2212,8 @@
                 const baseUrl = localStorage.getItem('aiBaseUrl') || 'https://api.deepseek.com';
                 const model = localStorage.getItem('aiModel') || 'deepseek-reasoner';
                 const expectReasoning = localStorage.getItem('aiExpectReasoning') === 'true';
+                const compatModeStorage = localStorage.getItem('aiCompatMode');
+                const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
 
                 const response = await fetch('/translate_lyrics', {
                     method: 'POST',
@@ -2220,7 +2227,8 @@
                         provider: provider,
                         base_url: baseUrl,
                         model: model,
-                        expect_reasoning: expectReasoning
+                        expect_reasoning: expectReasoning,
+                        compat_mode: compatMode
                     })
                 });
 
@@ -2287,6 +2295,7 @@
             const savedBaseUrl = localStorage.getItem('aiBaseUrl');
             const savedModel = localStorage.getItem('aiModel');
             const savedExpectReasoning = localStorage.getItem('aiExpectReasoning');
+            const savedCompatMode = localStorage.getItem('aiCompatMode');
 
             // 获取当前设置
             fetch('/get_ai_settings')
@@ -2300,6 +2309,7 @@
                         document.getElementById('aiBaseUrl').value = savedBaseUrl || data.settings.base_url || 'https://api.deepseek.com';
                         document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
                         document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
+                        document.getElementById('aiCompatMode').checked = savedCompatMode ? savedCompatMode === 'true' : (data.settings.compat_mode !== undefined ? data.settings.compat_mode : false);
                         document.getElementById('aiSettingsModal').style.display = 'block';
                         updateBaseUrlAndModel(); // 根据选择的提供商更新URL和模型
                     }
@@ -2380,6 +2390,7 @@
 
             const model = document.getElementById('aiModel').value;
             const expectReasoning = document.getElementById('aiExpectReasoning').checked;
+            const compatMode = document.getElementById('aiCompatMode').checked;
 
             // 保存设置到localStorage
             if (apiKey) {
@@ -2398,6 +2409,7 @@
             localStorage.setItem('aiBaseUrl', baseUrl);
             localStorage.setItem('aiModel', model);
             localStorage.setItem('aiExpectReasoning', expectReasoning);
+            localStorage.setItem('aiCompatMode', compatMode);
 
             fetch('/save_ai_settings', {
                 method: 'POST',
@@ -2410,7 +2422,8 @@
                     provider: provider,
                     base_url: baseUrl,
                     model: model,
-                    expect_reasoning: expectReasoning
+                    expect_reasoning: expectReasoning,
+                    compat_mode: compatMode
                 })
             })
             .then(response => response.json())
