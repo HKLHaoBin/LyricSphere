@@ -1,5 +1,10 @@
 # Repository Guidelines
 
+## Latest Updates (v1.5.2)
+- AI 翻译设置新增“兼容模式”开关；当目标模型仅接受单角色输入时，将系统提示词折叠进用户消息。
+- AI 翻译模块现支持配置多个提供商（OpenAI、OpenRouter 等），确保在 `backend.py` 中同步更新凭据与 `base_url`。
+- 歌词动画模板已重写 FLIP 流程，使用 WeakMap 跟踪状态；修改前请先阅读 `templates/Lyrics-style*.HTML` 中的新注释。
+
 ## Project Structure & Module Organization
 - `backend.py` runs the Flask app, AMLL bridges, AI translation helpers, and all `BASE_PATH` filesystem wiring.
 - `templates/` holds Jinja2 pages; align new views with existing lyric layouts before registering routes.
