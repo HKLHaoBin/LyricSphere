@@ -254,6 +254,93 @@
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
 
             const ERROR_MARGIN = 0.1; // 100ms 容忍区间
+            const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
+
+            function clearMoveTransition(element) {
+                if (!element) {
+                    return { residualX: 0, residualY: 0, progress: 0 };
+                }
+                const record = moveTransitionCleanup.get(element);
+                if (!record) {
+                    return { residualX: 0, residualY: 0, progress: 0 };
+                }
+
+                moveTransitionCleanup.delete(element);
+
+                let progress = 0;
+                let residualX = 0;
+                let residualY = 0;
+
+                const { animation, fromX = 0, fromY = 0 } = record;
+                if (animation && animation.effect && typeof animation.effect.getComputedTiming === 'function') {
+                    try {
+                        const timing = animation.effect.getComputedTiming();
+                        if (timing && typeof timing.progress === 'number') {
+                            progress = Math.max(0, Math.min(1, timing.progress));
+                        }
+                    } catch (e) { /* 忽略 */ }
+                }
+
+                const remaining = 1 - progress;
+                residualX = fromX * remaining;
+                residualY = fromY * remaining;
+
+                try {
+                    animation.cancel();
+                } catch (e) { /* 忽略 */ }
+
+                element.style.transform = '';
+                element.style.willChange = '';
+
+                return { residualX, residualY, progress };
+            }
+
+            function runFlipTransition(element, deltaX, deltaY) {
+                if (!element) return;
+                const { residualX, residualY, progress } = clearMoveTransition(element);
+
+                const adjustedDeltaX = deltaX + residualX;
+                const adjustedDeltaY = deltaY + residualY;
+
+                if (Math.abs(adjustedDeltaX) <= 0.5 && Math.abs(adjustedDeltaY) <= 0.5) return;
+
+                // 若上一段动画未完成，则缩短时长并使用线性缓动以平滑衔接
+                const durationFactor = progress > 0 ? Math.max(0.35, 1 - progress * 0.6) : 1;
+                const animationDuration = Math.max(180, moveDuration * durationFactor);
+                const easing = progress > 0.2 ? 'linear' : customEasing;
+
+                element.style.willChange = 'transform';
+                const animation = element.animate(
+                    [
+                        { transform: `translate(${adjustedDeltaX}px, ${adjustedDeltaY}px)` },
+                        { transform: 'translate(0, 0)' }
+                    ],
+                    {
+                        duration: animationDuration,
+                        easing,
+                        fill: 'forwards',
+                        composite: 'add'
+                    }
+                );
+
+                const record = {
+                    animation,
+                    fromX: adjustedDeltaX,
+                    fromY: adjustedDeltaY
+                };
+
+                const finalize = () => {
+                    if (moveTransitionCleanup.get(element) !== record) return;
+                    moveTransitionCleanup.delete(element);
+                    element.style.transform = '';
+                    element.style.willChange = '';
+                };
+
+                animation.addEventListener('finish', finalize, { once: true });
+                animation.addEventListener('cancel', finalize, { once: true });
+
+                moveTransitionCleanup.set(element, record);
+            }
 
             // 解析 LRC 翻译，返回 [{timeMs, content}]
             function parseLrcTranslation(content) {
@@ -487,6 +574,7 @@
                 if (placeholderLines.has(lineIndex)) {
                     const placeholderInfo = placeholderLines.get(lineIndex);
                     clearTimeout(placeholderInfo.removalTimer);
+                    clearMoveTransition(placeholderInfo.element);
                     placeholderInfo.element.remove();
                     placeholderLines.delete(lineIndex);
                 }
@@ -534,23 +622,38 @@
 
                 const outgoingLine = lineInfo.element;
 
+                // 记录当前位置用于保持淡出起点
+                const originalRect = outgoingLine.getBoundingClientRect();
+
                 // 并发锁：动画未完成时禁止移除
                 if (outgoingLine.animationLock) return;
                 outgoingLine.animationLock = true;
 
                 // 1. 创建并插入占位符
-                const rect = outgoingLine.getBoundingClientRect();
                 const placeholderEl = document.createElement('div');
-                placeholderEl.style.height = `${rect.height}px`; // 维持布局高度
+                placeholderEl.style.height = `${originalRect.height}px`; // 维持布局高度
                 outgoingLine.before(placeholderEl); // 插入到原位置
 
-                // 2. 将原歌词行脱离布局，立即执行消失动画
-                outgoingLine.style.position = 'absolute';
-                outgoingLine.style.left = `${rect.left}px`;
-                outgoingLine.style.top = `${rect.top}px`;
-                outgoingLine.style.width = `${rect.width}px`;
+                const scrollX = window.scrollX || window.pageXOffset || 0;
+                const scrollY = window.scrollY || window.pageYOffset || 0;
+                clearMoveTransition(outgoingLine);
 
-                const animation = safeAnimate(outgoingLine, [
+                // 2. 克隆一个节点用于淡出动画，原节点立即移出布局
+                const fadeLine = outgoingLine.cloneNode(true);
+                fadeLine.classList.remove('active');
+                fadeLine.style.position = 'absolute';
+                fadeLine.style.left = `${originalRect.left + scrollX}px`;
+                fadeLine.style.top = `${originalRect.top + scrollY}px`;
+                fadeLine.style.width = `${originalRect.width}px`;
+                fadeLine.style.margin = '0';
+                fadeLine.style.pointerEvents = 'none';
+                fadeLine.style.transform = '';
+                fadeLine.style.willChange = '';
+                document.body.appendChild(fadeLine);
+
+                outgoingLine.remove();
+
+                const animation = safeAnimate(fadeLine, [
                     { opacity: 1, filter: 'blur(0)', '-webkit-filter': 'blur(0)' },
                     { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' }
                 ], {
@@ -560,7 +663,7 @@
                 });
                 animation.onfinish = () => {
                     outgoingLine.animationLock = false;
-                    outgoingLine.remove();
+                    fadeLine.remove();
                 };
 
                 // 3. 100ms后再移除占位符并触发补位动画
@@ -578,16 +681,18 @@
                     recordPosition(placeholderLines, 'placeholder-');
 
                     // DOM 操作：移除占位符
+                    clearMoveTransition(placeholderEl);
                     placeholderEl.remove();
                     placeholderLines.delete(lineIndex);
 
                     // FLIP - LAST: 读取新位置
-                    const newPositions = new Map();
+                    const newPositions = [];
                     const readNewPosition = (map, keyPrefix) => {
                         map.forEach((info, index) => {
                             const key = `${keyPrefix}${index}`;
                             if (oldPositions.has(key)) {
-                                newPositions.set(key, {
+                                newPositions.push({
+                                    key,
                                     element: info.element,
                                     rect: info.element.getBoundingClientRect()
                                 });
@@ -598,21 +703,12 @@
                     readNewPosition(placeholderLines, 'placeholder-');
                     
                     // FLIP - INVERT & PLAY
-                    newPositions.forEach((newInfo, key) => {
+                    newPositions.forEach(({ key, element, rect }) => {
                         const oldRect = oldPositions.get(key);
-                        const newRect = newInfo.rect;
-                        const deltaX = oldRect.left - newRect.left;
-                        const deltaY = oldRect.top - newRect.top;
-
-                        if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
-                            safeAnimate(newInfo.element, [
-                                { transform: `translate(${deltaX}px, ${deltaY}px)` },
-                                { transform: 'translate(0, 0)' }
-                            ], {
-                                duration: moveDuration,
-                                easing: customEasing
-                            });
-                        }
+                        if (!oldRect) return;
+                        const deltaX = oldRect.left - rect.left;
+                        const deltaY = oldRect.top - rect.top;
+                        runFlipTransition(element, deltaX, deltaY);
                     });
                 }, placeholderDuration); // 100ms后再移除占位符
 
@@ -626,10 +722,10 @@
                 // FIRST: 记录所有当前显示行和占位符的位置
                 const oldPositions = new Map();
                 displayedLines.forEach((lineInfo, lineIndex) => {
-                    oldPositions.set(lineIndex, lineInfo.element.getBoundingClientRect());
+                    oldPositions.set(`line-${lineIndex}`, lineInfo.element.getBoundingClientRect());
                 });
                 placeholderLines.forEach((lineInfo, lineIndex) => {
-                    oldPositions.set(lineIndex, lineInfo.element.getBoundingClientRect());
+                    oldPositions.set(`placeholder-${lineIndex}`, lineInfo.element.getBoundingClientRect());
                 });
 
                 // 歌词行显示逻辑
@@ -669,36 +765,35 @@
                 }
 
                 // LAST: 读取新位置
-                const newPositions = new Map();
+                const newPositions = [];
                 displayedLines.forEach((lineInfo, lineIndex) => {
-                    if (oldPositions.has(lineIndex)) {
-                       newPositions.set(lineIndex, lineInfo.element.getBoundingClientRect());
+                    const key = `line-${lineIndex}`;
+                    if (oldPositions.has(key)) {
+                        newPositions.push({
+                            key,
+                            element: lineInfo.element,
+                            rect: lineInfo.element.getBoundingClientRect()
+                        });
                     }
                 });
-                 placeholderLines.forEach((lineInfo, lineIndex) => {
-                    if (oldPositions.has(lineIndex)) {
-                       newPositions.set(lineIndex, lineInfo.element.getBoundingClientRect());
+                placeholderLines.forEach((lineInfo, lineIndex) => {
+                    const key = `placeholder-${lineIndex}`;
+                    if (oldPositions.has(key)) {
+                        newPositions.push({
+                            key,
+                            element: lineInfo.element,
+                            rect: lineInfo.element.getBoundingClientRect()
+                        });
                     }
                 });
 
                 // INVERT & PLAY: 为移动的元素应用动画
-                newPositions.forEach((newRect, lineIndex) => {
-                    const oldRect = oldPositions.get(lineIndex);
-                    const lineObj = displayedLines.get(lineIndex);
-                    if (!lineObj || !lineObj.element) return;
-                    const element = lineObj.element;
-                    const deltaX = oldRect.left - newRect.left;
-                    const deltaY = oldRect.top - newRect.top;
-
-                    if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
-                        safeAnimate(element, [
-                            { transform: `translate(${deltaX}px, ${deltaY}px)` },
-                            { transform: 'translate(0, 0)' }
-                        ], {
-                            duration: moveDuration,
-                            easing: customEasing
-                        });
-                    }
+                newPositions.forEach(({ key, element, rect }) => {
+                    const oldRect = oldPositions.get(key);
+                    if (!oldRect) return;
+                    const deltaX = oldRect.left - rect.left;
+                    const deltaY = oldRect.top - rect.top;
+                    runFlipTransition(element, deltaX, deltaY);
                 });
                 
                 // 音节高亮逻辑

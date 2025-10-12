@@ -140,6 +140,83 @@ window.forceCenterAlign = false;
 window.translationData = [];
 window.displayedLines = new Map();
 window.placeholderLines = new Map();
+const moveTransitionCleanup = new WeakMap(); // 存储当前位移动画信息
+
+function clearMoveTransition(element){
+  if (!element) return { residualX: 0, residualY: 0, progress: 0 };
+  const record = moveTransitionCleanup.get(element);
+  if (!record) return { residualX: 0, residualY: 0, progress: 0 };
+
+  moveTransitionCleanup.delete(element);
+
+  let progress = 0;
+  let residualX = 0;
+  let residualY = 0;
+
+  const { animation, fromX = 0, fromY = 0 } = record;
+  if (animation && animation.effect && typeof animation.effect.getComputedTiming === 'function'){
+    try {
+      const timing = animation.effect.getComputedTiming();
+      if (timing && typeof timing.progress === 'number'){
+        progress = Math.max(0, Math.min(1, timing.progress));
+      }
+    } catch (e) { /* 忽略 */ }
+  }
+
+  const remaining = 1 - progress;
+  residualX = fromX * remaining;
+  residualY = fromY * remaining;
+
+  try { animation.cancel(); } catch (e) { /* 忽略 */ }
+
+  element.style.transform = '';
+  element.style.willChange = '';
+
+  return { residualX, residualY, progress };
+}
+
+function runFlipTransition(element, deltaX, deltaY){
+  if (!element) return;
+  const { residualX, residualY, progress } = clearMoveTransition(element);
+
+  const adjustedDeltaX = deltaX + residualX;
+  const adjustedDeltaY = deltaY + residualY;
+
+  if (Math.abs(adjustedDeltaX) <= 0.5 && Math.abs(adjustedDeltaY) <= 0.5) return;
+
+  const baseMoveDuration = window.moveDuration || 700;
+  const durationFactor = progress > 0 ? Math.max(0.35, 1 - progress * 0.6) : 1;
+  const animationDuration = Math.max(180, baseMoveDuration * durationFactor);
+  const easing = progress > 0.2 ? 'linear' : (window.customEasing || 'linear');
+
+  element.style.willChange = 'transform';
+  const animation = element.animate(
+    [
+      { transform: `translate(${adjustedDeltaX}px, ${adjustedDeltaY}px)` },
+      { transform: 'translate(0, 0)' }
+    ],
+    {
+      duration: animationDuration,
+      easing,
+      fill: 'forwards',
+      composite: 'add'
+    }
+  );
+
+  const record = { animation, fromX: adjustedDeltaX, fromY: adjustedDeltaY };
+
+  const finalize = () => {
+    if (moveTransitionCleanup.get(element) !== record) return;
+    moveTransitionCleanup.delete(element);
+    element.style.transform = '';
+    element.style.willChange = '';
+  };
+
+  animation.addEventListener('finish', finalize, { once: true });
+  animation.addEventListener('cancel', finalize, { once: true });
+
+  moveTransitionCleanup.set(element, record);
+}
 
 // ✅ 避免和自动补位重复：FLIP 期间抑制 updateLyricsDisplay 的内置补位
 window.suppressAutoFLIP = false;
@@ -471,7 +548,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.placeholderLines.has(lineIndex)){
       const ph = window.placeholderLines.get(lineIndex);
-      clearTimeout(ph.removalTimer); ph.element.remove(); window.placeholderLines.delete(lineIndex);
+      clearTimeout(ph.removalTimer);
+      clearMoveTransition(ph.element);
+      ph.element.remove();
+      window.placeholderLines.delete(lineIndex);
     }
 
     const incomingLine = createLineElement(lineIndex);
@@ -535,13 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const o = first.get(key);
           const dx = o.left - rect.left;
           const dy = o.top  - rect.top;
-          if (Math.abs(dx) > .5 || Math.abs(dy) > .5){
-            const animateFn = window.safeAnimate || ((el, kf, opt) => el.animate ? el.animate(kf, opt) : { onfinish:()=>{} });
-            animateFn(elInfo.element,
-              [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0,0)' }],
-              { duration: window.moveDuration, easing: window.customEasing }
-            );
-          }
+          runFlipTransition(elInfo.element, dx, dy);
         });
 
         // 一段时间后恢复内置补位
@@ -560,6 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const outgoing = info.element;
     if (outgoing.animationLock) return;
     outgoing.animationLock = true;
+    clearMoveTransition(outgoing);
 
     // 读取原始高度
     const rect = outgoing.getBoundingClientRect();
@@ -590,9 +665,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // 4) 动画都结束后，再移除占位符
     const settleTime = Math.max(window.exitDuration, window.moveDuration);
     const removalTimer = setTimeout(() => {
+      clearMoveTransition(placeholder);
       placeholder.remove();
       window.placeholderLines.delete(lineIndex);
     }, settleTime);
+    const placeholderInfo = window.placeholderLines.get(lineIndex);
+    if (placeholderInfo) {
+      placeholderInfo.removalTimer = removalTimer;
+    }
 
     window.displayedLines.delete(lineIndex);
   }
@@ -633,12 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!lineObj?.element) return;
         const dx = oRect.left - nRect.left;
         const dy = oRect.top  - nRect.top;
-        if (Math.abs(dx) > .5 || Math.abs(dy) > .5){
-          safeAnimate(lineObj.element,
-            [{transform:`translate(${dx}px, ${dy}px)`},{transform:'translate(0,0)'}],
-            {duration: window.moveDuration, easing: window.customEasing}
-          );
-        }
+        runFlipTransition(lineObj.element, dx, dy);
       });
     }
 
