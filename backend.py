@@ -130,65 +130,22 @@ def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=700):
     if not lines:
         return lines
 
-    # 复制索引，计算按开始时间排序，不改变原顺序
-    for idx, line in enumerate(lines):
-        line['__orig_idx'] = idx
-
-    def first_start_ms(line):
-        s = line.get('syllables', [])
-        if not s:
-            return float('inf')
-        return int(float(s[0]['startTime']) * 1000)
-
-    def last_end_ms(line):
-        s = line.get('syllables', [])
-        if not s:
-            return 0
-        last = s[-1]
-        return int(float(last['startTime']) * 1000 + float(last['duration']) * 1000)
-
-    sorted_lines = sorted(lines, key=first_start_ms)
-
-    for i, line in enumerate(sorted_lines):
-        E_i = last_end_ms(line)
-        # 候选：自身结束
-        T_candidate = E_i
-
-        # 下一行首
-        N_next = float('inf')
-        if i + 1 < len(sorted_lines):
-            N_next = first_start_ms(sorted_lines[i + 1])
-            # 贴边调整
-            if N_next - delta1 <= E_i <= N_next + delta2:
-                T_candidate = N_next + delta2
-
-        # 与上一行最终时间的礼让/衔接
-        if i > 0:
-            T_prev_final = sorted_lines[i - 1].get('disappearTime', 0)
-            if T_prev_final > T_candidate:
-                # 重叠：允许贴边，拉开动画时间
-                T_final = min(N_next, E_i + t_anim, T_prev_final + t_anim)
-            else:
-                T_final = T_candidate
-        else:
-            T_final = T_candidate
-
-        line['disappearTime'] = T_final
-        line['debug_times'] = {
-            'E_i': E_i,
-            'T_candidate': T_candidate,
-            'T_prev_final': sorted_lines[i - 1].get('disappearTime', 0) if i > 0 else 0,
-            'final': T_final
-        }
-
-    # 写回原顺序
-    disappear_map = {l['__orig_idx']: l['disappearTime'] for l in sorted_lines}
-    debug_map = {l['__orig_idx']: l['debug_times'] for l in sorted_lines}
     for line in lines:
-        line['disappearTime'] = disappear_map.get(line['__orig_idx'], 0)
-        line['debug_times'] = debug_map.get(line['__orig_idx'], {})
-        if '__orig_idx' in line:
-            del line['__orig_idx']
+        syllables = line.get('syllables', [])
+        if syllables:
+            last = syllables[-1]
+            disappear_ms = int(float(last['startTime']) * 1000 + float(last['duration']) * 1000)
+        else:
+            disappear_ms = 0
+
+        line['disappearTime'] = disappear_ms
+        line['debug_times'] = {
+            'mode': 'raw',
+            'E_i': disappear_ms,
+            'T_candidate': disappear_ms,
+            'T_prev_final': disappear_ms,
+            'final': disappear_ms
+        }
 
     # 可选：调试日志
     try:
@@ -2516,22 +2473,31 @@ def translate_lyrics():
                 stream_start_time = time.time()
                 for chunk in response:
                     received_chunks += 1
+
+                    choices = getattr(chunk, 'choices', None)
+                    if not choices:
+                        app.logger.debug(f"收到空choices数据块 [ID: {request_id}]，跳过处理")
+                        continue
+                    delta = getattr(choices[0], 'delta', None)
+                    if delta is None:
+                        app.logger.debug(f"数据块缺少delta字段 [ID: {request_id}]，跳过处理")
+                        continue
                     
                     # 记录token使用情况（如果有）
                     if hasattr(chunk, 'usage') and chunk.usage:
                         total_tokens = getattr(chunk.usage, 'total_tokens', 0)
                         
                     # 检查是否有思维链内容
-                    if expect_reasoning and hasattr(chunk.choices[0].delta, 'reasoning_content') and chunk.choices[0].delta.reasoning_content:
-                        content = chunk.choices[0].delta.reasoning_content
+                    if expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                        content = delta.reasoning_content
                         current_reasoning += content
                         app.logger.debug(f"收到思维链内容 [ID: {request_id}]: {content}")
                         # 发送思维链内容
                         yield f"reasoning:{json.dumps({'reasoning': current_reasoning})}\n"
                     
                     # 检查是否有普通内容
-                    if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
-                        content = chunk.choices[0].delta.content
+                    if hasattr(delta, 'content') and delta.content:
+                        content = delta.content
                         full_translation += content
                         app.logger.debug(f"收到翻译内容 [ID: {request_id}]: {content}")
 
@@ -2625,7 +2591,7 @@ def lyrics_animate():
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
     else:  # 默认为 'Kok' 或其他值
-        return render_template('Lyrics-style.HTML-v1.HTML')
+        return render_template('Lyrics-style.HTML-v2.HTML')
 
 @app.route('/lyrics')
 def get_lyrics():
