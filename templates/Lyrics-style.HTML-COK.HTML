@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>动态歌词展示</title>
     <style>
+        :root {
+            --rcolor: 1;
+            --color: 0.25;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background-color: #121212;
@@ -129,19 +134,11 @@
 
         .syllable {
             position: relative;
-            color: rgba(255, 255, 255, 0.2); /* 白色 20% 不透明 */
+            display: inline-block;
             text-shadow: 0 0 12px rgba(255, 255, 255, 0.4); /* 柔和发光效果 */
             filter: blur(0);
             -webkit-filter: blur(0);
-        }
-
-        .syllable.highlight {
-            color: #fff; /* 高亮音节改为白色 */
-        }
-
-        /* 卡拉OK效果 - 从左到右变色（白色替代黄色） */
-        .syllable.karaoke {
-            background: linear-gradient(90deg, #ffffff 0%, #ffffff var(--progress, 0%), rgba(255, 255, 255, 0.3) var(--progress, 0%), rgba(255, 255, 255, 0.3) 100%);
+            background-repeat: no-repeat;
             background-clip: text;
             -webkit-background-clip: text;
             color: transparent;
@@ -204,15 +201,14 @@
             const exitDuration = 700;          // 歌词行退出动画时长（毫秒）
             const placeholderDuration = 50;   // 占位符（消失行）延时
             const lineDisplayOffset = 0.5; // 歌词行提前0.3秒显示
-            const syllableDisplayOffset = 0.2; // 音节高亮提前0.2秒
 
             let displayedLines = new Map(); // 使用 Map 跟踪所有显示的行
             let placeholderLines = new Map(); // 跟踪正在消失的行的占位符
             const customEasing = 'cubic-bezier(.27,.14,0,.99)';
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
             let rafId = null; // requestAnimationFrame ID
+            const SYLLABLE_FADE_RATIO = 0.3;
 
-            const ERROR_MARGIN = 0.1; // 100ms 容忍区间
             const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
 
             function clearMoveTransition(element) {
@@ -298,37 +294,223 @@
                 animation.addEventListener('finish', finalize, { once: true });
                 animation.addEventListener('cancel', finalize, { once: true });
 
+
                 moveTransitionCleanup.set(element, record);
             }
 
+            function generateBackgroundFadeStyle(elementWidth, elementHeight, fadeRatio) {
+                            const fadeWidth = elementHeight * fadeRatio;
+                            const widthRatio = elementWidth === 0 ? 0 : fadeWidth / elementWidth;
+
+                            const totalAspect = 2 + widthRatio;
+                            const widthInTotal = totalAspect === 0 ? 0 : widthRatio / totalAspect;
+                            const leftPos = (1 - widthInTotal) / 2;
+
+                            const from = leftPos * 100;
+                            const to = (leftPos + widthInTotal) * 100;
+
+                            const backgroundImage = `linear-gradient(to right, rgba(255, 255, 255, var(--rcolor)) ${from}%, rgba(255, 255, 255, var(--color)) ${to}%)`;
+                            const backgroundSize = `${totalAspect * 100}% 100%`;
+                            const totalPxWidth = -(elementWidth + fadeWidth);
+                            return { backgroundImage, backgroundSize, totalPxWidth };
+                        }
+
+                        function createKaraokeFrames(blocks, index, lineDuration, fadeRatio) {
+                            const frames = [];
+                            if (!blocks[index]) return frames;
+
+                            const element = blocks[index].ele;
+                            const elementWidth = element.offsetWidth;
+                            const computed = getComputedStyle(element);
+                            const elementHeight = element.offsetHeight || parseFloat(computed.fontSize) || 0;
+                            const fadeWidth = elementHeight * fadeRatio;
+                            const fullBlockWidth = elementWidth + fadeWidth - 2;
+
+                            let totalDuration = Math.max(1, lineDuration);
+                            if (blocks.length > 0) {
+                                const lastBlockEnd = blocks[blocks.length - 1].endTime;
+                                const firstBlockStart = blocks[0].startTime;
+                                totalDuration = Math.max(1, lastBlockEnd - firstBlockStart);
+                            }
+
+                            let widthBeforeSelf = 0;
+                            for (let i = 0; i < index; i++) {
+                                widthBeforeSelf += blocks[i].ele.offsetWidth;
+                            }
+                            if (index > 0) {
+                                widthBeforeSelf += fadeWidth;
+                            }
+
+                            const minOffset = -(fullBlockWidth);
+                            const clampOffset = (value) => Math.max(minOffset, Math.min(0, value));
+
+                            let currentPos = -widthBeforeSelf - elementWidth - fadeWidth;
+                            let timeOffset = 0;
+                            let lastPos = currentPos;
+                            let lastTime = 0;
+                            let lastTimestamp = blocks[0].startTime;
+
+                            const pushFrame = () => {
+                                let time = Math.max(0, Math.min(1, timeOffset));
+                                time = Math.round(time * 1e9) / 1e9;
+                                if (time < lastTime) {
+                                    time = lastTime;
+                                }
+
+                                const deltaTime = time - lastTime;
+                                const moveOffset = currentPos - lastPos;
+                                const ratio = moveOffset !== 0 ? Math.abs(deltaTime / moveOffset) : 0;
+
+                                if (currentPos > minOffset && lastPos < minOffset) {
+                                    const staticTime = Math.abs(lastPos - minOffset) * ratio;
+                                    frames.push({
+                                        backgroundPosition: `${clampOffset(lastPos)}px 0`,
+                                        offset: lastTime + staticTime
+                                    });
+                                }
+
+                                if (currentPos > 0 && lastPos < 0) {
+                                    const staticTime = Math.abs(lastPos) * ratio;
+                                    frames.push({
+                                        backgroundPosition: `${clampOffset(currentPos)}px 0`,
+                                        offset: lastTime + staticTime
+                                    });
+                                }
+
+                                frames.push({
+                                    backgroundPosition: `${clampOffset(currentPos)}px 0`,
+                                    offset: time
+                                });
+
+                                lastPos = currentPos;
+                                lastTime = time;
+                            };
+
+                            pushFrame();
+
+                            blocks.forEach((block, i) => {
+                                const absoluteStart = block.startTime;
+                                const absoluteEnd = block.endTime;
+
+                                const staticDuration = absoluteStart - lastTimestamp;
+                                if (staticDuration > 0) {
+                                    timeOffset += staticDuration / totalDuration;
+                                    pushFrame();
+                                    lastTimestamp = absoluteStart;
+                                }
+
+                                const moveDuration = Math.max(0, absoluteEnd - absoluteStart);
+                                if (moveDuration > 0) {
+                                    timeOffset += moveDuration / totalDuration;
+                                    currentPos += block.ele.offsetWidth;
+                                    if (i === 0) {
+                                        currentPos += fadeWidth * 1.5;
+                                    }
+                                    if (i === blocks.length - 1) {
+                                        currentPos += fadeWidth * 0.5;
+                                    }
+                                    pushFrame();
+                                    lastTimestamp = absoluteEnd;
+                                }
+                            });
+
+                            if (frames.length > 0) {
+                                frames[frames.length - 1].offset = 1;
+                            }
+
+                            return frames;
+                        }
+
+                        function cancelLineAnimations(lineInfo, { commit } = {}) {
+                            if (!lineInfo || !lineInfo.animations) return;
+                            lineInfo.animations.forEach(animation => {
+                                try {
+                                    if (commit && typeof animation.commitStyles === 'function') {
+                                        animation.commitStyles();
+                                    }
+                                } catch (e) { /* 忽略 */ }
+                                try {
+                                    animation.cancel();
+                                } catch (e) { /* 忽略 */ }
+                            });
+                            lineInfo.animations = [];
+                        }
+
+                        function syncLineAnimations(lineInfo) {
+                            if (!lineInfo || !lineInfo.animations || lineInfo.animations.length === 0) return;
+                            const currentMs = Number.isFinite(audioPlayer.currentTime) ? audioPlayer.currentTime * 1000 : 0;
+                            const lineStart = lineInfo.lineStartMs ?? 0;
+                            const duration = Math.max(1, lineInfo.lineDuration ?? 0);
+                            const localTime = currentMs - lineStart;
+                            const clampedTime = Math.max(0, Math.min(duration, localTime));
+                            lineInfo.animations.forEach(animation => {
+                                try {
+                                    animation.currentTime = clampedTime;
+                                } catch (e) { /* 忽略 */ }
+                            });
+                        }
+
+                        function prepareSyllableAnimations(lineIndex, lineEl, lineInfo, lineData) {
+                            if (!lineInfo || !lineEl || !lineData || !Array.isArray(lineData.syllables) || lineData.syllables.length === 0) return;
+
+                            const spans = Array.from(lineEl.querySelectorAll('.syllable'));
+                            if (spans.length === 0) return;
+
+                            cancelLineAnimations(lineInfo);
+
+                            const blocks = [];
+                            for (let i = 0; i < lineData.syllables.length; i++) {
+                                const syllable = lineData.syllables[i];
+                                const span = spans[i];
+                                if (!span || !syllable) continue;
+                                const startMs = Math.round(parseFloat(syllable.startTime) * 1000);
+                                const durationMs = Math.round(parseFloat(syllable.duration) * 1000);
+                                const endMs = startMs + durationMs;
+                                blocks.push({
+                                    ele: span,
+                                    startTime: startMs,
+                                    endTime: endMs
+                                });
+                            }
+
+                            if (blocks.length === 0) return;
+
+                            const firstStart = blocks.reduce((min, block) => Math.min(min, block.startTime), Number.MAX_SAFE_INTEGER);
+                            const lastEnd = blocks.reduce((max, block) => Math.max(max, block.endTime), 0);
+                            const lineDuration = Math.max(1, lastEnd - firstStart);
+
+                            lineInfo.lineStartMs = firstStart;
+                            lineInfo.lineDuration = lineDuration;
+                            lineInfo.animations = [];
+
+                            blocks.forEach((block, idx) => {
+                                const span = block.ele;
+                                const computedStyle = getComputedStyle(span);
+                                const spanWidth = span.offsetWidth || parseFloat(computedStyle.width) || 0;
+                                const spanHeight = span.offsetHeight || parseFloat(computedStyle.fontSize) || 0;
+                                const { backgroundImage, backgroundSize, totalPxWidth } = generateBackgroundFadeStyle(spanWidth, spanHeight, SYLLABLE_FADE_RATIO);
+                                span.style.backgroundImage = backgroundImage;
+                                span.style.backgroundSize = backgroundSize;
+                                span.style.backgroundPosition = `${totalPxWidth}px 0`;
+                                span.style.backgroundRepeat = 'no-repeat';
+
+                                const frames = createKaraokeFrames(blocks, idx, lineDuration, SYLLABLE_FADE_RATIO);
+                                const animation = span.animate(frames, {
+                                    duration: lineDuration,
+                                    easing: 'linear',
+                                    fill: 'both'
+                                });
+                                animation.pause();
+                                lineInfo.animations.push(animation);
+                            });
+
+                            syncLineAnimations(lineInfo);
+                        }
+
             // 卡拉OK进度更新函数 - 只更新当前活跃行
             function updateKaraokeProgress() {
-                const now = audioPlayer.currentTime;
-                // 只找当前活跃的行
-                const activeLines = document.querySelectorAll('.lyric-line.active');
-                activeLines.forEach(lineEl => {
-                    const syllables = lineEl.querySelectorAll('.syllable');
-                    syllables.forEach(syllableEl => {
-                        const start = parseFloat(syllableEl.dataset.startTime);
-                        const duration = parseFloat(syllableEl.dataset.duration);
-                        const end = start + duration;
-
-                        if (now >= start - 99999) {  // 永远成立
-                            let progress = 0;
-                            if (now >= start && now <= end) {
-                                progress = ((now - start) / duration) * 100;
-                            } else if (now > end) {
-                                progress = 100;
-                            }
-                            if (!syllableEl.classList.contains('karaoke')) {
-                                syllableEl.classList.add('karaoke');
-                            }
-                            syllableEl.style.setProperty('--progress', progress + '%');
-                        } else {
-                            syllableEl.classList.remove('karaoke');
-                            syllableEl.style.removeProperty('--progress');
-                        }
-                    });
+                displayedLines.forEach((lineInfo) => {
+                    syncLineAnimations(lineInfo);
                 });
             }
 
@@ -597,7 +779,8 @@
                     lyricsContainer.appendChild(incomingLine);
                 }
 
-                displayedLines.set(lineIndex, { element: incomingLine });
+                const lineInfo = { element: incomingLine };
+                displayedLines.set(lineIndex, lineInfo);
 
                 const animation = safeAnimate(incomingLine, [
                     { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
@@ -610,6 +793,16 @@
                 animation.onfinish = () => {
                     incomingLine.animationLock = false;
                 };
+
+                const lineData = lyricsData[lineIndex];
+                if (lineData) {
+                    prepareSyllableAnimations(lineIndex, incomingLine, lineInfo, lineData);
+                    requestAnimationFrame(() => {
+                        if (displayedLines.has(lineIndex)) {
+                            prepareSyllableAnimations(lineIndex, incomingLine, lineInfo, lineData);
+                        }
+                    });
+                }
             }
 
             function removeLine(lineIndex) {
@@ -617,6 +810,8 @@
                 if (!lineInfo) return;
 
                 const outgoingLine = lineInfo.element;
+
+                cancelLineAnimations(lineInfo, { commit: true });
 
                 // 记录当前位置用于保持淡出起点
                 const originalRect = outgoingLine.getBoundingClientRect();
@@ -804,6 +999,7 @@
                         } else {
                             lineEl.classList.remove('active');
                         }
+                        syncLineAnimations(lineInfo);
                     });
                 }
             }
@@ -883,6 +1079,14 @@
                 playerContainer.style.setProperty('--lyric-scale', e.target.value);
                 // 将设置存入 localStorage
                 localStorage.setItem('lyricScale', e.target.value);
+                requestAnimationFrame(() => {
+                    displayedLines.forEach((lineInfo, index) => {
+                        const lineData = lyricsData[index];
+                        if (lineInfo?.element && lineData) {
+                            prepareSyllableAnimations(index, lineInfo.element, lineInfo, lineData);
+                        }
+                    });
+                });
             });
 
             // 页面加载时应用缓存的字体大小
@@ -890,6 +1094,14 @@
             if (savedScale) {
                 fontSlider.value = savedScale;
                 playerContainer.style.setProperty('--lyric-scale', savedScale);
+                requestAnimationFrame(() => {
+                    displayedLines.forEach((lineInfo, index) => {
+                        const lineData = lyricsData[index];
+                        if (lineInfo?.element && lineData) {
+                            prepareSyllableAnimations(index, lineInfo.element, lineInfo, lineData);
+                        }
+                    });
+                });
             }
 
             // Safari animate 兼容降级
