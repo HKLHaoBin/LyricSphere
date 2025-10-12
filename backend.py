@@ -2591,7 +2591,7 @@ def lyrics_animate():
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
     else:  # 默认为 'Kok' 或其他值
-        return render_template('Lyrics-style.HTML-v2.HTML')
+        return render_template('Lyrics-style.HTML-COK.HTML')
 
 @app.route('/lyrics')
 def get_lyrics():
