@@ -860,6 +860,14 @@
                 fadeLine.style.pointerEvents = 'none';
                 fadeLine.style.transform = '';
                 fadeLine.style.willChange = '';
+                const computedStyle = window.getComputedStyle(outgoingLine);
+                const lyricScale = computedStyle.getPropertyValue('--lyric-scale');
+                fadeLine.style.fontSize = computedStyle.fontSize;
+                fadeLine.style.lineHeight = computedStyle.lineHeight;
+                fadeLine.style.fontWeight = computedStyle.fontWeight;
+                if (lyricScale) {
+                    fadeLine.style.setProperty('--lyric-scale', lyricScale.trim());
+                }
                 document.body.appendChild(fadeLine);
 
                 outgoingLine.remove();

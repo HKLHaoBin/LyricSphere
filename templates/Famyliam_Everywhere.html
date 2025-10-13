@@ -43,6 +43,13 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
 
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            body {
+                padding-top: 80px;
+            }
+        }
+
         .json-list {
             display: flex;
             /* margin: 12px; */
@@ -66,11 +73,19 @@
             /* box-sizing: border-box; */
             max-width: 570px;
             min-width: 420px;
+            display: flex;
+            flex-direction: column;
         }
 
         .json-item:hover {
             transform: translateY(-2px);
             box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .json-item-header {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
         }
 
         .file-name {
@@ -88,11 +103,19 @@
             font-size: 1.2em;
         }
 
+        .json-item-actions {
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-top: 12px;
+        }
+
         .style-buttons {
             display: flex;
             flex-direction: row;
             gap: 12px;
-            margin: 15px 0;
+            margin: 0;
         }
 
         .style-button {
@@ -177,7 +200,7 @@
             display: flex;
             flex-wrap: wrap;
             gap: 5px;
-            margin-top: 10px;
+            margin-top: 0;
         }
 
         .file-preview {
@@ -346,24 +369,158 @@
 
         /* 移动端适配 */
         @media (max-width: 768px) {
+            /* 给固定的 .search-container 预留空间，按你实际高度微调 */
             body {
-                padding: 15px;
-                padding-top: 80px;
+                padding-top: 80px;   /* 你前面也用过 80px，这里沿用即可。 */
+                padding-bottom: 60px;
+            }
+
+            /* 确保列表参与正常滚动，不"常驻" */
+            .json-list {
+                position: static !important;  /* 覆盖相对定位 */
+                z-index: auto !important;
+            }
+
+            .search-container {
+                position: static;
+                padding: 12px 16px 16px;
+                background: var(--card-bg);
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+                border-bottom: 1px solid var(--border-color);
+                width: 92%;
+            }
+
+            .search-wrapper {
+                justify-content: flex-start;
+            }
+
+            .search-tools {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 16px;
+            }
+
+            .search-row {
+                width: 100%;
+                display: grid;
+                gap: 10px;
+                flex-wrap: nowrap;
+            }
+
+            .search-row--focus {
+                grid-template-columns: 1fr;
+            }
+
+            .search-row--focus .search-box {
+                max-width: none;
+            }
+
+            .search-row--sort,
+            .search-row--main,
+            .search-row--system {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .search-row .action-button,
+            .search-row button {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .device-manage-button {
+                width: 100%;
+            }
+
+            .dropdown-menu {
+                position: fixed !important;
+                top: auto !important;
+                right: 16px !important;
+                left: 16px !important;
+                bottom: 16px !important;
+                min-width: unset !important;
+                border-radius: 12px !important;
+                padding: 12px !important;
+                box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25) !important;
+            }
+
+            .json-list {
+                margin: 0;
+                padding: 16px;
+                display: flex;
+                gap: 16px;
             }
 
             .json-item {
-                padding: 15px;
+                margin: 0;
+                min-width: unset;
+                width: 100%;
+                padding: 18px;
+                border-radius: 20px;
+            }
+
+            .file-name {
+                font-size: 1.2rem;
+                line-height: 1.3;
+                flex-wrap: wrap;
+            }
+
+            .json-item-actions {
+                gap: 16px;
             }
 
             .style-buttons {
-                flex-direction: column;
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+
+            .style-button {
+                flex: 1 1 calc(50% - 10px);
+                justify-content: center;
             }
 
             .file-actions {
-                flex-direction: column;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
             }
 
-            .action-button {
+            .file-actions .action-button {
+                width: 100%;
+            }
+
+            .modal {
+                padding: 0;
+            }
+
+            .modal-content {
+                margin: 40px auto;
+                width: calc(100% - 24px);
+                height: calc(100% - 80px);
+                border-radius: 14px;
+                max-height: 92vh;
+            }
+
+            .lyrics-editor {
+                height: 220px;
+            }
+
+            .modal-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+
+            .modal-header-actions,
+            .modal-flex-group {
+                width: 100%;
+            }
+
+            .modal-header-actions button,
+            .modal-flex-group button,
+            .modal-flex-group .lyrics-action-btn,
+            .modal-flex-group label,
+            .modal-header-actions .lyrics-action-btn {
                 width: 100%;
                 justify-content: center;
             }
@@ -431,8 +588,76 @@
         }
         .search-wrapper {
             display: flex;
+            width: 100%;
+            justify-content: center;
         }
-        
+        .search-tools {
+            display: flex;
+            width: 100%;
+            max-width: 1200px;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .search-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .search-row--focus .search-box {
+            width: 100%;
+        }
+        .device-manage-button {
+            position: relative;
+            display: inline-flex;
+        }
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--modal-bg);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 8px;
+            min-width: 200px;
+            z-index: 1000;
+        }
+        .dropdown-menu button {
+            width: 100%;
+            text-align: left;
+            padding: 8px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            color: var(--text-color);
+            border-radius: 6px;
+        }
+        .dropdown-menu button:hover {
+            background: var(--tag-bg);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 8px 0;
+            gap: 12px;
+        }
+
+        .modal-header-actions,
+        .modal-flex-group {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .modal-path-group {
+            margin-top: 8px;
+        }
+
         .style-button.disabled-style {
             background: #e9ecef !important;
             color: #bbb !important;
@@ -444,23 +669,31 @@
 <body>
     <div class="search-container">
         <div class="search-wrapper">
-            <div style="display: flex;width: 100%;gap: 10px;justify-content: center;">
-                <input type="text" class="search-box" id="searchBox" placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
-                <button class="action-button" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
-                <button class="action-button" onclick="toggleSort('time')" id="timeSortBtn">时间倒序</button>
-                <button class="action-button" onclick="showCreateModal()" style="flex-shrink: 0;">创建新歌曲</button>
-                <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
-                <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
-                <button class="action-button" id="securityToggleBtn" onclick="toggleSecurityMode()" title="安全保护：默认开启，防止外部修改">🔒 安全保护</button>
-                <button class="action-button" id="authToggleBtn" onclick="toggleAuthModal()" title="解锁本设备编辑权限">🔑 解锁本设备</button>
-                <button class="action-button" onclick="openAMLL()" title="打开AMLL歌词界面">AMLL源</button>
-                <div class="action-button" style="position: relative;">
-                    ⚙️ 设备管理
-                    <div class="dropdown-menu" style="display: none; position: absolute; top: 100%; right: 0; background: var(--modal-bg); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); padding: 8px; min-width: 180px; z-index: 1000;">
-                        <button onclick="showTrustedDevices()" style="width: 100%; text-align: left; padding: 8px; border: none; background: none; cursor: pointer;">📋 查看设备</button>
-                        <button onclick="showSetPasswordModal()" style="width: 100%; text-align: left; padding: 8px; border: none; background: none; cursor: pointer;">🔐 设置密码</button>
-                        <button onclick="showRevokeDeviceModal()" style="width: 100%; text-align: left; padding: 8px; border: none; background: none; cursor: pointer;">🚫 吊销设备</button>
-                        <button onclick="revokeAllDevices()" style="width: 100%; text-align: left; padding: 8px; border: none; background: none; cursor: pointer;">🗑️ 清空设备</button>
+            <div class="search-tools">
+                <div class="search-row search-row--focus">
+                    <input type="text" class="search-box" id="searchBox" placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
+                </div>
+                <div class="search-row search-row--sort">
+                    <button class="action-button" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
+                    <button class="action-button" onclick="toggleSort('time')" id="timeSortBtn">时间倒序</button>
+                </div>
+                <div class="search-row search-row--main">
+                    <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
+                    <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
+                    <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
+                </div>
+                <div class="search-row search-row--system">
+                    <button class="action-button" id="securityToggleBtn" onclick="toggleSecurityMode()" title="安全保护：默认开启，防止外部修改">🔒 安全保护</button>
+                    <button class="action-button" id="authToggleBtn" onclick="toggleAuthModal()" title="解锁本设备编辑权限">🔑 解锁本设备</button>
+                    <button class="action-button" onclick="openAMLL()" title="打开AMLL歌词界面">AMLL源</button>
+                    <div class="action-button device-manage-button">
+                        ⚙️ 设备管理
+                        <div class="dropdown-menu" style="display: none;">
+                            <button onclick="showTrustedDevices()">📋 查看设备</button>
+                            <button onclick="showSetPasswordModal()">🔐 设置密码</button>
+                            <button onclick="showRevokeDeviceModal()">🚫 吊销设备</button>
+                            <button onclick="revokeAllDevices()">🗑️ 清空设备</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -470,30 +703,33 @@
     <ul class="json-list" id="jsonList">
         {% for file in json_files %}
         <li class="json-item" data-mtime="{{ file.mtime }}">
-            <div class="file-name">{{ file.filename.replace('.json', '') }} <button class="copy-btn" onclick="copyFileName(this)" title="复制文件名">📋</button></div>
-            <div class="song-tags">
-                {% if '::' in file.data.meta.lyrics %}
-                {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
-                {% if lyrics_parts|length >= 4 and lyrics_parts[1] != '!' %}
-                <div id="tags-{{ file.filename }}" class="song-tags"></div>
-                <script>
-                    // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
-                    document.addEventListener('DOMContentLoaded', function () {
-                        checkLyrics('{{ lyrics_parts[1] }}', '{{ file.filename }}')
-                    });
-                </script>
-                {% endif %}
-                {% elif file.data.meta.lyrics.startswith('http://') %}
-                <div id="tags-{{ file.filename }}" class="song-tags"></div>
-                <script>
-                    // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
-                    document.addEventListener('DOMContentLoaded', function () {
-                        checkLyrics('{{ file.data.meta.lyrics }}', '{{ file.filename }}')
-                    });
-                </script>
-                {% endif %}
+            <div class="json-item-header">
+                <div class="file-name">{{ file.filename.replace('.json', '') }} <button class="copy-btn" onclick="copyFileName(this)" title="复制文件名">📋</button></div>
+                <div class="song-tags">
+                    {% if '::' in file.data.meta.lyrics %}
+                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
+                    {% if lyrics_parts|length >= 4 and lyrics_parts[1] != '!' %}
+                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
+                    <script>
+                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
+                        document.addEventListener('DOMContentLoaded', function () {
+                            checkLyrics('{{ lyrics_parts[1] }}', '{{ file.filename }}')
+                        });
+                    </script>
+                    {% endif %}
+                    {% elif file.data.meta.lyrics.startswith('http://') %}
+                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
+                    <script>
+                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
+                        document.addEventListener('DOMContentLoaded', function () {
+                            checkLyrics('{{ file.data.meta.lyrics }}', '{{ file.filename }}')
+                        });
+                    </script>
+                    {% endif %}
+                </div>
             </div>
-            <div class="style-buttons">
+            <div class="json-item-actions">
+                <div class="style-buttons">
                 <!--<button class="style-button am-style"
                     onclick="openFamyliamCloud('{{ file.filename|e }}', 'fsam')">AM歌词样式</button>-->
                 <button class="style-button fs-style"
@@ -506,29 +742,30 @@
                 <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', 'Kok')">Kok</button>
                 <!-- <button class="style-button am-style"
                     onclick="openFamyliamCloud('{{ file.filename|e }}', 'am')">visual-lyric歌词样式</button> -->
-            </div>
-            <div class="file-actions">
-                {% if '::' in file.data.meta.lyrics %}
-                {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
-                {% if lyrics_parts|length >= 4 %}
-                <button class="action-button" 
-                    onclick="editLyrics('{{ lyrics_parts[1]|e }}', '{{ lyrics_parts[2]|e }}', 0, '{{ file.filename|e }}')">修改歌词</button>
-                {% else %}
-                <button class="action-button" 
-                    onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
-                {% endif %}
-                {% else %}
-                <button class="action-button" 
-                    onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
-                {% endif %}
-                <button class="action-button" 
-                    onclick="editMusicPath('{{ file.data.song|e }}', '{{ file.filename|e }}')">修改音乐路径</button>
-                <button class="action-button" 
-                    onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
-                <button class="action-button" 
-                    onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
-                <button class="action-button"
-                    onclick="if(confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
+                </div>
+                <div class="file-actions">
+                    {% if '::' in file.data.meta.lyrics %}
+                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
+                    {% if lyrics_parts|length >= 4 %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ lyrics_parts[1]|e }}', '{{ lyrics_parts[2]|e }}', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% else %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% endif %}
+                    {% else %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% endif %}
+                    <button class="action-button" 
+                        onclick="editMusicPath('{{ file.data.song|e }}', '{{ file.filename|e }}')">修改音乐路径</button>
+                    <button class="action-button" 
+                        onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
+                    <button class="action-button" 
+                        onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
+                    <button class="action-button"
+                        onclick="if(confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
+                </div>
             </div>
             <div class="file-preview" id="preview-{{ file.filename }}">
                 <div class="preview-content"></div>
@@ -539,13 +776,9 @@
 
     <div id="lyricsModal" class="modal">
         <div class="modal-content">
-            <div style="display: flex; 
-                       justify-content: space-between;
-                       align-items: center;
-                       margin-bottom: 15px;
-                       padding: 8px 0;">
+            <div class="modal-header">
                 <h2 style="margin: 0; font-size: 1.5rem;">编辑歌词 ： <span id="currentFileName"></span><button class="copy-btn" onclick="copyCurrentFileName()" title="复制文件名">📋</button></h2>
-                <div style="display: flex; gap: 8px;">
+                <div class="modal-header-actions">
                     <button class="lyrics-action-btn save-all-btn" onclick="saveAllLyrics()">💾 保存全部</button>
                     <button class="lyrics-action-btn close-btn" onclick="closeLyricsModal()">🚪 关闭</button>
                 </div>
@@ -556,7 +789,7 @@
                     <div>
                         <label>歌词文件路径：</label>
                         <input type="text" id="lyricsPath" class="file-path-input">
-                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <div class="modal-flex-group modal-path-group">
                             <button class="lyrics-action-btn path-update-btn" onclick="updateLyricsPath(0)">🔄
                                 更新路径</button>
                             <button class="lyrics-action-btn path-update-btn" onclick="convertTTML()">
@@ -591,7 +824,7 @@
                     <div>
                         <label>翻译文件路径：</label>
                         <input type="text" id="translationPath" class="file-path-input">
-                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <div class="modal-flex-group modal-path-group">
                             <button class="lyrics-action-btn path-update-btn" onclick="updateLyricsPath(1)">🔄
                                 更新路径</button>
                             <button class="lyrics-action-btn path-update-btn" onclick="setCurrentFileNameAsTranslation()">
@@ -867,6 +1100,11 @@
                     </label>
                 </div>
                 <div>
+                    <label>
+                        <input type="checkbox" id="aiThinkingEnabled" checked> 启用思考模式（先生成整首歌理解）
+                    </label>
+                </div>
+                <div>
                     <label>API密钥：</label>
                     <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入API密钥">
                     <div style="margin-top: 5px; font-size: 12px; color: #666;">
@@ -877,8 +1115,42 @@
                     <label>翻译提示词：</label>
                     <textarea id="aiSystemPrompt" class="lyrics-editor" style="height: 150px;" placeholder="设置AI翻译的提示词，用于指导AI如何翻译歌词"></textarea>
                 </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+                    <h3 style="margin: 0 0 8px 0;">思考模型设置</h3>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                        可选：先调用思考模型生成整首歌理解，再将结果传给翻译模型。留空的字段将沿用翻译设置。
+                    </div>
+                    <div>
+                        <label>思考模型提供商：</label>
+                        <select id="aiThinkingProvider" class="file-path-input">
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="together">Together</option>
+                            <option value="groq">Groq</option>
+                            <option value="custom">自定义</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>思考模型基础URL：</label>
+                        <input type="text" id="aiThinkingBaseUrl" class="file-path-input" placeholder="默认沿用翻译模型的基础URL">
+                    </div>
+                    <div>
+                        <label>思考模型名称：</label>
+                        <input type="text" id="aiThinkingModel" class="file-path-input" placeholder="默认沿用翻译模型名称">
+                    </div>
+                    <div>
+                        <label>思考模型API密钥（可选）：</label>
+                        <input type="password" id="aiThinkingApiKey" class="file-path-input" placeholder="留空则沿用翻译API密钥">
+                    </div>
+                    <div>
+                        <label>思考提示词：</label>
+                        <textarea id="aiThinkingPrompt" class="lyrics-editor" style="height: 120px;" placeholder="设置思考模型的提示词，用于生成整首歌的理解"></textarea>
+                    </div>
+                </div>
                 <div class="editor-buttons">
-                    <button onclick="probeAIConnection()">测试连接</button>
+                    <button onclick="probeAIConnection('translation', this)" data-probe="translation">测试翻译模型</button>
+                    <button onclick="probeAIConnection('thinking', this)" data-probe="thinking">测试思考模型</button>
                     <button onclick="saveAISettings()">保存设置</button>
                     <button onclick="closeAISettings()">取消</button>
                 </div>
@@ -903,13 +1175,13 @@
                         if (data.hasDuet) {
                             const duetTag = document.createElement('span')
                             duetTag.className = 'song-tag duet-tag'
-                            duetTag.textContent = '包含对唱'
+                            duetTag.textContent = '包含对唱歌词'
                             tagsContainer.appendChild(duetTag)
                         }
                         if (data.hasBackgroundVocals) {
                             const bgTag = document.createElement('span')
                             bgTag.className = 'song-tag background-vocals-tag'
-                            bgTag.textContent = '包含背景人声'
+                            bgTag.textContent = '包含背景歌词'
                             tagsContainer.appendChild(bgTag)
                         }
                     }
@@ -2214,6 +2486,16 @@
                 const expectReasoning = localStorage.getItem('aiExpectReasoning') === 'true';
                 const compatModeStorage = localStorage.getItem('aiCompatMode');
                 const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
+                const thinkingEnabledStorage = localStorage.getItem('aiThinkingEnabled');
+                const thinkingEnabled = thinkingEnabledStorage ? thinkingEnabledStorage === 'true' : true;
+                const thinkingApiKey = localStorage.getItem('aiThinkingApiKey') || '';
+                const thinkingProviderStored = localStorage.getItem('aiThinkingProvider');
+                const thinkingBaseUrlStored = localStorage.getItem('aiThinkingBaseUrl');
+                const thinkingModelStored = localStorage.getItem('aiThinkingModel');
+                const thinkingPrompt = localStorage.getItem('aiThinkingPrompt');
+                const thinkingProvider = thinkingProviderStored && thinkingProviderStored.length > 0 ? thinkingProviderStored : provider;
+                const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
+                const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
 
                 const response = await fetch('/translate_lyrics', {
                     method: 'POST',
@@ -2228,7 +2510,13 @@
                         base_url: baseUrl,
                         model: model,
                         expect_reasoning: expectReasoning,
-                        compat_mode: compatMode
+                        compat_mode: compatMode,
+                        thinking_enabled: thinkingEnabled,
+                        thinking_api_key: thinkingApiKey,
+                        thinking_provider: thinkingProvider,
+                        thinking_base_url: thinkingBaseUrl,
+                        thinking_model: thinkingModel,
+                        thinking_system_prompt: thinkingPrompt
                     })
                 });
 
@@ -2237,6 +2525,21 @@
                 const decoder = new TextDecoder();
                 let translationContent = '';
                 let reasoningContent = '';
+                let thinkingContent = '';
+
+                const updateEditor = () => {
+                    const sections = [];
+                    if (thinkingContent) {
+                        sections.push('歌曲理解:\n' + thinkingContent);
+                    }
+                    if (translationContent) {
+                        sections.push(translationContent);
+                    }
+                    if (reasoningContent) {
+                        sections.push('思考过程:\n' + reasoningContent);
+                    }
+                    translationEditor.value = sections.join('\n\n');
+                };
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -2251,19 +2554,29 @@
                                 const content = JSON.parse(line.slice(8));
                                 if (content.translations) {
                                     translationContent = content.translations.join('\n');
-                                    // 将翻译内容和思维链内容组合显示
-                                    translationEditor.value = translationContent + (reasoningContent ? '\n\n思考过程:\n' + reasoningContent : '');
+                                    updateEditor();
                                 }
                             } catch (e) {
                                 console.error('解析翻译内容时出错:', e);
+                            }
+                        } else if (line.startsWith('thinking:')) {
+                            try {
+                                const content = JSON.parse(line.slice(9));
+                                if (content.summary) {
+                                    thinkingContent = content.summary;
+                                } else if (content.error) {
+                                    thinkingContent = '思考模型调用失败：' + content.error;
+                                }
+                                updateEditor();
+                            } catch (e) {
+                                console.error('解析思考内容时出错:', e);
                             }
                         } else if (line.startsWith('reasoning:')) {
                             try {
                                 const content = JSON.parse(line.slice(10));
                                 if (content.reasoning) {
                                     reasoningContent = content.reasoning;
-                                    // 将翻译内容和思维链内容组合显示
-                                    translationEditor.value = translationContent + (reasoningContent ? '\n\n思考过程:\n' + reasoningContent : '');
+                                    updateEditor();
                                 }
                             } catch (e) {
                                 console.error('解析思维链内容时出错:', e);
@@ -2296,6 +2609,12 @@
             const savedModel = localStorage.getItem('aiModel');
             const savedExpectReasoning = localStorage.getItem('aiExpectReasoning');
             const savedCompatMode = localStorage.getItem('aiCompatMode');
+            const savedThinkingEnabled = localStorage.getItem('aiThinkingEnabled');
+            const savedThinkingProvider = localStorage.getItem('aiThinkingProvider');
+            const savedThinkingBaseUrl = localStorage.getItem('aiThinkingBaseUrl');
+            const savedThinkingModel = localStorage.getItem('aiThinkingModel');
+            const savedThinkingApiKey = localStorage.getItem('aiThinkingApiKey');
+            const savedThinkingPrompt = localStorage.getItem('aiThinkingPrompt');
 
             // 获取当前设置
             fetch('/get_ai_settings')
@@ -2310,8 +2629,15 @@
                         document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
                         document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
                         document.getElementById('aiCompatMode').checked = savedCompatMode ? savedCompatMode === 'true' : (data.settings.compat_mode !== undefined ? data.settings.compat_mode : false);
+                        document.getElementById('aiThinkingEnabled').checked = savedThinkingEnabled ? savedThinkingEnabled === 'true' : (data.settings.thinking_enabled !== undefined ? data.settings.thinking_enabled : true);
+                        document.getElementById('aiThinkingProvider').value = savedThinkingProvider || data.settings.thinking_provider || data.settings.provider || 'deepseek';
+                        document.getElementById('aiThinkingBaseUrl').value = savedThinkingBaseUrl || data.settings.thinking_base_url || data.settings.base_url || '';
+                        document.getElementById('aiThinkingModel').value = savedThinkingModel || data.settings.thinking_model || data.settings.model || '';
+                        document.getElementById('aiThinkingApiKey').value = savedThinkingApiKey || data.settings.thinking_api_key || '';
+                        document.getElementById('aiThinkingPrompt').value = savedThinkingPrompt || data.settings.thinking_system_prompt || '';
                         document.getElementById('aiSettingsModal').style.display = 'block';
                         updateBaseUrlAndModel(); // 根据选择的提供商更新URL和模型
+                        updateThinkingBaseUrlAndModel();
                     }
                 })
                 .catch(error => {
@@ -2324,50 +2650,60 @@
             document.getElementById('aiSettingsModal').style.display = 'none';
         }
 
+        const PROVIDER_PRESETS = {
+            'deepseek': {
+                baseUrl: 'https://api.deepseek.com',
+                model: 'deepseek-reasoner'
+            },
+            'openai': {
+                baseUrl: 'https://api.openai.com/v1',
+                model: 'gpt-4o-mini'
+            },
+            'openrouter': {
+                baseUrl: 'https://openrouter.ai/api/v1',
+                model: 'openai/gpt-4o-mini'
+            },
+            'together': {
+                baseUrl: 'https://api.together.xyz/v1',
+                model: 'mistralai/Mistral-7B-Instruct-v0.3'
+            },
+            'groq': {
+                baseUrl: 'https://api.groq.com/openai/v1',
+                model: 'llama-3.1-70b-versatile'
+            }
+        };
+
         // 根据选择的提供商更新基础URL和模型
-        function updateBaseUrlAndModel() {
-            const provider = document.getElementById('aiProvider').value;
-            const baseUrlInput = document.getElementById('aiBaseUrl');
-            const modelInput = document.getElementById('aiModel');
+        function applyProviderPreset(providerSelectId, baseInputId, modelInputId) {
+            const providerSelect = document.getElementById(providerSelectId);
+            const baseUrlInput = document.getElementById(baseInputId);
+            const modelInput = document.getElementById(modelInputId);
 
-            // 预设提供商的默认配置
-            const presets = {
-                'deepseek': {
-                    baseUrl: 'https://api.deepseek.com',
-                    model: 'deepseek-reasoner'
-                },
-                'openai': {
-                    baseUrl: 'https://api.openai.com/v1',
-                    model: 'gpt-4o-mini'
-                },
-                'openrouter': {
-                    baseUrl: 'https://openrouter.ai/api/v1',
-                    model: 'openai/gpt-4o-mini'
-                },
-                'together': {
-                    baseUrl: 'https://api.together.xyz/v1',
-                    model: 'mistralai/Mistral-7B-Instruct-v0.3'
-                },
-                'groq': {
-                    baseUrl: 'https://api.groq.com/openai/v1',
-                    model: 'llama-3.1-70b-versatile'
-                }
-            };
+            if (!providerSelect || !baseUrlInput || !modelInput) {
+                return;
+            }
 
-            if (provider === 'custom') {
-                // 自定义模式下启用输入框
+            const provider = providerSelect.value;
+            const preset = PROVIDER_PRESETS[provider];
+
+            if (provider === 'custom' || !preset) {
                 baseUrlInput.readOnly = false;
                 modelInput.readOnly = false;
-            } else {
-                // 预设模式下自动填充并禁用输入框
-                const preset = presets[provider];
-                if (preset) {
-                    baseUrlInput.value = preset.baseUrl;
-                    modelInput.value = preset.model;
-                    baseUrlInput.readOnly = true;
-                    modelInput.readOnly = true;
-                }
+                return;
             }
+
+            baseUrlInput.value = preset.baseUrl;
+            modelInput.value = preset.model;
+            baseUrlInput.readOnly = true;
+            modelInput.readOnly = true;
+        }
+
+        function updateBaseUrlAndModel() {
+            applyProviderPreset('aiProvider', 'aiBaseUrl', 'aiModel');
+        }
+
+        function updateThinkingBaseUrlAndModel() {
+            applyProviderPreset('aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel');
         }
 
         // 页面加载完成后添加事件监听器
@@ -2376,21 +2712,38 @@
             if (providerSelect) {
                 providerSelect.addEventListener('change', updateBaseUrlAndModel);
             }
+            const thinkingProviderSelect = document.getElementById('aiThinkingProvider');
+            if (thinkingProviderSelect) {
+                thinkingProviderSelect.addEventListener('change', updateThinkingBaseUrlAndModel);
+            }
         });
+
+        function sanitizeBaseUrl(value) {
+            if (!value) {
+                return '';
+            }
+            return value.trim().replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
+        }
 
         function saveAISettings() {
             const apiKey = document.getElementById('aiApiKey').value;
             const systemPrompt = document.getElementById('aiSystemPrompt').value;
             const provider = document.getElementById('aiProvider').value;
 
-            // 清洗 base_url，去掉用户误填的 /chat/completions 或 /responses/...
-            let baseUrl = document.getElementById('aiBaseUrl').value.trim();
-            baseUrl = baseUrl.replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
+            let baseUrl = sanitizeBaseUrl(document.getElementById('aiBaseUrl').value);
             document.getElementById('aiBaseUrl').value = baseUrl;
 
             const model = document.getElementById('aiModel').value;
             const expectReasoning = document.getElementById('aiExpectReasoning').checked;
             const compatMode = document.getElementById('aiCompatMode').checked;
+            const thinkingEnabled = document.getElementById('aiThinkingEnabled').checked;
+
+            const thinkingProvider = document.getElementById('aiThinkingProvider').value;
+            let thinkingBaseUrl = sanitizeBaseUrl(document.getElementById('aiThinkingBaseUrl').value);
+            document.getElementById('aiThinkingBaseUrl').value = thinkingBaseUrl;
+            const thinkingModel = document.getElementById('aiThinkingModel').value;
+            const thinkingApiKey = document.getElementById('aiThinkingApiKey').value;
+            const thinkingPrompt = document.getElementById('aiThinkingPrompt').value;
 
             // 保存设置到localStorage
             if (apiKey) {
@@ -2410,6 +2763,31 @@
             localStorage.setItem('aiModel', model);
             localStorage.setItem('aiExpectReasoning', expectReasoning);
             localStorage.setItem('aiCompatMode', compatMode);
+            localStorage.setItem('aiThinkingEnabled', thinkingEnabled);
+
+            if (thinkingApiKey) {
+                localStorage.setItem('aiThinkingApiKey', thinkingApiKey);
+            } else {
+                localStorage.removeItem('aiThinkingApiKey');
+            }
+
+            if (thinkingPrompt) {
+                localStorage.setItem('aiThinkingPrompt', thinkingPrompt);
+            } else {
+                localStorage.removeItem('aiThinkingPrompt');
+            }
+
+            localStorage.setItem('aiThinkingProvider', thinkingProvider);
+            if (thinkingBaseUrl) {
+                localStorage.setItem('aiThinkingBaseUrl', thinkingBaseUrl);
+            } else {
+                localStorage.removeItem('aiThinkingBaseUrl');
+            }
+            if (thinkingModel) {
+                localStorage.setItem('aiThinkingModel', thinkingModel);
+            } else {
+                localStorage.removeItem('aiThinkingModel');
+            }
 
             fetch('/save_ai_settings', {
                 method: 'POST',
@@ -2423,7 +2801,13 @@
                     base_url: baseUrl,
                     model: model,
                     expect_reasoning: expectReasoning,
-                    compat_mode: compatMode
+                    compat_mode: compatMode,
+                    thinking_enabled: thinkingEnabled,
+                    thinking_api_key: thinkingApiKey,
+                    thinking_provider: thinkingProvider,
+                    thinking_base_url: thinkingBaseUrl,
+                    thinking_model: thinkingModel,
+                    thinking_system_prompt: thinkingPrompt
                 })
             })
             .then(response => response.json())
@@ -2442,25 +2826,49 @@
         }
 
         // 测试AI连接
-        async function probeAIConnection() {
-            const apiKey = document.getElementById('aiApiKey').value;
-            const baseUrl = document.getElementById('aiBaseUrl').value.trim();
+        async function probeAIConnection(mode = 'translation', btn = null) {
+            const isThinking = mode === 'thinking';
+            const targetLabel = isThinking ? '思考模型' : '翻译模型';
+
+            const mainApiKeyInput = document.getElementById('aiApiKey');
+            const mainBaseUrlInput = document.getElementById('aiBaseUrl');
+            const thinkingApiKeyInput = document.getElementById('aiThinkingApiKey');
+            const thinkingBaseUrlInput = document.getElementById('aiThinkingBaseUrl');
+
+            let apiKeyInput = isThinking ? thinkingApiKeyInput : mainApiKeyInput;
+            let baseUrlInput = isThinking ? thinkingBaseUrlInput : mainBaseUrlInput;
+
+            let apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+            if (!apiKey && isThinking && mainApiKeyInput) {
+                apiKey = mainApiKeyInput.value.trim();
+            }
 
             if (!apiKey) {
-                alert('请先填写API密钥');
+                alert(`请先填写${targetLabel}的API密钥`);
                 return;
+            }
+
+            let baseUrl = baseUrlInput ? baseUrlInput.value.trim() : '';
+            if (!baseUrl && isThinking && mainBaseUrlInput) {
+                baseUrl = mainBaseUrlInput.value.trim();
             }
 
             if (!baseUrl) {
-                alert('请先填写Base URL');
+                alert(`请先填写${targetLabel}的Base URL`);
                 return;
             }
 
-            // 显示测试中状态
-            const probeBtn = document.querySelector('button[onclick="probeAIConnection()"]');
-            const originalText = probeBtn.textContent;
-            probeBtn.textContent = '测试中...';
-            probeBtn.disabled = true;
+            baseUrl = sanitizeBaseUrl(baseUrl);
+            if (baseUrlInput && baseUrlInput.value.trim() !== baseUrl) {
+                baseUrlInput.value = baseUrl;
+            }
+
+            const probeBtn = btn || document.querySelector(`button[data-probe="${isThinking ? 'thinking' : 'translation'}"]`);
+            const originalText = probeBtn ? probeBtn.textContent : '';
+            if (probeBtn) {
+                probeBtn.textContent = '测试中...';
+                probeBtn.disabled = true;
+            }
 
             try {
                 const response = await fetch('/probe_ai', {
@@ -2469,6 +2877,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
+                        mode,
                         api_key: apiKey,
                         base_url: baseUrl
                     })
@@ -2477,22 +2886,22 @@
                 const data = await response.json();
 
                 if (data.status === 'success') {
-                    // 显示前10个模型作为示例
-                    const modelList = data.models.slice(0, 10).join('\n');
-                    const moreCount = Math.max(0, data.models.length - 10);
+                    const models = data.models || [];
+                    const modelList = models.slice(0, 10).join('\n');
+                    const moreCount = Math.max(0, models.length - 10);
                     const moreText = moreCount > 0 ? `\n...还有${moreCount}个模型` : '';
-
-                    alert(`连接成功！\n可用模型（前10个）:\n${modelList}${moreText}`);
+                    alert(`${targetLabel}连接成功！\n可用模型（前10个）：\n${modelList || '（空）'}${moreText}`);
                 } else {
-                    alert(`连接失败：${data.message}`);
+                    alert(`${targetLabel}连接失败：${data.message}`);
                 }
             } catch (error) {
-                console.error('测试连接失败：', error);
-                alert('测试连接失败，请查看控制台获取详细信息。');
+                console.error(`${targetLabel}测试连接失败：`, error);
+                alert(`${targetLabel}测试连接失败，请查看控制台获取详细信息。`);
             } finally {
-                // 恢复按钮状态
-                probeBtn.textContent = originalText;
-                probeBtn.disabled = false;
+                if (probeBtn) {
+                    probeBtn.textContent = originalText;
+                    probeBtn.disabled = false;
+                }
             }
         }
 
