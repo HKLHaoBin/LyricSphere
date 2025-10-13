@@ -152,7 +152,13 @@ AI_TRANSLATION_SETTINGS = {
     'base_url': 'https://api.deepseek.com',
     'model': 'deepseek-reasoner',
     'expect_reasoning': True,
-    'compat_mode': False
+    'compat_mode': False,
+    'thinking_enabled': True,
+    'thinking_api_key': '',
+    'thinking_provider': 'deepseek',
+    'thinking_base_url': 'https://api.deepseek.com',
+    'thinking_model': 'deepseek-reasoner',
+    'thinking_system_prompt': '''你是一位资深的歌词分析师。请通读整首歌的歌词，生成对歌曲主题、情绪、叙事视角和潜在文化背景的综合理解，并指出可能影响翻译语气的关键细节。'''
 }
 
 
@@ -2435,6 +2441,12 @@ def save_ai_settings():
         AI_TRANSLATION_SETTINGS['model'] = data.get('model', AI_TRANSLATION_SETTINGS['model'])
         AI_TRANSLATION_SETTINGS['expect_reasoning'] = data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
         AI_TRANSLATION_SETTINGS['compat_mode'] = parse_bool(data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
+        AI_TRANSLATION_SETTINGS['thinking_enabled'] = parse_bool(data.get('thinking_enabled'), AI_TRANSLATION_SETTINGS['thinking_enabled'])
+        AI_TRANSLATION_SETTINGS['thinking_api_key'] = data.get('thinking_api_key', AI_TRANSLATION_SETTINGS['thinking_api_key'])
+        AI_TRANSLATION_SETTINGS['thinking_provider'] = data.get('thinking_provider', AI_TRANSLATION_SETTINGS['thinking_provider'])
+        AI_TRANSLATION_SETTINGS['thinking_base_url'] = data.get('thinking_base_url', AI_TRANSLATION_SETTINGS['thinking_base_url'])
+        AI_TRANSLATION_SETTINGS['thinking_model'] = data.get('thinking_model', AI_TRANSLATION_SETTINGS['thinking_model'])
+        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = data.get('thinking_system_prompt', AI_TRANSLATION_SETTINGS['thinking_system_prompt'])
         return jsonify({
             'status': 'success',
             'api_key': AI_TRANSLATION_SETTINGS['api_key'],
@@ -2443,7 +2455,13 @@ def save_ai_settings():
             'base_url': AI_TRANSLATION_SETTINGS['base_url'],
             'model': AI_TRANSLATION_SETTINGS['model'],
             'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning'],
-            'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode']
+            'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode'],
+            'thinking_enabled': AI_TRANSLATION_SETTINGS['thinking_enabled'],
+            'thinking_api_key': AI_TRANSLATION_SETTINGS['thinking_api_key'],
+            'thinking_provider': AI_TRANSLATION_SETTINGS['thinking_provider'],
+            'thinking_base_url': AI_TRANSLATION_SETTINGS['thinking_base_url'],
+            'thinking_model': AI_TRANSLATION_SETTINGS['thinking_model'],
+            'thinking_system_prompt': AI_TRANSLATION_SETTINGS['thinking_system_prompt']
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -2454,8 +2472,14 @@ def probe_ai():
         return abort(403)
     try:
         request_data = request.get_json(silent=True) or {}
-        api_key = request_data.get('api_key', '')
-        base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
+        mode = (request_data.get('mode') or 'translation').lower()
+
+        if mode == 'thinking':
+            api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('thinking_api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
+            base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
+        else:
+            api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
+            base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
 
         # 规范化 base_url，去掉用户误填的 /chat/completions 等尾巴
         def _normalize_base_url(u: str) -> str:
@@ -2466,16 +2490,20 @@ def probe_ai():
 
         base_url = _normalize_base_url(base_url_raw)
         if not api_key:
-            return jsonify({'status': 'error', 'message': '未提供API密钥'})
+            target = '思考模型' if mode == 'thinking' else '翻译模型'
+            return jsonify({'status': 'error', 'message': f'未提供{target}的API密钥'})
+        if not base_url:
+            target = '思考模型' if mode == 'thinking' else '翻译模型'
+            return jsonify({'status': 'error', 'message': f'未提供{target}的Base URL'})
 
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=base_url)
         models = client.models.list()
         names = [m.id for m in getattr(models, 'data', [])]
-        return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url})
+        return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url, 'mode': mode})
     except Exception as e:
         app.logger.error(f"探活AI服务时出错: {e}", exc_info=True)
-        return jsonify({'status': 'error', 'message': f'探活失败: {e}', 'base_url': base_url_raw})
+        return jsonify({'status': 'error', 'message': f'探活失败: {e}', 'base_url': base_url_raw, 'mode': request_data.get('mode', 'translation')})
 
 @app.route('/translate_lyrics', methods=['POST'])
 def translate_lyrics():
@@ -2494,6 +2522,18 @@ def translate_lyrics():
         expect_reasoning = request_data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
 
         compat_mode = parse_bool(request_data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
+        thinking_enabled = parse_bool(
+            request_data.get('thinking_enabled'),
+            AI_TRANSLATION_SETTINGS.get('thinking_enabled', True)
+        )
+
+        thinking_api_key = request_data.get('thinking_api_key')
+        if not thinking_api_key:
+            thinking_api_key = AI_TRANSLATION_SETTINGS.get('thinking_api_key') or api_key
+        thinking_provider = request_data.get('thinking_provider') or AI_TRANSLATION_SETTINGS.get('thinking_provider') or provider
+        thinking_base_url = request_data.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or base_url
+        thinking_model = request_data.get('thinking_model') or AI_TRANSLATION_SETTINGS.get('thinking_model') or model
+        thinking_system_prompt = request_data.get('thinking_system_prompt') or AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
 
         # 规范化 base_url，自动剔除多余路径
         def _normalize_base_url(u: str) -> str:
@@ -2506,6 +2546,7 @@ def translate_lyrics():
             return u
 
         base_url = _normalize_base_url(base_url)
+        thinking_base_url = _normalize_base_url(thinking_base_url)
 
         if not content:
             return jsonify({'status': 'error', 'message': '未提供歌词内容'})
@@ -2536,6 +2577,12 @@ def translate_lyrics():
         app.logger.info(f"提取的歌词行数: {len(lyrics)}")
         app.logger.info(f"系统提示词: {system_prompt[:100]}..." if len(system_prompt) > 100 else f"系统提示词: {system_prompt}")
         app.logger.info(f"兼容模式: {'开启' if compat_mode else '关闭'}")
+        app.logger.info(f"翻译模型配置: provider={provider}, base_url={base_url}, model={model}")
+        app.logger.info(f"思考模式: {'开启' if thinking_enabled else '关闭'}")
+        masked_thinking_key = thinking_api_key[:8] + '...' + thinking_api_key[-4:] if thinking_api_key and len(thinking_api_key) > 12 else (thinking_api_key or '')
+        app.logger.info(f"思考模型配置: provider={thinking_provider}, base_url={thinking_base_url}, model={thinking_model}, api_key={masked_thinking_key or '沿用翻译密钥'}")
+        if thinking_system_prompt:
+            app.logger.info(f"思考提示词: {thinking_system_prompt[:100]}..." if len(thinking_system_prompt) > 100 else f"思考提示词: {thinking_system_prompt}")
 
         # 验证提取的内容
         if not timestamps:
@@ -2568,20 +2615,90 @@ def translate_lyrics():
                 app.logger.debug(f"系统提示词: {system_prompt}")
                 app.logger.debug(f"用户输入摘要:\n{numbered_lyrics[:500]}..." if len(numbered_lyrics) > 500 else f"用户输入:\n{numbered_lyrics}")
 
+                thinking_summary = ""
+                if thinking_enabled and thinking_model:
+                    app.logger.info(f"开始调用思考模型 {thinking_model} [ID: {request_id}]")
+                    thinking_start_time = time.time()
+                    try:
+                        if compat_mode:
+                            thinking_parts = []
+                            if thinking_system_prompt:
+                                thinking_parts.append(thinking_system_prompt.strip())
+                            thinking_parts.append(numbered_lyrics)
+                            thinking_payload = '\n\n'.join(part for part in thinking_parts if part)
+                            thinking_messages = [
+                                {"role": "user", "content": thinking_payload}
+                            ]
+                        else:
+                            thinking_messages = []
+                            if thinking_system_prompt:
+                                thinking_messages.append({"role": "system", "content": thinking_system_prompt})
+                            thinking_messages.append({"role": "user", "content": numbered_lyrics})
+
+                        thinking_client = OpenAI(api_key=thinking_api_key, base_url=thinking_base_url)
+                        thinking_response = thinking_client.chat.completions.create(
+                            model=thinking_model,
+                            messages=thinking_messages,
+                            stream=True
+                        )
+                        app.logger.info(f"思考模型开始流式输出 [ID: {request_id}]")
+                        thinking_chunks = 0
+                        thinking_tokens = 0
+                        current_thinking = ""
+                        for chunk in thinking_response:
+                            thinking_chunks += 1
+                            choices = getattr(chunk, 'choices', None)
+                            if not choices:
+                                continue
+                            delta = getattr(choices[0], 'delta', None)
+                            if delta is None:
+                                continue
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                thinking_tokens = getattr(chunk.usage, 'total_tokens', 0)
+                            if hasattr(delta, 'content') and delta.content:
+                                addition = delta.content
+                                current_thinking += addition
+                                thinking_summary = current_thinking
+                                yield f"thinking:{json.dumps({'summary': thinking_summary})}\n"
+                            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                addition = delta.reasoning_content
+                                current_thinking += addition
+                                thinking_summary = current_thinking
+                                yield f"thinking:{json.dumps({'summary': thinking_summary})}\n"
+                        if not thinking_summary:
+                            thinking_summary = current_thinking
+                        thinking_duration = time.time() - thinking_start_time
+                        app.logger.info(f"思考模型完成 [ID: {request_id}], 耗时: {thinking_duration:.2f}秒, 输出长度: {len(thinking_summary)}, 数据块: {thinking_chunks}, 估计Tokens: {thinking_tokens}")
+                        thinking_summary = (thinking_summary or '').strip()
+                    except Exception as thinking_error:
+                        thinking_duration = time.time() - thinking_start_time
+                        app.logger.error(f"思考模型调用失败 [ID: {request_id}]: {thinking_error} (耗时 {thinking_duration:.2f}秒)", exc_info=True)
+                        yield f"thinking:{json.dumps({'error': str(thinking_error)})}\n"
+                        thinking_summary = ""
+                else:
+                    app.logger.info(f"未配置思考模型，直接进入翻译流程 [ID: {request_id}]")
+
                 if compat_mode:
                     combined_prompt_parts = []
                     if system_prompt:
                         combined_prompt_parts.append(system_prompt.strip())
-                    combined_prompt_parts.append(numbered_lyrics)
+                    if thinking_summary:
+                        combined_prompt_parts.append(f"歌曲理解：\n{thinking_summary}")
+                    combined_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
                     combined_prompt = '\n\n'.join(part for part in combined_prompt_parts if part)
                     messages = [
                         {"role": "user", "content": combined_prompt}
                     ]
                     app.logger.debug("兼容模式启用：系统提示词已合并到用户消息")
                 else:
+                    user_content_parts = []
+                    if thinking_summary:
+                        user_content_parts.append(f"歌曲理解：\n{thinking_summary}")
+                    user_content_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                    user_content = '\n\n'.join(part for part in user_content_parts if part)
                     messages = [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": numbered_lyrics}
+                        {"role": "user", "content": user_content}
                     ]
 
                 # 记录API调用详细信息
