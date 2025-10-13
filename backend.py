@@ -17,9 +17,10 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context
 from re import compile, Pattern, Match
-from typing import Iterator, TextIO, AnyStr
+from typing import Iterator, TextIO, AnyStr, Optional, Union
 from xml.dom.minicompat import NodeList
 from xml.dom.minidom import Document, Element
+from flask.ctx import F
 from openai import OpenAI
 import random
 import threading
@@ -66,6 +67,51 @@ LOG_DIR = BASE_PATH / 'logs'
 for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR]:
     path.mkdir(parents=True, exist_ok=True)
 
+BACKUP_TIMESTAMP_FORMAT = '%Y%m%d_%H%M%S'
+BACKUP_SUFFIX_LENGTH = len(datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)) + 1  # include separator dot
+MAX_BACKUP_FILENAME_LENGTH = 255
+BACKUP_HASH_LENGTH = 8
+
+
+def _normalize_backup_basename(original_name: str) -> str:
+    """Ensure backup filenames stay within common filesystem limits."""
+    if not original_name:
+        return original_name
+    if len(original_name) + BACKUP_SUFFIX_LENGTH <= MAX_BACKUP_FILENAME_LENGTH:
+        return original_name
+
+    suffix = ''.join(Path(original_name).suffixes)
+    stem = original_name[:-len(suffix)] if suffix else original_name
+    hash_part = hashlib.sha1(original_name.encode('utf-8')).hexdigest()[:BACKUP_HASH_LENGTH]
+    available = MAX_BACKUP_FILENAME_LENGTH - BACKUP_SUFFIX_LENGTH - len(suffix) - BACKUP_HASH_LENGTH - 1
+
+    if available <= 0:
+        truncated = f"{hash_part}{suffix}"
+        return truncated[:MAX_BACKUP_FILENAME_LENGTH - BACKUP_SUFFIX_LENGTH]
+
+    return f"{stem[:available]}_{hash_part}{suffix}"
+
+
+def build_backup_path(name_or_path: Union[str, Path],
+                      timestamp: Optional[Union[str, int]] = None,
+                      directory: Path = BACKUP_DIR) -> Path:
+    """Create a filesystem-safe backup path for the given target file."""
+    original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
+    base_name = _normalize_backup_basename(original_name)
+    if isinstance(timestamp, (int, float)):
+        timestamp_str = str(int(timestamp))
+    elif timestamp is not None:
+        timestamp_str = str(timestamp)
+    else:
+        timestamp_str = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+    return directory / f"{base_name}.{timestamp_str}"
+
+
+def backup_prefix(name_or_path: Union[str, Path]) -> str:
+    """Return the normalized prefix used for locating backups."""
+    original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
+    return f"{_normalize_backup_basename(original_name)}."
+
 # 配置日志
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
 log_handler = TimedRotatingFileHandler(os.path.join(LOG_DIR, 'upload.log'),
@@ -109,6 +155,69 @@ AI_TRANSLATION_SETTINGS = {
     'compat_mode': False
 }
 
+
+# ===== 动画配置（前端共用） =====
+# 默认动画配置：控制歌词行进入、移动、退出及占位时长，以及歌词垂直偏移比例
+ANIMATION_CONFIG_DEFAULTS = {
+    'enterDuration':500,      # 歌词行进入动画时长（毫秒）
+    'moveDuration': 500,       # 歌词行上下移动动画时长（毫秒）
+    'exitDuration': 500,       # 歌词行退出动画时长（毫秒）
+    'placeholderDuration': 50, # 歌词行占位缓冲时长（毫秒），用于 disappearTime 计算
+    'lineDisplayOffset': 0.7,  # 歌词行在屏幕垂直方向的偏移比例（0.0=顶部，1.0=底部）
+    'useComputedDisappear': False  # 是否使用后端计算的消失时机
+}
+_animation_config_state = dict(ANIMATION_CONFIG_DEFAULTS)
+_animation_config_lock = threading.Lock()
+_animation_config_last_update = 0.0
+
+
+def load_animation_config() -> dict:
+    """读取当前动画配置的副本，供后端内部使用。"""
+    with _animation_config_lock:
+        return dict(_animation_config_state)
+
+
+def update_animation_config(payload: dict) -> dict:
+    """
+    根据前端 POST 的配置更新全局动画参数。
+    非法值会被忽略并保留原值。
+    返回最新的配置。
+    """
+    if not isinstance(payload, dict):
+        payload = {}
+
+    updated_fields = {}
+    for key in ANIMATION_CONFIG_DEFAULTS:
+        value = payload.get(key)
+        if value is None:
+            continue
+
+        if key == 'lineDisplayOffset':
+            try:
+                parsed_value = float(value)
+            except (TypeError, ValueError):
+                app.logger.warning("动画配置项 %s=%r 非法，已忽略", key, value)
+                continue
+        elif key == 'useComputedDisappear':
+            parsed_value = parse_bool(value, ANIMATION_CONFIG_DEFAULTS[key])
+        else:
+            try:
+                parsed_value = int(value)
+            except (TypeError, ValueError):
+                app.logger.warning("动画配置项 %s=%r 非法，已忽略", key, value)
+                continue
+
+        updated_fields[key] = parsed_value
+
+    with _animation_config_lock:
+        if updated_fields:
+            _animation_config_state.update(updated_fields)
+            global _animation_config_last_update
+            _animation_config_last_update = time.time()
+
+        return dict(_animation_config_state)
+
+
 def parse_bool(value, default=False):
     """Parse falsy/truthy inputs coming from JSON or form submissions."""
     if value is None:
@@ -120,7 +229,7 @@ def parse_bool(value, default=False):
     return bool(value)
 
 # ===== 解析.lys格式歌词的工具函数 =====
-def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=700):
+def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=None):
     """
     对每一行（含 syllables 数组，单位秒）计算 disappearTime（单位毫秒）。
     规则与 parse_lys 中保持一致：
@@ -130,21 +239,34 @@ def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=700):
     if not lines:
         return lines
 
+    animation_config = load_animation_config()
+    use_computed = parse_bool(animation_config.get('useComputedDisappear'), True)
+    if t_anim is None:
+        t_anim = animation_config.get('exitDuration', ANIMATION_CONFIG_DEFAULTS['exitDuration'])
+
+    exit_buffer = max(0, int(t_anim)) if use_computed else 0
+    placeholder_buffer = max(0, int(animation_config.get('placeholderDuration', ANIMATION_CONFIG_DEFAULTS['placeholderDuration'])))
+
     for line in lines:
         syllables = line.get('syllables', [])
         if syllables:
             last = syllables[-1]
-            disappear_ms = int(float(last['startTime']) * 1000 + float(last['duration']) * 1000)
+            base_ms = int(float(last['startTime']) * 1000 + float(last['duration']) * 1000)
         else:
-            disappear_ms = 0
+            base_ms = 0
+
+        disappear_ms = base_ms + exit_buffer if use_computed else base_ms
 
         line['disappearTime'] = disappear_ms
         line['debug_times'] = {
             'mode': 'raw',
-            'E_i': disappear_ms,
-            'T_candidate': disappear_ms,
-            'T_prev_final': disappear_ms,
-            'final': disappear_ms
+            'E_i': base_ms,
+            'T_candidate': base_ms,
+            'T_prev_final': base_ms,
+            'final': disappear_ms,
+            'exit_buffer': exit_buffer,
+            'placeholder_buffer': placeholder_buffer,
+            'use_computed': use_computed
         }
 
     # 可选：调试日志
@@ -234,7 +356,7 @@ def parse_lys(lys_content):
         return []
 
     # === 统一用通用函数计算消失时机 ===
-    compute_disappear_times(lyrics_data, delta1=500, delta2=0, t_anim=700)
+    compute_disappear_times(lyrics_data, delta1=500, delta2=0)
     return lyrics_data
 
 @app.route('/')
@@ -247,13 +369,21 @@ def index():
             with open(file, 'r', encoding='utf-8') as f:
                 try:
                     data = json.load(f)
-                    json_files.append({
-                        'filename': file.name,
-                        'data': data,
-                        'mtime': mtime  # 添加修改时间
-                    })
-                except:
+                except json.JSONDecodeError:
                     continue
+
+                if not isinstance(data, dict):
+                    data = {'raw': data, 'meta': {}}
+                else:
+                    meta_obj = data.get('meta')
+                    if not isinstance(meta_obj, dict):
+                        data['meta'] = {}
+
+                json_files.append({
+                    'filename': file.name,
+                    'data': data,
+                    'mtime': mtime  # 添加修改时间
+                })
     # 按修改时间排序（最新在前）
     json_files.sort(key=lambda x: x['mtime'], reverse=True)
     return render_template('Famyliam_Everywhere.html', json_files=json_files)
@@ -272,8 +402,8 @@ def backup_file():
     if not BACKUP_DIR.exists():
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    backup_path = BACKUP_DIR / f"{Path(file_path).name}.{timestamp}"
+    timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+    backup_path = build_backup_path(Path(file_path), timestamp)
     shutil.copy2(file_path, backup_path)
     return jsonify({'status': 'success'})
 
@@ -329,8 +459,9 @@ def restore_file():
             # 为每个关联文件创建恢复任务
             for file in related_files:
                 file_backups = []
+                prefix = backup_prefix(Path(file))
                 for backup in BACKUP_DIR.iterdir():
-                    if backup.name.startswith(Path(file).name):
+                    if backup.is_file() and backup.name.startswith(prefix):
                         file_backups.append(backup)
 
                 if not file_backups:
@@ -396,7 +527,7 @@ def update_json():
             BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
         # 备份原文件
-        backup_path = BACKUP_DIR / f"{data['filename']}.{int(time.time())}"
+        backup_path = build_backup_path(data['filename'], int(time.time()))
         if file_path.exists():  # 只在文件存在时进行备份
             shutil.copy2(file_path, backup_path)
 
@@ -477,7 +608,7 @@ def save_lyrics():
                     if not json_path.is_absolute():
                         app.logger.warning(f"跳过无效的JSON文件路径: {json_file}")
                         continue
-                    backup_path = BACKUP_DIR / f"{json_path.name}.{int(time.time())}"
+                    backup_path = build_backup_path(json_path, int(time.time()))
                     shutil.copy2(json_path, backup_path)
                     app.logger.info(f"备份JSON文件成功: {json_path} -> {backup_path}")
                 except Exception as e:
@@ -496,9 +627,10 @@ def save_lyrics():
                         raise
                     
                 # 获取普通备份文件（不包括permanent目录）
+                prefix = backup_prefix(file_path)
                 backups = sorted([
                     f for f in BACKUP_DIR.iterdir()
-                    if f.name.startswith(file_path.name) and not f.is_dir()
+                    if f.is_file() and f.name.startswith(prefix)
                 ], reverse=True)
                 
                 # 删除旧备份(保留6个历史版本+当前版本)
@@ -514,8 +646,8 @@ def save_lyrics():
                         continue
                         
                 # 创建新备份
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                backup_path = BACKUP_DIR / f"{file_path.name}.{timestamp}"
+                timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+                backup_path = build_backup_path(file_path, timestamp)
                 try:
                     shutil.copy2(file_path, backup_path)
                     app.logger.info(f"创建新备份成功: {file_path} -> {backup_path}")
@@ -595,7 +727,7 @@ def update_file_path():
 
         # 备份原文件
         timestamp = int(time.time())
-        backup_path = BACKUP_DIR / f"{data['jsonFile']}.{timestamp}"
+        backup_path = build_backup_path(data['jsonFile'], timestamp)
         if json_path.exists():  # 只在文件存在时进行备份
             shutil.copy2(json_path, backup_path)
 
@@ -687,7 +819,7 @@ def rename_json():
 
         # 备份原文件
         timestamp = int(time.time())
-        backup_path = BACKUP_DIR / f"{old_filename}.{timestamp}"
+        backup_path = build_backup_path(old_filename, timestamp)
         shutil.copy2(old_path, backup_path)
 
         # 更新JSON内容
@@ -736,23 +868,40 @@ def check_lyrics():
 def get_backups():
     file_path = request.json.get('path').replace(
         'http://127.0.0.1:5000/songs/', str(SONGS_DIR) + '/')
-    base_name = Path(file_path).name
+    prefix = backup_prefix(Path(file_path))
 
     try:
-        backups = []
+        collected = []
+        prefix_len = len(prefix)
         for f in BACKUP_DIR.iterdir():
-            if f.name.startswith(base_name):
-                timestamp = f.name.split('.')[-1]
-                if len(timestamp) == 15 and timestamp.isdigit():
-                    backups.append({
-                        'path':
-                        f"http://127.0.0.1:5000/backups/{f.name}",
-                        'time':
-                        f"{timestamp[0:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}:{timestamp[13:15]}"
-                    })
-        # 按时间倒序排列并取前7个
-        backups = sorted(backups, key=lambda x: x['time'], reverse=True)[:7]
-        return jsonify({'status': 'success', 'backups': backups})
+            if not f.is_file() or not f.name.startswith(prefix):
+                continue
+
+            timestamp_part = f.name[prefix_len:]
+            parsed_time: Optional[datetime] = None
+            try:
+                parsed_time = datetime.strptime(timestamp_part, BACKUP_TIMESTAMP_FORMAT)
+            except ValueError:
+                if timestamp_part.isdigit():
+                    try:
+                        parsed_time = datetime.fromtimestamp(int(timestamp_part))
+                    except (OSError, OverflowError, ValueError):
+                        parsed_time = None
+
+            if not parsed_time:
+                continue
+
+            collected.append({
+                'dt': parsed_time,
+                'name': f.name
+            })
+
+        collected.sort(key=lambda item: item['dt'], reverse=True)
+        limited = [{
+            'path': f"http://127.0.0.1:5000/backups/{item['name']}",
+            'time': item['dt'].strftime('%Y-%m-%d %H:%M:%S')
+        } for item in collected[:7]]
+        return jsonify({'status': 'success', 'backups': limited})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -2570,6 +2719,19 @@ def add_header(resp):
     resp.headers['Access-Control-Allow-Origin'] = '*'
     return resp
 
+
+@app.route('/player/animation-config', methods=['GET', 'POST'])
+def player_animation_config():
+    """前后端同步动画时长配置。GET 返回当前值，POST 由前端上报。"""
+    if request.method == 'POST':
+        payload = request.get_json(silent=True) or {}
+        config = update_animation_config(payload)
+        return jsonify({'status': 'ok', 'config': config})
+
+    config = load_animation_config()
+    return jsonify(config)
+
+
 @app.route('/lyrics-animate')
 def lyrics_animate():
     file = request.args.get('file')
@@ -3517,7 +3679,7 @@ async def ws_handle(ws):
                 lines_front = _amll_lines_to_front(payload)
 
                 try:
-                    compute_disappear_times(lines_front, delta1=500, delta2=0, t_anim=700)
+                    compute_disappear_times(lines_front, delta1=500, delta2=0)
                 except Exception as e:
                     app.logger.warning(f"[WS] 计算消失时机失败，降级继续: {e}")
 

@@ -186,7 +186,7 @@
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const audioPlayer = document.getElementById('audio-player');
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
@@ -195,12 +195,32 @@
             let forceCenterAlign = false; // 新增
             let translationData = [];
 
-            // 动画时长控制
-            const enterDuration = 700;         // 歌词行进入动画时长（毫秒）
-            const moveDuration = 700;          // 歌词行移动动画时长（毫秒）
-            const exitDuration = 700;          // 歌词行退出动画时长（毫秒）
-            const placeholderDuration = 50;   // 占位符（消失行）延时
-            const lineDisplayOffset = 0.5; // 歌词行提前0.3秒显示
+            // 动画时长控制（前端硬编码，同时由后端解析保持一致）
+            const enterDuration =600;          // 歌词行进入动画时长（毫秒）
+            const moveDuration = 600;           // 歌词行移动动画时长（毫秒）
+            const exitDuration = 600;           // 歌词行退出动画时长（毫秒）
+            const placeholderDuration = 50;     // 占位符（消失行）延时
+            const lineDisplayOffset = 0.5;      // 歌词行提前0.3秒显示
+            const useComputedDisappear = false;  // 是否使用后端计算的消失时机
+
+            async function syncAnimationConfig() {
+                try {
+                    await fetch('/player/animation-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            enterDuration,
+                            moveDuration,
+                            exitDuration,
+                            placeholderDuration,
+                            lineDisplayOffset,
+                            useComputedDisappear
+                        })
+                    });
+                } catch (error) {
+                    console.warn('上传动画配置失败，将使用后端的默认值', error);
+                }
+            }
 
             let displayedLines = new Map(); // 使用 Map 跟踪所有显示的行
             let placeholderLines = new Map(); // 跟踪正在消失的行的占位符
@@ -1065,7 +1085,8 @@
                 }
             });
 
-            loadData();
+            await syncAnimationConfig();
+            await loadData();
             
             // 页面加载后自动启动动画循环（如果音频正在播放）
             setTimeout(() => {
