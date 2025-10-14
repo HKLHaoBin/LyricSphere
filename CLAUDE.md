@@ -91,6 +91,7 @@ pip install flask openai bcrypt waitress
 - `/merge_to_lqe`: API endpoint for merging lyrics and translation into LQE format
 - `/export_lyrics_csv`: API endpoint for exporting lyrics to CSV format
 - `/translate_lyrics`: API endpoint for AI-powered lyric translation
+- `/player/animation-config`: API endpoint for synchronizing animation configuration between frontend and backend
 
 ### File Management
 
@@ -100,7 +101,7 @@ The application automatically creates necessary directories:
 - `logs/` for application logging
 - `exports/` for exported data
 
-Backup functionality is built into most file operations, maintaining up to 7 versions of each file.
+Backup functionality is built into most file operations, maintaining up to 7 versions of each file. To prevent issues with overly long filenames, the application implements a hashing strategy that truncates filenames while preserving their uniqueness.
 
 ### Lyric Format Support
 
@@ -118,7 +119,7 @@ The application provides bidirectional conversion between different lyric format
 
 ### Real-time Integration
 
-The application includes a WebSocket server (port 11444) for integration with AMLL (Advanced Music Live Lyrics) and supports Server-Sent Events for real-time lyric display updates. It also provides real-time lyric animation with calculated disappearing times for smooth transitions.
+The application includes a WebSocket server (port 11444) for integration with AMLL (Advanced Music Live Lyrics) and supports Server-Sent Events for real-time lyric display updates. It also provides real-time lyric animation with calculated disappearing times for smooth transitions. The animation configuration can be synchronized between frontend and backend through the `/player/animation-config` endpoint, ensuring consistent animation timing across the application.
 
 ### AI Translation Features
 
@@ -130,3 +131,4 @@ The application supports AI-powered lyric translation with:
 - Automatic timestamp alignment with original lyrics
 - API connection testing functionality
 - Support for reasoning chain content from AI models
+- Lyric analysis thinking model support for enhanced translation quality
