@@ -1,8 +1,11 @@
 # Repository Guidelines
 
-## Latest Updates (v1.5.3)
+## Latest Updates (v1.5.5)
 - 歌词动画模板的 FLIP 渲染流程已重构，新增节流与状态同步控制，修改动画主题前请先阅读 `templates/Lyrics-style*.HTML` 中的最新注释。
 - 备用动画主题模板更名为 `Lyrics-style.HTML-COK.HTML`，并在 `backend.py` 中同步调整 fallback 引用，避免部署后加载失败。
+- 添加歌词音节分组功能(`groupSyllablesIntoWords`)，优化歌词行渲染时的布局表现。
+- 新增资源URL规范化处理功能，实现安全的路径解析和动态路径解析支持。
+- 后端路径解析逻辑已重构，增加安全验证机制和CORS跨域请求支持。
 
 ## Project Structure & Module Organization
 - `backend.py` runs the Flask app, AMLL bridges, AI translation helpers, and all `BASE_PATH` filesystem wiring.

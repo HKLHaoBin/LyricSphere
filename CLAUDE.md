@@ -66,6 +66,7 @@ pip install flask openai bcrypt waitress
    - Server-Sent Events (SSE) for real-time lyric updates
    - Progress tracking and synchronization
    - Real-time lyric animation with disappearing effects
+   - Lyrics syllable grouping for improved layout rendering
 
 4. **AI Integration**:
    - AI-powered lyric translation using DeepSeek API
@@ -77,6 +78,9 @@ pip install flask openai bcrypt waitress
    - Password protection using bcrypt hashing
    - Local access restrictions for sensitive operations
    - Session management for secure operations
+   - **Resource path validation**: Secure path resolution and validation to prevent path traversal vulnerabilities
+   - **URL normalization**: URL normalization tools to safely handle resource paths
+   - **CORS handling**: Cross-origin resource sharing support for integration with frontends
 
 ### Key Routes
 
@@ -110,6 +114,13 @@ Backup functionality is built into most file operations, maintaining up to 7 ver
 3. **.ttml Format**: XML-based timed text format with conversion capabilities
 4. **LQE Format**: Combined lyrics and translation format
 
+### Lyrics Rendering
+
+The application now includes lyrics syllable grouping functionality to optimize layout during rendering:
+- **`groupSyllablesIntoWords` function**: Groups individual syllables into words for improved layout rendering
+- **CSS styling controls**: Includes `word-break` and `white-space` properties for better text flow
+- **Dynamic rendering**: Groups syllables at render time for optimal display of lyrics
+
 ### Format Conversion
 
 The application provides bidirectional conversion between different lyric formats:
@@ -120,6 +131,8 @@ The application provides bidirectional conversion between different lyric format
 ### Real-time Integration
 
 The application includes a WebSocket server (port 11444) for integration with AMLL (Advanced Music Live Lyrics) and supports Server-Sent Events for real-time lyric display updates. It also provides real-time lyric animation with calculated disappearing times for smooth transitions. The animation configuration can be synchronized between frontend and backend through the `/player/animation-config` endpoint, ensuring consistent animation timing across the application.
+
+Additionally, the system implements resource URL normalization for secure and efficient resource handling, supporting dynamic path resolution for different resource types.
 
 ### AI Translation Features
 
