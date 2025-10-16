@@ -89,6 +89,8 @@
             align-items: center;
             color: rgba(255, 255, 255, 0.2); /* 白色 20% 不透明 */
             width: 100%;
+            word-break: keep-all;
+            white-space: normal;
         }
 
         /* 模糊层容器 */
@@ -143,6 +145,20 @@
             -webkit-background-clip: text;
             color: transparent;
             -webkit-text-fill-color: transparent;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .word-wrapper {
+            display: inline-flex;
+            flex: 0 0 auto;
+            flex-wrap: nowrap;
+        }
+
+        .word-space {
+            display: inline-flex;
+            flex: 0 0 auto;
+            white-space: pre;
         }
 
         .lyric-line.active {
@@ -625,6 +641,45 @@
                     console.error('Error loading data:', error);
                 }
             }
+
+            function groupSyllablesIntoWords(container, itemClass = 'syllable') {
+                if (!container) return;
+
+                const hasWrapper = Array.from(container.children).some(
+                    (child) => child.classList && child.classList.contains('word-wrapper')
+                );
+                if (hasWrapper) return;
+
+                const targetElements = Array.from(container.children).filter(
+                    (child) => child.classList && child.classList.contains(itemClass)
+                );
+                if (targetElements.length === 0) return;
+
+                let currentWrapper = null;
+                targetElements.forEach((element) => {
+                    const text = element.textContent || '';
+                    const hasVisibleChar = /\S/.test(text);
+                    const endsWithSpace = /\s$/.test(text);
+
+                    if (!hasVisibleChar) {
+                        currentWrapper = null;
+                        element.classList.add('word-space');
+                        return;
+                    }
+
+                    if (!currentWrapper) {
+                        currentWrapper = document.createElement('span');
+                        currentWrapper.classList.add('word-wrapper');
+                        container.insertBefore(currentWrapper, element);
+                    }
+
+                    currentWrapper.appendChild(element);
+
+                    if (endsWithSpace) {
+                        currentWrapper = null;
+                    }
+                });
+            }
             
             function createLineElement(lineIndex) {
                 const line = lyricsData[lineIndex];
@@ -703,6 +758,9 @@
                     }
                     lineEl.appendChild(syllableEl);
                 });
+
+                groupSyllablesIntoWords(blurLayer, 'blur-text');
+                groupSyllablesIntoWords(lineEl);
 
                 // 翻译渲染：在歌词行下方插入翻译
                 if (translationData.length > 0 && line.syllables && line.syllables.length > 0) {

@@ -84,6 +84,8 @@
             align-items: center;
             color: rgba(255, 255, 255, 0.2); /* 白色 20% 不透明 */
             width: 100%;
+            word-break: keep-all;
+            white-space: normal;
         }
 
         /* 模糊层容器 */
@@ -133,6 +135,8 @@
             text-shadow: 0 0 12px rgba(255, 255, 255, 0.4); /* 柔和发光效果 */
             filter: blur(0);
             -webkit-filter: blur(0);
+            flex-shrink: 0;
+            white-space: nowrap;
         }
 
         .syllable.highlight {

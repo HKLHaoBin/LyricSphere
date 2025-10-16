@@ -1159,6 +1159,114 @@
     </div>
 
     <script>
+        const backendOrigin = window.location.origin;
+        const backendRootUrl = new URL('/', backendOrigin).toString();
+
+        function safeDecodeURIComponent(value) {
+            try {
+                return decodeURIComponent(value);
+            } catch (error) {
+                return value;
+            }
+        }
+
+        function createResourceConfig(segment) {
+            const baseUrl = new URL(`${segment}/`, backendRootUrl).toString();
+            const path = new URL(`${segment}/`, backendRootUrl).pathname;
+            return { base: baseUrl, path, name: segment };
+        }
+
+        const RESOURCE_CONFIG = {
+            songs: createResourceConfig('songs'),
+            static: createResourceConfig('static'),
+            backups: createResourceConfig('backups')
+        };
+
+        function normalizeResourceUrl(value, resourceKey) {
+            if (!value || typeof value !== 'string') {
+                return value;
+            }
+            if (value === '!') {
+                return value;
+            }
+            const config = RESOURCE_CONFIG[resourceKey];
+            if (!config) {
+                return value;
+            }
+
+            try {
+                const parsed = new URL(value);
+                if (parsed.pathname.startsWith(config.path)) {
+                    const decodedPath = safeDecodeURIComponent(parsed.pathname);
+                    const normalizedPath = decodedPath.startsWith(config.path)
+                        ? decodedPath
+                        : config.path + decodedPath.replace(/^\//, '');
+                    const search = parsed.search ? safeDecodeURIComponent(parsed.search) : '';
+                    const hash = parsed.hash ? safeDecodeURIComponent(parsed.hash) : '';
+                    return `${window.location.protocol}//${window.location.host}${normalizedPath}${search}${hash}`;
+                }
+                return value;
+            } catch (error) {
+                let normalized = value.replace(/\\/g, '/').replace(/^[./]+/, '');
+                if (normalized.startsWith(`${config.name}/`)) {
+                    normalized = normalized.substring(config.name.length + 1);
+                }
+                normalized = safeDecodeURIComponent(normalized);
+                if (!normalized) {
+                    return config.base;
+                }
+                return config.base + normalized;
+            }
+        }
+
+        function stripResourcePrefix(value, resourceKey) {
+            if (!value || typeof value !== 'string') {
+                return value || '';
+            }
+            if (value === '!') {
+                return value;
+            }
+            const config = RESOURCE_CONFIG[resourceKey];
+            if (!config) {
+                return value;
+            }
+
+            try {
+                const parsed = new URL(value);
+                if (parsed.pathname.startsWith(config.path)) {
+                    return safeDecodeURIComponent(parsed.pathname.substring(config.path.length));
+                }
+            } catch (error) {
+                const normalizedValue = value.replace(/\\/g, '/');
+                if (normalizedValue.startsWith(config.base)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.base.length));
+                }
+                if (normalizedValue.startsWith(config.path)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.path.length));
+                }
+                if (normalizedValue.startsWith(`${config.name}/`)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.name.length + 1));
+                }
+            }
+            return value;
+        }
+
+        function normalizeSongsUrl(value) {
+            return normalizeResourceUrl(value, 'songs');
+        }
+
+        function stripSongsPrefix(value) {
+            return stripResourcePrefix(value, 'songs');
+        }
+
+        function normalizeStaticUrl(value) {
+            return normalizeResourceUrl(value, 'static');
+        }
+
+        function normalizeBackupsUrl(value) {
+            return normalizeResourceUrl(value, 'backups');
+        }
+
         // 在页面开始就定义 checkLyrics 函数
         function checkLyrics(lyricsPath, filename) {
             fetch('/check_lyrics', {
@@ -1198,101 +1306,53 @@
                         if (data.status === 'success') {
                             const jsonData = data.jsonData;
 
-                            // 获取当前服务器的基础URL（包含端口）
-                            const baseUrl = `http://${location.hostname}:${location.port}/songs/`;
-
-                            // 提取歌曲信息
                             const title = encodeURIComponent(jsonData.meta.title || '');
                             const artists = encodeURIComponent((jsonData.meta.artists || []).join(' / '));
 
-                            // 处理音乐路径
                             let musicPath = '';
                             if (jsonData.song) {
-                                if (jsonData.song.startsWith('http://127.0.0.1:5000/songs/')) {
-                                    // 如果是旧格式，替换为当前端口
-                                    musicPath = encodeURIComponent(jsonData.song.replace('http://127.0.0.1:5000/songs/', baseUrl));
-                                } else if (jsonData.song.startsWith('/songs/')) {
-                                    // 如果是相对路径，添加完整基础URL
-                                    musicPath = encodeURIComponent(baseUrl + jsonData.song.substring(8));
-                                } else {
-                                    // 其他情况直接使用
-                                    musicPath = encodeURIComponent(jsonData.song);
+                                const resolvedSongUrl = normalizeSongsUrl(jsonData.song);
+                                if (resolvedSongUrl && resolvedSongUrl !== '!') {
+                                    musicPath = encodeURIComponent(resolvedSongUrl);
                                 }
                             }
 
-                            // 处理歌词路径
                             let lyricsPath = '';
-                            let originalLyricsPath = '';
-                            if (jsonData.meta.lyrics) {
-                                if (jsonData.meta.lyrics.includes('::')) {
-                                    // 格式为 "::歌词路径::翻译路径::罗马音路径::"
-                                    const parts = jsonData.meta.lyrics.split('::');
-                                    if (parts[1]) {
-                                        originalLyricsPath = parts[1];
-                                        if (parts[1].startsWith('http://127.0.0.1:5000/songs/')) {
-                                            // 如果是旧格式，替换为当前端口
-                                            lyricsPath = encodeURIComponent(parts[1].replace('http://127.0.0.1:5000/songs/', baseUrl));
-                                        } else if (parts[1].startsWith('/songs/')) {
-                                            // 如果是相对路径，添加完整基础URL
-                                            lyricsPath = encodeURIComponent(baseUrl + parts[1].substring(8));
-                                        } else {
-                                            // 其他情况直接使用
-                                            lyricsPath = encodeURIComponent(parts[1]);
-                                        }
-                                    }
-                                } else {
-                                    // 直接是歌词路径
-                                    originalLyricsPath = jsonData.meta.lyrics;
-                                    if (jsonData.meta.lyrics.startsWith('http://127.0.0.1:5000/songs/')) {
-                                        // 如果是旧格式，替换为当前端口
-                                        lyricsPath = encodeURIComponent(jsonData.meta.lyrics.replace('http://127.0.0.1:5000/songs/', baseUrl));
-                                    } else if (jsonData.meta.lyrics.startsWith('/songs/')) {
-                                        // 如果是相对路径，添加完整基础URL
-                                        lyricsPath = encodeURIComponent(baseUrl + jsonData.meta.lyrics.substring(8));
-                                    } else {
-                                        // 其他情况直接使用
-                                        lyricsPath = encodeURIComponent(jsonData.meta.lyrics);
-                                    }
+                            let originalLyricsRelative = '';
+                            const lyricsField = jsonData.meta.lyrics || '';
+                            const lyricCandidate = lyricsField.includes('::')
+                                ? (lyricsField.split('::')[1] || '')
+                                : lyricsField;
+                            if (lyricCandidate && lyricCandidate !== '!') {
+                                const resolvedLyricsUrl = normalizeSongsUrl(lyricCandidate);
+                                if (resolvedLyricsUrl && resolvedLyricsUrl !== '!') {
+                                    lyricsPath = encodeURIComponent(resolvedLyricsUrl);
+                                    originalLyricsRelative = stripSongsPrefix(resolvedLyricsUrl);
                                 }
                             }
 
-                            // 处理封面路径
                             let coverPath = '';
                             if (jsonData.meta.albumImgSrc) {
-                                if (jsonData.meta.albumImgSrc.startsWith('http://127.0.0.1:5000/songs/')) {
-                                    // 如果是旧格式，替换为当前端口
-                                    coverPath = encodeURIComponent(jsonData.meta.albumImgSrc.replace('http://127.0.0.1:5000/songs/', baseUrl));
-                                } else if (jsonData.meta.albumImgSrc.startsWith('/songs/')) {
-                                    // 如果是相对路径，添加完整基础URL
-                                    coverPath = encodeURIComponent(baseUrl + jsonData.meta.albumImgSrc.substring(8));
-                                } else {
-                                    // 其他情况直接使用
-                                    coverPath = encodeURIComponent(jsonData.meta.albumImgSrc);
+                                const resolvedCoverUrl = normalizeSongsUrl(jsonData.meta.albumImgSrc);
+                                if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
+                                    coverPath = encodeURIComponent(resolvedCoverUrl);
                                 }
                             }
 
                             // 检查歌词文件格式，如果不是TTML则临时转换
-                            if (originalLyricsPath && !originalLyricsPath.toLowerCase().endsWith('.ttml')) {
-                                // 提取文件名
-                                let fileName = originalLyricsPath.split('/').pop();
-                                if (fileName.startsWith('http://127.0.0.1:5000/songs/')) {
-                                    fileName = fileName.replace('http://127.0.0.1:5000/songs/', '');
-                                }
-
+                            if (originalLyricsRelative && !originalLyricsRelative.toLowerCase().endsWith('.ttml')) {
                                 // 请求后端将歌词临时转换为TTML格式
                                 fetch('/convert_to_ttml_temp', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ path: fileName })
+                                    body: JSON.stringify({ path: originalLyricsRelative })
                                 })
                                 .then(response => response.json())
                                 .then(convertData => {
                                     if (convertData.status === 'success') {
-                                        // 使用转换后的TTML文件路径
-                                        const convertedLyricsPath = encodeURIComponent(convertData.ttmlPath.replace('http://127.0.0.1:5000/songs/', baseUrl));
-                                        // 构建AMLL规则编写网址
+                                        const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
+                                        const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
                                         const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}`;
-                                        // 打开网址
                                         window.open(amllUrl, '_blank');
                                     } else {
                                         alert('歌词转换失败: ' + convertData.message);
@@ -1319,8 +1379,8 @@
             } else {
                 // 原有的处理逻辑
                 const baseUrl = preset === 'am' ?
-                    `http://localhost:8081/app/?#http://127.0.0.1:5000/` :
-                    `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#http://127.0.0.1:5000/`;
+                    `http://localhost:8081/app/?#${backendRootUrl}` :
+                    `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#${backendRootUrl}`;
                 window.open(baseUrl + filename);
             }
         }
@@ -1443,7 +1503,7 @@
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    file_path: `D:/歌词/全屏歌词滚动样式/famyliam/static/${filename}`
+                    file_path: normalizeStaticUrl(filename)
                 })
             }).then(response => response.json())
                 .then(data => {
@@ -1465,9 +1525,9 @@
             document.getElementById('currentFileName').textContent = jsonFile.replace('.json', '')
 
             // 设置路径
-            lyricsPathInput.value = lyricsPath.replace('http://127.0.0.1:5000/songs/', '')
+            lyricsPathInput.value = stripSongsPrefix(lyricsPath)
             if (translationPath && translationPath !== '!') {
-                translationPathInput.value = translationPath.replace('http://127.0.0.1:5000/songs/', '')
+                translationPathInput.value = stripSongsPrefix(translationPath)
             } else {
                 translationPathInput.value = ''
             }
@@ -1520,7 +1580,7 @@
             }
 
             return new Promise((resolve, reject) => {
-                const fullPath = `http://127.0.0.1:5000/songs/${path}`
+                const fullPath = normalizeSongsUrl(path)
 
                 fetch('/save_lyrics', {
                     method: 'POST',
@@ -1625,7 +1685,7 @@
             const newPathInput = document.getElementById('newMusicPath')
 
             // 显示当前路径（去掉前缀）
-            currentPathInput.value = path.replace('http://127.0.0.1:5000/songs/', '')
+            currentPathInput.value = stripSongsPrefix(path)
             newPathInput.value = currentPathInput.value
 
             modal.style.display = 'block'
@@ -1676,7 +1736,7 @@
             const newBackgroundPathInput = document.getElementById('newBackgroundPath')
 
             // 显示当前路径（去掉前缀）
-            currentPathInput.value = path.replace('http://127.0.0.1:5000/songs/', '')
+            currentPathInput.value = stripSongsPrefix(path)
             newPathInput.value = currentPathInput.value
             
             // 获取当前背景图片路径
@@ -1791,9 +1851,9 @@
             .then(data => {
                 const lyricsEditor = document.getElementById('lyricsEditor');
                 if (data.status === 'success') {
-                    document.getElementById('lyricsPath').value = data.lyricPath.replace('http://127.0.0.1:5000/songs/', '');
+                    document.getElementById('lyricsPath').value = stripSongsPrefix(data.lyricPath);
                     if (data.transPath) {
-                        document.getElementById('translationPath').value = data.transPath.replace('http://127.0.0.1:5000/songs/', '');
+                        document.getElementById('translationPath').value = stripSongsPrefix(data.transPath);
                     }
                     // 自动获取并应用歌词内容
                     fetch('/get_lyrics', {
@@ -1854,7 +1914,7 @@
             .then(data => {
                 if (data.status === 'success') {
                     // 更新歌词路径为TTML文件
-                    document.getElementById('lyricsPath').value = data.ttmlPath.replace('http://127.0.0.1:5000/songs/', '');
+                    document.getElementById('lyricsPath').value = stripSongsPrefix(data.ttmlPath);
 
                     // 自动获取并应用转换后的TTML内容
                     fetch('/get_lyrics', {
@@ -1917,11 +1977,11 @@
                 meta: {
                     title: title,
                     artists: artists,
-                    albumImgSrc: "http://127.0.0.1:5000/songs/专辑图.jpg",
+                    albumImgSrc: `${RESOURCE_CONFIG.songs.base}专辑图.jpg`,
                     duration_ms: 0,
-                    lyrics: "::http://127.0.0.1:5000/songs/歌词.lys::!::!::"
+                    lyrics: `::${RESOURCE_CONFIG.songs.base}歌词.lys::!::!::`
                 },
-                song: "http://127.0.0.1:5000/songs/音乐.mp3"
+                song: `${RESOURCE_CONFIG.songs.base}音乐.mp3`
             }
 
             // 发送创建请求
@@ -2182,7 +2242,7 @@
                 const response = await fetch('/get_backups', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: `http://127.0.0.1:5000/static/${filename}` })
+                    body: JSON.stringify({ path: normalizeStaticUrl(filename) })
                 })
                 const data = await response.json()
 
@@ -2218,7 +2278,7 @@
                     const response = await fetch('/restore_file', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ file_path: `http://127.0.0.1:5000/static/${filename}` })
+                        body: JSON.stringify({ file_path: normalizeStaticUrl(filename) })
                     })
                     const result = await response.json()
                     if (result.status === 'success') {
@@ -2526,14 +2586,15 @@
                 let translationContent = '';
                 let reasoningContent = '';
                 let thinkingContent = '';
+                let buffer = '';
 
                 const updateEditor = () => {
                     const sections = [];
-                    if (thinkingContent) {
-                        sections.push('歌曲理解:\n' + thinkingContent);
-                    }
                     if (translationContent) {
                         sections.push(translationContent);
+                    }
+                    if (thinkingContent) {
+                        sections.push('歌曲理解:\n' + thinkingContent);
                     }
                     if (reasoningContent) {
                         sections.push('思考过程:\n' + reasoningContent);
@@ -2541,47 +2602,70 @@
                     translationEditor.value = sections.join('\n\n');
                 };
 
+                const processLine = (line) => {
+                    if (!line) {
+                        return;
+                    }
+                    if (line.startsWith('content:')) {
+                        try {
+                            const content = JSON.parse(line.slice(8));
+                            if (content.translations) {
+                                translationContent = content.translations.join('\n');
+                                updateEditor();
+                            }
+                        } catch (e) {
+                            console.error('解析翻译内容时出错:', e);
+                        }
+                    } else if (line.startsWith('thinking:')) {
+                        try {
+                            const content = JSON.parse(line.slice(9));
+                            if (content.summary) {
+                                thinkingContent = content.summary;
+                            } else if (content.error) {
+                                thinkingContent = '思考模型调用失败：' + content.error;
+                            }
+                            updateEditor();
+                        } catch (e) {
+                            console.error('解析思考内容时出错:', e);
+                        }
+                    } else if (line.startsWith('reasoning:')) {
+                        try {
+                            const content = JSON.parse(line.slice(10));
+                            if (content.reasoning) {
+                                reasoningContent = content.reasoning;
+                                updateEditor();
+                            }
+                        } catch (e) {
+                            console.error('解析思维链内容时出错:', e);
+                        }
+                    }
+                };
+
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        break;
+                    }
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
+                    const chunk = decoder.decode(value, { stream: true });
+                    buffer += chunk;
 
-                    for (const line of lines) {
-                        if (line.startsWith('content:')) {
-                            try {
-                                const content = JSON.parse(line.slice(8));
-                                if (content.translations) {
-                                    translationContent = content.translations.join('\n');
-                                    updateEditor();
-                                }
-                            } catch (e) {
-                                console.error('解析翻译内容时出错:', e);
-                            }
-                        } else if (line.startsWith('thinking:')) {
-                            try {
-                                const content = JSON.parse(line.slice(9));
-                                if (content.summary) {
-                                    thinkingContent = content.summary;
-                                } else if (content.error) {
-                                    thinkingContent = '思考模型调用失败：' + content.error;
-                                }
-                                updateEditor();
-                            } catch (e) {
-                                console.error('解析思考内容时出错:', e);
-                            }
-                        } else if (line.startsWith('reasoning:')) {
-                            try {
-                                const content = JSON.parse(line.slice(10));
-                                if (content.reasoning) {
-                                    reasoningContent = content.reasoning;
-                                    updateEditor();
-                                }
-                            } catch (e) {
-                                console.error('解析思维链内容时出错:', e);
-                            }
-                        }
+                    let newlineIndex;
+                    while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.slice(0, newlineIndex);
+                        buffer = buffer.slice(newlineIndex + 1);
+                        processLine(line);
+                    }
+                }
+
+                const finalChunk = decoder.decode();
+                if (finalChunk) {
+                    buffer += finalChunk;
+                }
+                if (buffer) {
+                    const remainingLines = buffer.split('\n');
+                    for (const line of remainingLines) {
+                        processLine(line);
                     }
                 }
 
@@ -2932,7 +3016,7 @@
                 // 2) 如果是 TTML，调用后端转换接口（不修改原 JSON，仅生成转换产物）
                 const isTTML = mainPath.toLowerCase().endsWith('.ttml');
                 if (isTTML) {
-                    // 取 /songs/ 下的相对路径传给后端：支持 http://127.0.0.1:5000/songs/xxx 和 /songs/xxx 两种
+                    // 取 /songs/ 下的相对路径传给后端：支持 http(s)://当前主机/songs/xxx 和 /songs/xxx 两种
                     let relative = '';
                     try {
                         if (mainPath.startsWith('http://') || mainPath.startsWith('https://')) {
@@ -3090,7 +3174,8 @@
                     const d = await resp.json();
                     if (d.status === 'success') {
                         setTimeout(() => {
-                            window.location.href = `http://127.0.0.1:5000`;
+                            const target = `${window.location.protocol}//${window.location.hostname}:5000/`;
+                            window.location.href = target;
                         }, 1200);
                     }
                 } else {
@@ -3099,7 +3184,8 @@
                     const d = await resp.json();
                     if (d.status === 'success') {
                         setTimeout(() => {
-                            window.location.href = `http://127.0.0.1:${d.port}`;
+                            const target = `${window.location.protocol}//${window.location.hostname}:${d.port}/`;
+                            window.location.href = target;
                         }, 1200);
                     }
                 }

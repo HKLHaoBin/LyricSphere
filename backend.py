@@ -15,7 +15,7 @@ import csv
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context
+from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context
 from re import compile, Pattern, Match
 from typing import Iterator, TextIO, AnyStr, Optional, Union
 from xml.dom.minicompat import NodeList
@@ -28,6 +28,7 @@ import socket
 import asyncio
 import websockets
 import queue
+from urllib.parse import urlparse, unquote
 
 
 def get_base_path():
@@ -59,13 +60,147 @@ app.secret_key = 'your_random_secret_key'
 app.jinja_env.globals.update(tojson=json.dumps)
 
 # 所有路径定义使用绝对路径
-SONGS_DIR = BASE_PATH / 'static' / 'songs'
-BACKUP_DIR = BASE_PATH / 'static' / 'backups'
+STATIC_DIR = BASE_PATH / 'static'
+SONGS_DIR = STATIC_DIR / 'songs'
+BACKUP_DIR = STATIC_DIR / 'backups'
 LOG_DIR = BASE_PATH / 'logs'
 
 # 自动创建目录（首次运行时）
 for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR]:
     path.mkdir(parents=True, exist_ok=True)
+
+RESOURCE_DIRECTORIES = {
+    'static': STATIC_DIR,
+    'songs': SONGS_DIR,
+    'backups': BACKUP_DIR,
+}
+
+def _normalize_relative_path(value: str) -> str:
+    cleaned = (value or '').replace('\\', '/').strip('/')
+    if not cleaned:
+        return ''
+
+    segments = [segment for segment in cleaned.split('/') if segment]
+    for segment in segments:
+        if segment in ('.', '..'):
+            raise ValueError('路径包含非法段')
+    return '/'.join(segments)
+
+
+def extract_resource_relative(value: str, resource: str) -> str:
+    if resource not in RESOURCE_DIRECTORIES:
+        raise ValueError(f'未知资源类型: {resource}')
+    if value is None:
+        raise ValueError('路径不能为空')
+
+    parsed = urlparse(str(value))
+    candidate = parsed.path if parsed.scheme else str(value)
+    candidate = unquote(candidate.replace('\\', '/')).lstrip('/')
+
+    prefix = f"{resource}/"
+    if candidate.startswith(prefix):
+        candidate = candidate[len(prefix):]
+    elif parsed.scheme or parsed.netloc:
+        raise ValueError(f'仅允许访问 /{resource}/ 下的文件')
+
+    return _normalize_relative_path(candidate)
+
+
+def resolve_resource_path(value: str, resource: str) -> Path:
+    relative = extract_resource_relative(value, resource)
+    base_dir = RESOURCE_DIRECTORIES[resource].resolve()
+    target = (base_dir / relative).resolve() if relative else base_dir
+
+    try:
+        target.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError('路径越界') from exc
+
+    return target
+
+
+def resource_relative_from_path(path_value: Union[str, Path], resource: str) -> str:
+    if resource not in RESOURCE_DIRECTORIES:
+        raise ValueError(f'未知资源类型: {resource}')
+
+    base_dir = RESOURCE_DIRECTORIES[resource].resolve()
+    path_obj = (Path(path_value) if not isinstance(path_value, Path) else path_value).resolve()
+
+    try:
+        relative = path_obj.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError('路径不在受控目录内') from exc
+
+    return _normalize_relative_path(str(relative))
+
+
+def get_public_base_url() -> str:
+    if has_request_context():
+        return request.url_root.rstrip('/')
+
+    configured = app.config.get('PUBLIC_BASE_URL') or os.environ.get('PUBLIC_BASE_URL')
+    if configured:
+        return configured.rstrip('/')
+
+    port = os.environ.get('PORT', '5000')
+    return f"http://127.0.0.1:{port}".rstrip('/')
+
+
+def build_public_url(resource: str, relative_path: str) -> str:
+    if not relative_path:
+        return ''
+
+    normalized = _normalize_relative_path(relative_path)
+    base_url = get_public_base_url()
+    return f"{base_url}/{resource}/{normalized}"
+
+_raw_cors_origins = os.environ.get('CORS_ALLOW_ORIGINS', '*')
+if _raw_cors_origins.strip() == '*':
+    ALLOWED_CORS_ORIGINS = ['*']
+else:
+    ALLOWED_CORS_ORIGINS = [origin.strip() for origin in _raw_cors_origins.split(',') if origin.strip()]
+
+ALLOWED_CORS_HEADERS = os.environ.get('CORS_ALLOW_HEADERS', 'Authorization,Content-Type')
+ALLOWED_CORS_METHODS = os.environ.get('CORS_ALLOW_METHODS', 'GET,POST,PUT,DELETE,OPTIONS')
+
+
+def _match_cors_origin(origin: Optional[str]) -> Optional[str]:
+    if not origin:
+        return None
+    if '*' in ALLOWED_CORS_ORIGINS:
+        return origin
+    if origin in ALLOWED_CORS_ORIGINS:
+        return origin
+    return None
+
+
+@app.before_request
+def handle_cors_preflight():
+    if request.method == 'OPTIONS':
+        response = app.make_response('')
+        response.status_code = 204
+        return response
+
+
+@app.after_request
+def apply_cors_headers(response):
+    origin = request.headers.get('Origin')
+    allow_origin = _match_cors_origin(origin)
+
+    if allow_origin:
+        response.headers['Access-Control-Allow-Origin'] = allow_origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        vary_header = response.headers.get('Vary', '')
+        vary_items = [item.strip() for item in vary_header.split(',') if item.strip()]
+        if 'Origin' not in vary_items:
+            vary_items.append('Origin')
+        response.headers['Vary'] = ', '.join(vary_items)
+
+    if allow_origin or '*' in ALLOWED_CORS_ORIGINS:
+        response.headers['Access-Control-Allow-Headers'] = request.headers.get('Access-Control-Request-Headers', ALLOWED_CORS_HEADERS)
+        response.headers['Access-Control-Allow-Methods'] = request.headers.get('Access-Control-Request-Method', ALLOWED_CORS_METHODS)
+
+    return response
 
 BACKUP_TIMESTAMP_FORMAT = '%Y%m%d_%H%M%S'
 BACKUP_SUFFIX_LENGTH = len(datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)) + 1  # include separator dot
@@ -234,6 +369,27 @@ def parse_bool(value, default=False):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
 
+NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
+
+
+def strip_timing_tags(content: str) -> str:
+    """移除形如 (start,duration) 的时间标记。"""
+    return NUMERIC_TAG_REGEX.sub('', content or '')
+
+
+def is_parenthetical_background_line(content: str) -> bool:
+    """
+    判断一行歌词在移除时间标记后是否整体包裹在括号内。
+    用于识别未显式标记的背景歌词。
+    """
+    if not content:
+        return False
+    stripped = strip_timing_tags(content).strip()
+    if not stripped.startswith('(') or not stripped.endswith(')'):
+        return False
+    inner = stripped[1:-1].strip()
+    return bool(inner)
+
 # ===== 解析.lys格式歌词的工具函数 =====
 def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=None):
     """
@@ -296,7 +452,6 @@ def parse_lys(lys_content):
     """
     lyrics_data = []
     block_regex = re.compile(r'(.+?)\((\d+),(\d+)\)')
-    cleanup_regex = re.compile(r'\(\d+,\d+\)')
     offset_regex = re.compile(r'\[offset:\s*(-?\d+)\s*\]')
     last_align = 'left'
     offset = 0
@@ -320,14 +475,19 @@ def parse_lys(lys_content):
         if marker != '' and not marker.isdigit():
             continue
         content = content_match.group('content')
+        is_background_marker = marker in ['6', '7', '8']
+        parenthetical_background = is_parenthetical_background_line(content) if not is_background_marker else False
+        is_background = is_background_marker or parenthetical_background
+
         align = 'left'
         font_size = 'normal'
-        
+
         if not marker:
             align = 'center'
         elif marker in ['2', '5']:
             align = 'right'
-        elif marker in ['6', '7', '8']:
+
+        if is_background:
             align = last_align
             font_size = 'small'
         
@@ -336,8 +496,9 @@ def parse_lys(lys_content):
         matches = block_regex.finditer(content)
         for match in matches:
             text_part, start_ms, duration_ms = match.groups()
-            cleaned_text = cleanup_regex.sub('', text_part)
-            cleaned_text = re.sub(r'[()]', '', cleaned_text)
+            cleaned_text = strip_timing_tags(text_part)
+            if not parenthetical_background:
+                cleaned_text = re.sub(r'[()]', '', cleaned_text)
             if cleaned_text:
                 syllables.append({
                     'text': cleaned_text,
@@ -353,7 +514,8 @@ def parse_lys(lys_content):
                 'style': {
                     'align': align,
                     'fontSize': font_size
-                }
+                },
+                'isBackground': is_background
             })
         last_align = align
     
@@ -449,17 +611,23 @@ def restore_file():
         return abort(403)
     file_path = request.json.get('file_path')
     try:
+        if not file_path:
+            return jsonify({'status': 'error', 'message': '缺少文件路径'})
+
         # 如果是备份文件路径
-        if 'backups' in file_path:
-            backup_path = Path(file_path.replace('http://127.0.0.1:5000/backups/',
-                                            str(BACKUP_DIR) + '/'))
-            original_name = '.'.join(
-                backup_path.name.split('.')[:-1])
-            restore_path = BASE_PATH / 'static' / original_name
+        if '/backups/' in file_path:
+            backup_path = resolve_resource_path(file_path, 'backups')
+            original_name = '.'.join(backup_path.name.split('.')[:-1])
+            restore_path = (STATIC_DIR / original_name).resolve()
+            restore_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup_path, restore_path)
         else:
+            target_path = resolve_resource_path(file_path, 'static')
+            if not target_path.exists():
+                return jsonify({'status': 'error', 'message': '目标文件不存在'})
+
             # 获取所有关联文件备份
-            related_files = get_related_files(file_path)  # 新增关联文件获取方法
+            related_files = get_related_files(target_path)  # 新增关联文件获取方法
             backups = []
 
             # 为每个关联文件创建恢复任务
@@ -488,36 +656,50 @@ def restore_file():
 
 def get_related_files(json_path):
     """获取与JSON文件关联的所有文件路径"""
-    related_files = [json_path]
+    json_path_obj = Path(json_path)
+    related_files = [json_path_obj]
 
     try:
-        with open(json_path, 'r', encoding='utf-8') as f:
+        with open(json_path_obj, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         # 获取歌词相关文件
         lyrics_info = data['meta'].get('lyrics', '').split('::')
         for path in lyrics_info[1:4]:  # 歌词、翻译、音译路径
             if path and path != '!':
-                local_path = path.replace('http://127.0.0.1:5000/songs/',
-                                          str(SONGS_DIR) + '/')
-                related_files.append(local_path)
+                try:
+                    local_path = resolve_resource_path(path, 'songs')
+                    related_files.append(local_path)
+                except ValueError:
+                    app.logger.warning(f"忽略无法解析的歌词路径: {path}")
 
         # 获取音频文件
         if 'song' in data:
-            local_music = data['song'].replace('http://127.0.0.1:5000/songs/',
-                                               str(SONGS_DIR) + '/')
-            related_files.append(local_music)
+            try:
+                local_music = resolve_resource_path(data['song'], 'songs')
+                related_files.append(local_music)
+            except ValueError:
+                app.logger.warning(f"忽略无法解析的音频路径: {data['song']}")
 
         # 获取专辑图
         if 'albumImgSrc' in data['meta']:
-            local_img = data['meta']['albumImgSrc'].replace(
-                'http://127.0.0.1:5000/songs/', str(SONGS_DIR) + '/')
-            related_files.append(local_img)
+            try:
+                local_img = resolve_resource_path(data['meta']['albumImgSrc'], 'songs')
+                related_files.append(local_img)
+            except ValueError:
+                app.logger.warning(f"忽略无法解析的专辑图路径: {data['meta']['albumImgSrc']}")
 
     except Exception as e:
         print(f"Error getting related files: {str(e)}")
 
-    return list(set(related_files))  # 去重
+    unique_files = []
+    seen = set()
+    for file in related_files:
+        resolved = Path(file).resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique_files.append(resolved)
+    return unique_files  # 去重
 
 
 @app.route('/update_json', methods=['POST'])
@@ -560,31 +742,22 @@ def save_lyrics():
             app.logger.error(f"无效的文件路径: {data['path']}")
             return jsonify({'status': 'error', 'message': '无效的文件路径'})
 
-        # 验证路径格式
-        if not data['path'].startswith('http://127.0.0.1:5000/songs/'):
-            app.logger.error(f"无效的路径格式: {data['path']}")
+        try:
+            file_path = resolve_resource_path(data['path'], 'songs')
+        except ValueError as exc:
+            app.logger.error(f"无效的路径格式: {data['path']}，错误: {exc}")
             return jsonify({'status': 'error', 'message': '无效的路径格式'})
 
-        file_path = Path(data['path'].replace('http://127.0.0.1:5000/songs/',
-                                         str(SONGS_DIR) + '/'))
         content = data['content']
 
-        # 验证文件路径
-        if not file_path.is_absolute():
-            app.logger.error(f"无效的文件路径: {file_path}, 必须是绝对路径")
-            return jsonify({'status': 'error', 'message': '无效的文件路径'})
-
-        # 验证文件是否在允许的目录中
-        try:
-            file_path.relative_to(SONGS_DIR)
-        except ValueError:
-            app.logger.error(f"文件路径不在允许的目录中: {file_path}")
-            return jsonify({'status': 'error', 'message': '文件路径不在允许的目录中'})
-
         # 验证文件名
-        if not file_path.name or file_path.name == '.' or file_path.name == '..':
+        if not file_path.name or file_path.name in ('.', '..'):
             app.logger.error(f"无效的文件名: {file_path.name}")
             return jsonify({'status': 'error', 'message': '无效的文件名'})
+
+        if file_path.is_dir():
+            app.logger.error(f"路径指向目录而非文件: {file_path}")
+            return jsonify({'status': 'error', 'message': '请选择具体文件'})
 
         # 修改保存逻辑，添加目录创建
         file_dir = file_path.parent
@@ -737,25 +910,31 @@ def update_file_path():
         if json_path.exists():  # 只在文件存在时进行备份
             shutil.copy2(json_path, backup_path)
 
+        normalized_new_path = ''
+        if new_path:
+            try:
+                normalized_new_path = _normalize_relative_path(new_path)
+            except ValueError:
+                return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
+
         # 更新路径
         if file_type == 'music':
-            json_data['song'] = f"http://127.0.0.1:5000/songs/{new_path}"
+            json_data['song'] = build_public_url('songs', normalized_new_path)
         elif file_type == 'image':
-            json_data['meta'][
-                'albumImgSrc'] = f"http://127.0.0.1:5000/songs/{new_path}"
+            json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
         elif file_type == 'background':
             json_data['meta']['Background-image'] = f"./songs/{new_path}"
         elif file_type == 'lyrics':
             current_lyrics = json_data['meta']['lyrics'].split('::')
             if len(current_lyrics) >= 4:
                 if data.get('index') == 0:  # 歌词文件
-                    new_lyrics_path = f"http://127.0.0.1:5000/songs/{new_path}" if new_path else '!'
+                    new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[1] = new_lyrics_path
                 elif data.get('index') == 1:  # 歌词翻译
-                    new_translation_path = f"http://127.0.0.1:5000/songs/{new_path}" if new_path else '!'
+                    new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[2] = new_translation_path
                 elif data.get('index') == 2:  # 歌词音译
-                    new_transliteration_path = f"http://127.0.0.1:5000/songs/{new_path}" if new_path else '!'
+                    new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[3] = new_transliteration_path
                 json_data['meta']['lyrics'] = '::'.join(current_lyrics)
 
@@ -763,9 +942,10 @@ def update_file_path():
             json.dump(json_data, f, ensure_ascii=False, indent=2)
 
         # 在更新路径后添加文件创建逻辑
-        new_local_path = SONGS_DIR / new_path
-        if not new_local_path.parent.exists():
-            new_local_path.parent.mkdir(parents=True, exist_ok=True)
+        if normalized_new_path:
+            new_local_path = SONGS_DIR / normalized_new_path
+            if not new_local_path.parent.exists():
+                new_local_path.parent.mkdir(parents=True, exist_ok=True)
 
         return jsonify({'status': 'success'})
     except Exception as e:
@@ -848,8 +1028,10 @@ def rename_json():
 @app.route('/check_lyrics', methods=['POST'])
 def check_lyrics():
     lyrics_path = request.json.get('path')
-    real_path = Path(lyrics_path.replace('http://127.0.0.1:5000/songs/',
-                                    str(SONGS_DIR) + '/'))
+    try:
+        real_path = resolve_resource_path(lyrics_path, 'songs')
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': f'无法解析歌词路径: {exc}'})
 
     try:
         with open(real_path, 'r', encoding='utf-8') as f:
@@ -872,9 +1054,12 @@ def check_lyrics():
 
 @app.route('/get_backups', methods=['POST'])
 def get_backups():
-    file_path = request.json.get('path').replace(
-        'http://127.0.0.1:5000/songs/', str(SONGS_DIR) + '/')
-    prefix = backup_prefix(Path(file_path))
+    try:
+        file_path = resolve_resource_path(request.json.get('path'), 'songs')
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': f'无法解析文件路径: {exc}'})
+
+    prefix = backup_prefix(file_path)
 
     try:
         collected = []
@@ -903,10 +1088,12 @@ def get_backups():
             })
 
         collected.sort(key=lambda item: item['dt'], reverse=True)
-        limited = [{
-            'path': f"http://127.0.0.1:5000/backups/{item['name']}",
-            'time': item['dt'].strftime('%Y-%m-%d %H:%M:%S')
-        } for item in collected[:7]]
+        limited = []
+        for item in collected[:7]:
+            limited.append({
+                'path': build_public_url('backups', item['name']),
+                'time': item['dt'].strftime('%Y-%m-%d %H:%M:%S')
+            })
         return jsonify({'status': 'success', 'backups': limited})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -1613,6 +1800,9 @@ def lys_to_ttml(input_path, output_path):
 
             # 解析音节 + 应用 offset
             syllables = parse_syllable_info(content, marker, offset=offset)
+            parenthetical_background = False
+            if marker not in ['6', '7', '8']:
+                parenthetical_background = is_parenthetical_background_line(content)
 
             if syllables:
                 begin_time_ms = syllables[0]['start_ms']
@@ -1626,7 +1816,8 @@ def lys_to_ttml(input_path, output_path):
                     'content': content,
                     'syllables': syllables,
                     'is_duet': marker in ['2', '5'],
-                    'is_background': marker in ['6', '7', '8'],
+                    'is_background': marker in ['6', '7', '8'] or parenthetical_background,
+                    'is_parenthetical_background': parenthetical_background,
                     'translation': translation_content
                 })
 
@@ -1924,7 +2115,7 @@ def lrc_to_ttml(input_path, output_path):
                 marker, clean_content = _extract_lrc_marker_and_clean(content)
 
                 # 检查是否为背景行
-                is_background = marker in ['6', '7', '8']
+                is_background = marker in ['6', '7', '8'] or is_parenthetical_background_line(clean_content)
 
                 # 基于时间戳获取对应的翻译内容（毫秒级精确匹配）
                 begin_ms = ttml_time_to_ms(begin_time_str)
@@ -2113,13 +2304,22 @@ def convert_ttml():
                 app.logger.warning(f"无法删除临时文件 {temp_path}: {str(e)}")
 
         if success:
+            try:
+                lyric_relative = resource_relative_from_path(lyric_path, 'songs')
+            except ValueError:
+                lyric_relative = _normalize_relative_path(os.path.basename(lyric_path))
+
             result = {
                 'status': 'success',
-                'lyricPath': f"http://127.0.0.1:5000/songs/{os.path.basename(lyric_path)}"
+                'lyricPath': build_public_url('songs', lyric_relative)
             }
             
             if trans_path:
-                result['transPath'] = f"http://127.0.0.1:5000/songs/{os.path.basename(trans_path)}"
+                try:
+                    trans_relative = resource_relative_from_path(trans_path, 'songs')
+                except ValueError:
+                    trans_relative = _normalize_relative_path(os.path.basename(trans_path))
+                result['transPath'] = build_public_url('songs', trans_relative)
             
             return jsonify(result)
         else:
@@ -2138,18 +2338,30 @@ def convert_ttml_by_path():
         ttml_filename = data.get('path')
         if not ttml_filename or not ttml_filename.lower().endswith('.ttml'):
             return jsonify({'status': 'error', 'message': '请提供TTML文件名'})
-        ttml_path = SONGS_DIR / ttml_filename
+        try:
+            ttml_path = resolve_resource_path(ttml_filename, 'songs')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'无法解析TTML路径: {exc}'})
+
         if not ttml_path.exists():
             return jsonify({'status': 'error', 'message': 'TTML文件不存在'})
         # 直接调用原有转换逻辑
         success, lyric_path, trans_path = ttml_to_lys(str(ttml_path), str(SONGS_DIR))
         if success:
+            try:
+                lyric_relative = resource_relative_from_path(lyric_path, 'songs')
+            except ValueError:
+                lyric_relative = _normalize_relative_path(os.path.basename(lyric_path))
             result = {
                 'status': 'success',
-                'lyricPath': f'http://127.0.0.1:5000/songs/{os.path.basename(lyric_path)}'
+                'lyricPath': build_public_url('songs', lyric_relative)
             }
             if trans_path:
-                result['transPath'] = f'http://127.0.0.1:5000/songs/{os.path.basename(trans_path)}'
+                try:
+                    trans_relative = resource_relative_from_path(trans_path, 'songs')
+                except ValueError:
+                    trans_relative = _normalize_relative_path(os.path.basename(trans_path))
+                result['transPath'] = build_public_url('songs', trans_relative)
             return jsonify(result)
         else:
             return jsonify({'status': 'error', 'message': '转换失败，请检查TTML文件格式是否正确'})
@@ -2166,13 +2378,16 @@ def convert_to_ttml():
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
 
+        try:
+            input_path = resolve_resource_path(lyrics_path, 'songs')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'无法解析歌词路径: {exc}'})
+
         # 获取文件扩展名
-        file_ext = Path(lyrics_path).suffix.lower()
+        file_ext = input_path.suffix.lower()
         if file_ext not in ['.lys', '.lrc']:
             return jsonify({'status': 'error', 'message': '只支持LYS和LRC格式'})
 
-        # 构建完整路径
-        input_path = SONGS_DIR / lyrics_path
         if not input_path.exists():
             return jsonify({'status': 'error', 'message': '歌词文件不存在'})
 
@@ -2189,9 +2404,10 @@ def convert_to_ttml():
             success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
 
         if success:
+            target_relative = resource_relative_from_path(output_path, 'songs')
             return jsonify({
                 'status': 'success',
-                'ttmlPath': f"http://127.0.0.1:5000/songs/{output_filename}"
+                'ttmlPath': build_public_url('songs', target_relative)
             })
         else:
             return jsonify({'status': 'error', 'message': f'转换失败: {error_msg}'})
@@ -2212,13 +2428,16 @@ def convert_to_ttml_temp():
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
 
+        try:
+            input_path = resolve_resource_path(lyrics_path, 'songs')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'无法解析歌词路径: {exc}'})
+
         # 获取文件扩展名
-        file_ext = Path(lyrics_path).suffix.lower()
+        file_ext = input_path.suffix.lower()
         if file_ext not in ['.lys', '.lrc']:
             return jsonify({'status': 'error', 'message': '只支持LYS和LRC格式'})
 
-        # 构建完整路径
-        input_path = SONGS_DIR / lyrics_path
         if not input_path.exists():
             return jsonify({'status': 'error', 'message': '歌词文件不存在'})
 
@@ -2235,9 +2454,10 @@ def convert_to_ttml_temp():
             success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
 
         if success:
+            target_relative = resource_relative_from_path(output_path, 'songs')
             return jsonify({
                 'status': 'success',
-                'ttmlPath': f"http://127.0.0.1:5000/songs/{output_filename}"
+                'ttmlPath': build_public_url('songs', target_relative)
             })
         else:
             return jsonify({'status': 'error', 'message': f'转换失败: {error_msg}'})
@@ -2985,11 +3205,11 @@ def get_lyrics_by_path():
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '缺少歌词路径'}), 400
 
-        # 只允许读取 static/songs 下的歌词文件
-        if not lyrics_path.startswith('http://127.0.0.1:5000/songs/'):
-            return jsonify({'status': 'error', 'message': '路径不合法'}), 400
+        try:
+            real_path = resolve_resource_path(lyrics_path, 'songs')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'路径不合法: {exc}'}), 400
 
-        real_path = Path(lyrics_path.replace('http://127.0.0.1:5000/songs/', str(SONGS_DIR) + '/'))
         if not real_path.exists():
             return jsonify({'status': 'error', 'message': '歌词文件未找到'}), 404
 
@@ -3175,6 +3395,21 @@ def is_request_allowed():
     remote = request.remote_addr
     if remote in ['127.0.0.1', '::1']:
         return True
+
+    # 根据允许的 CORS 来源放行指定前端（如 AMLL-Web）
+    origin = request.headers.get('Origin')
+    if origin and _match_cors_origin(origin):
+        return True
+
+    referer = request.headers.get('Referer')
+    if referer:
+        try:
+            parsed = urlparse(referer)
+            referer_origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else None
+            if referer_origin and _match_cors_origin(referer_origin):
+                return True
+        except Exception:
+            pass
         
     # 检查设备是否受信任
     device_id = request.cookies.get('FEW_DEVICE_ID')
