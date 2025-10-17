@@ -75,6 +75,18 @@ RESOURCE_DIRECTORIES = {
     'backups': BACKUP_DIR,
 }
 
+SAFE_FILENAME_PATTERN = re.compile(r'[^\w\u4e00-\u9fa5\-_. ]')
+
+
+def sanitize_filename(value: Optional[str]) -> str:
+    """Normalize filenames while preserving spaces and safe punctuation."""
+    if not value:
+        return ''
+
+    cleaned = SAFE_FILENAME_PATTERN.sub('', value)
+    cleaned = cleaned.replace('"', '＂').replace("'", '＂')
+    return cleaned.strip()
+
 def _normalize_relative_path(value: str) -> str:
     cleaned = (value or '').replace('\\', '/').strip('/')
     if not cleaned:
@@ -987,7 +999,9 @@ def rename_json():
 
     old_path = BASE_PATH / 'static' / old_filename
     # 清理文件名，替换全角引号
-    new_filename = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', new_filename).replace('"', '＂').replace("'", '＂')
+    new_filename = sanitize_filename(new_filename)
+    if not new_filename:
+        return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
     new_path = BASE_PATH / 'static' / new_filename
 
     try:
@@ -1114,8 +1128,10 @@ def upload_music():
         # 允许所有音频视频格式
         file_ext = Path(file.filename).suffix.lower()
 
-        # 清理文件名，替换全角引号
-        clean_name = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', file.filename).replace('"', '＂').replace("'", '＂')
+        # 清理文件名，保留空格与安全字符
+        clean_name = sanitize_filename(file.filename)
+        if not clean_name:
+            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
         # 如果文件已存在则覆盖
@@ -1148,8 +1164,10 @@ def upload_image():
                 'message': '只支持 JPG/PNG/GIF/WEBP 格式'
             })
 
-        # 清理文件名，替换全角引号
-        clean_name = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', file.filename).replace('"', '＂').replace("'", '＂')
+        # 清理文件名，保留空格与安全字符
+        clean_name = sanitize_filename(file.filename)
+        if not clean_name:
+            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
         # 如果文件已存在则覆盖
@@ -1190,8 +1208,10 @@ def upload_lyrics():
             )
             return jsonify({'status': 'error', 'message': '只支持 LRC/LYS/ttml 格式'})
 
-        # 清理文件名，替换全角引号
-        clean_name = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', file.filename).replace('"', '＂').replace("'", '＂')
+        # 清理文件名，保留空格与安全字符
+        clean_name = sanitize_filename(file.filename)
+        if not clean_name:
+            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
         # 记录上传开始
@@ -1249,8 +1269,10 @@ def upload_translation():
             )
             return jsonify({'status': 'error', 'message': '只支持 LRC/LYS/ttml 格式'})
 
-        # 清理文件名，替换全角引号
-        clean_name = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', file.filename).replace('"', '＂').replace("'", '＂')
+        # 清理文件名，保留空格与安全字符
+        clean_name = sanitize_filename(file.filename)
+        if not clean_name:
+            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
         # 记录上传开始
@@ -2283,7 +2305,9 @@ def convert_ttml():
             return jsonify({'status': 'error', 'message': '只支持TTML格式'})
 
         # 清理文件名
-        clean_name = re.sub(r'[^\w\u4e00-\u9fa5-_.]', '', file.filename)
+        clean_name = sanitize_filename(file.filename)
+        if not clean_name:
+            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         temp_path = SONGS_DIR / f"temp_{clean_name}"
 
         # 保存临时文件

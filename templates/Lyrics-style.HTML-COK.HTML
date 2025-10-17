@@ -147,6 +147,8 @@
             -webkit-text-fill-color: transparent;
             flex-shrink: 0;
             white-space: nowrap;
+            transform: translateY(0); /* 为逐音节上浮动画设定基线 */
+            will-change: transform, background-position;
         }
 
         .word-wrapper {
@@ -212,12 +214,17 @@
             let translationData = [];
 
             // 动画时长控制（前端硬编码，同时由后端解析保持一致）
-            const enterDuration =600;          // 歌词行进入动画时长（毫秒）
-            const moveDuration = 600;           // 歌词行移动动画时长（毫秒）
-            const exitDuration = 600;           // 歌词行退出动画时长（毫秒）
-            const placeholderDuration = 50;     // 占位符（消失行）延时
-            const lineDisplayOffset = 0.5;      // 歌词行提前0.3秒显示
+            const enterDuration = 600;           // 歌词行进入动画时长（毫秒）
+            const moveDuration = 600;            // 歌词行移动动画时长（毫秒）
+            const exitDuration = 600;            // 歌词行退出动画时长（毫秒）
+            const placeholderDuration = 50;      // 占位符（消失行）延时
+            const lineDisplayOffset = 0.5;       // 歌词行提前显示时间（秒）
             const useComputedDisappear = false;  // 是否使用后端计算的消失时机
+            const SYLLABLE_FADE_RATIO = 0.3;     // 逐字渐变的淡入范围比例
+            const SYLLABLE_FLOAT_ASCEND_EASING = 'cubic-bezier(0.55, 0.05, 0.85, 0.25)'; // 逐音节上浮阶段使用缓慢起步后逐渐加速的曲线
+            const SYLLABLE_FLOAT_SETTLE_EASING = 'cubic-bezier(0.0, 0.6, 0.2, 1.0)';     // 逐音节悬停阶段使用深度缓出的曲线
+            const SYLLABLE_FLOAT_SETTLE_TAIL_MS = 100000000000; // 逐音节悬停阶段至少保留的时长（毫秒），制造“无限趋近”感
+            const SYLLABLE_FLOAT_MAX_SPEED = 0.01314520; // 像素/毫秒，逐音节上浮速度上限，可按需求调整
 
             async function syncAnimationConfig() {
                 try {
@@ -243,8 +250,6 @@
             const customEasing = 'cubic-bezier(.27,.14,0,.99)';
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
             let rafId = null; // requestAnimationFrame ID
-            const SYLLABLE_FADE_RATIO = 0.3;
-
             const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
 
             function clearMoveTransition(element) {
@@ -481,7 +486,9 @@
                             const clampedTime = Math.max(0, Math.min(duration, localTime));
                             lineInfo.animations.forEach(animation => {
                                 try {
-                                    animation.currentTime = clampedTime;
+                                    const mapper = animation && animation.__mapTime;
+                                    const mappedTime = typeof mapper === 'function' ? mapper(clampedTime) : clampedTime;
+                                    animation.currentTime = mappedTime;
                                 } catch (e) { /* 忽略 */ }
                             });
                         }
@@ -513,31 +520,127 @@
 
                             const firstStart = blocks.reduce((min, block) => Math.min(min, block.startTime), Number.MAX_SAFE_INTEGER);
                             const lastEnd = blocks.reduce((max, block) => Math.max(max, block.endTime), 0);
-                            const lineDuration = Math.max(1, lastEnd - firstStart);
+                            const originalLineDuration = Math.max(1, lastEnd - firstStart);
+                            let extendedLineDuration = originalLineDuration;
+                            const blockMetrics = [];
 
-                            lineInfo.lineStartMs = firstStart;
-                            lineInfo.lineDuration = lineDuration;
-                            lineInfo.animations = [];
-
-                            blocks.forEach((block, idx) => {
+                            blocks.forEach((block) => {
                                 const span = block.ele;
                                 const computedStyle = getComputedStyle(span);
                                 const spanWidth = span.offsetWidth || parseFloat(computedStyle.width) || 0;
                                 const spanHeight = span.offsetHeight || parseFloat(computedStyle.fontSize) || 0;
                                 const { backgroundImage, backgroundSize, totalPxWidth } = generateBackgroundFadeStyle(spanWidth, spanHeight, SYLLABLE_FADE_RATIO);
+                                const floatDistance = Math.max(1, spanHeight * 0.1);
+                                const floatOffset = -(Math.round(floatDistance * 100) / 100);
+                                const syllableDurationMs = Math.max(1, block.endTime - block.startTime);
+                                const ascendStartMs = block.startTime;
+                                const requiredAscendMs = Math.max(syllableDurationMs, floatDistance / SYLLABLE_FLOAT_MAX_SPEED);
+                                const ascendEndMs = ascendStartMs + requiredAscendMs;
+                                const settleTailMs = Math.max(
+                                    SYLLABLE_FLOAT_SETTLE_TAIL_MS,
+                                    Math.min(requiredAscendMs * 0.35, 600)
+                                );
+                                const settleEndMs = ascendEndMs + settleTailMs;
+
+                                extendedLineDuration = Math.max(extendedLineDuration, settleEndMs - firstStart);
+
+                                blockMetrics.push({
+                                    span,
+                                    block,
+                                    spanWidth,
+                                    spanHeight,
+                                    backgroundImage,
+                                    backgroundSize,
+                                    totalPxWidth,
+                                    floatDistance,
+                                    floatOffset,
+                                    ascendStartMs,
+                                    ascendEndMs,
+                                    settleEndMs
+                                });
+                            });
+
+                            lineInfo.lineStartMs = firstStart;
+                            lineInfo.lineDuration = extendedLineDuration;
+                            lineInfo.originalLineDuration = originalLineDuration;
+                            lineInfo.animations = [];
+
+                            blockMetrics.forEach((metric, idx) => {
+                                const span = metric.span;
+                                const block = metric.block;
+                                const spanWidth = metric.spanWidth;
+                                const spanHeight = metric.spanHeight;
+                                const backgroundImage = metric.backgroundImage;
+                                const backgroundSize = metric.backgroundSize;
+                                const totalPxWidth = metric.totalPxWidth;
+
                                 span.style.backgroundImage = backgroundImage;
                                 span.style.backgroundSize = backgroundSize;
                                 span.style.backgroundPosition = `${totalPxWidth}px 0`;
                                 span.style.backgroundRepeat = 'no-repeat';
+                                span.style.transform = 'translateY(0)';
 
-                                const frames = createKaraokeFrames(blocks, idx, lineDuration, SYLLABLE_FADE_RATIO);
+                                const frames = createKaraokeFrames(blocks, idx, originalLineDuration, SYLLABLE_FADE_RATIO);
                                 const animation = span.animate(frames, {
-                                    duration: lineDuration,
+                                    duration: originalLineDuration,
                                     easing: 'linear',
                                     fill: 'both'
                                 });
                                 animation.pause();
+                                animation.__mapTime = (time) => Math.min(time, originalLineDuration);
                                 lineInfo.animations.push(animation);
+
+                                const floatDistance = metric.floatDistance;
+                                const floatOffset = metric.floatOffset;
+                                const ascendStartOffset = Math.max(0, Math.min(1, (metric.ascendStartMs - firstStart) / extendedLineDuration));
+                                const ascendEndOffset = Math.max(
+                                    ascendStartOffset,
+                                    Math.min(1, (metric.ascendEndMs - firstStart) / extendedLineDuration)
+                                );
+                                const settleEndOffset = Math.max(
+                                    ascendEndOffset,
+                                    Math.min(1, (metric.settleEndMs - firstStart) / extendedLineDuration)
+                                );
+
+                                const floatFrames = [];
+                                floatFrames.push({ offset: 0, transform: 'translateY(0)' });
+                                if (ascendStartOffset > 0) {
+                                    floatFrames.push({ offset: ascendStartOffset, transform: 'translateY(0)' });
+                                }
+                                floatFrames.push({
+                                    offset: ascendEndOffset,
+                                    transform: `translateY(${floatOffset}px)`,
+                                    easing: SYLLABLE_FLOAT_ASCEND_EASING
+                                });
+                                if (settleEndOffset > ascendEndOffset) {
+                                    floatFrames.push({
+                                        offset: settleEndOffset,
+                                        transform: `translateY(${floatOffset}px)`,
+                                        easing: SYLLABLE_FLOAT_SETTLE_EASING
+                                    });
+                                    if (settleEndOffset < 1) {
+                                        floatFrames.push({
+                                            offset: 1,
+                                            transform: `translateY(${floatOffset}px)`
+                                        });
+                                    }
+                                } else if (ascendEndOffset < 1) {
+                                    floatFrames.push({
+                                        offset: 1,
+                                        transform: `translateY(${floatOffset}px)`,
+                                        easing: SYLLABLE_FLOAT_SETTLE_EASING
+                                    });
+                                } else {
+                                    const lastFrame = floatFrames[floatFrames.length - 1];
+                                    lastFrame.easing = SYLLABLE_FLOAT_SETTLE_EASING;
+                                }
+                                const floatAnimation = span.animate(floatFrames, {
+                                    duration: extendedLineDuration,
+                                    easing: 'linear',
+                                    fill: 'both'
+                                });
+                                floatAnimation.pause();
+                                lineInfo.animations.push(floatAnimation);
                             });
 
                             syncLineAnimations(lineInfo);
