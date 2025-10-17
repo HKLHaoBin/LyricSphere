@@ -53,6 +53,7 @@ pip install flask openai bcrypt waitress
    - Manages file operations (upload, save, backup, restore)
    - Provides lyric parsing and conversion functionality
    - Implements security features and authentication
+   - Provides filename sanitization for secure file handling
 
 2. **Lyric Processing**:
    - Support for .lys (Lyricify Syllable) format with syllable-level timing
@@ -107,6 +108,8 @@ The application automatically creates necessary directories:
 
 Backup functionality is built into most file operations, maintaining up to 7 versions of each file. To prevent issues with overly long filenames, the application implements a hashing strategy that truncates filenames while preserving their uniqueness.
 
+The application also implements filename sanitization to ensure secure file handling. The `sanitize_filename` function removes potentially dangerous characters from filenames while preserving safe punctuation and Unicode characters, preventing directory traversal and other security issues.
+
 ### Lyric Format Support
 
 1. **.lys Format**: Custom syllable-level timed lyrics format
@@ -120,6 +123,11 @@ The application now includes lyrics syllable grouping functionality to optimize 
 - **`groupSyllablesIntoWords` function**: Groups individual syllables into words for improved layout rendering
 - **CSS styling controls**: Includes `word-break` and `white-space` properties for better text flow
 - **Dynamic rendering**: Groups syllables at render time for optimal display of lyrics
+
+The application also features advanced syllable-level animations with floating effects and easing transitions:
+- **Syllable floating animation**: Individual syllables float upward during highlighting for enhanced visual effect
+- **Customizable easing functions**: Configurable acceleration and deceleration curves for smooth animations
+- **Extended animation duration**: Animations continue beyond the syllable duration for a lingering effect
 
 ### Format Conversion
 
