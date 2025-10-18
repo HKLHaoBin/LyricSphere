@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Famyliam Everywhere</title>
+    <title>LyricSphere</title>
     <style>
         :root {
             --bg-color: #ffffff;
@@ -1097,6 +1097,11 @@
                 <div>
                     <label>
                         <input type="checkbox" id="aiCompatMode"> 兼容模式：将提示词合并到用户消息中
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiStripBrackets"> 预处理歌词时去掉括号
                     </label>
                 </div>
                 <div>
@@ -2553,9 +2558,11 @@
                 const thinkingBaseUrlStored = localStorage.getItem('aiThinkingBaseUrl');
                 const thinkingModelStored = localStorage.getItem('aiThinkingModel');
                 const thinkingPrompt = localStorage.getItem('aiThinkingPrompt');
+                const stripBracketsStored = localStorage.getItem('aiStripBrackets');
                 const thinkingProvider = thinkingProviderStored && thinkingProviderStored.length > 0 ? thinkingProviderStored : provider;
                 const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
                 const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
+                const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
 
                 const response = await fetch('/translate_lyrics', {
                     method: 'POST',
@@ -2576,7 +2583,8 @@
                         thinking_provider: thinkingProvider,
                         thinking_base_url: thinkingBaseUrl,
                         thinking_model: thinkingModel,
-                        thinking_system_prompt: thinkingPrompt
+                        thinking_system_prompt: thinkingPrompt,
+                        strip_brackets: stripBrackets
                     })
                 });
 
@@ -2699,6 +2707,7 @@
             const savedThinkingModel = localStorage.getItem('aiThinkingModel');
             const savedThinkingApiKey = localStorage.getItem('aiThinkingApiKey');
             const savedThinkingPrompt = localStorage.getItem('aiThinkingPrompt');
+            const savedStripBrackets = localStorage.getItem('aiStripBrackets');
 
             // 获取当前设置
             fetch('/get_ai_settings')
@@ -2713,6 +2722,8 @@
                         document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
                         document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
                         document.getElementById('aiCompatMode').checked = savedCompatMode ? savedCompatMode === 'true' : (data.settings.compat_mode !== undefined ? data.settings.compat_mode : false);
+                        const backendStripBrackets = data.settings.strip_brackets !== undefined ? !!data.settings.strip_brackets : false;
+                        document.getElementById('aiStripBrackets').checked = savedStripBrackets !== null ? savedStripBrackets === 'true' : backendStripBrackets;
                         document.getElementById('aiThinkingEnabled').checked = savedThinkingEnabled ? savedThinkingEnabled === 'true' : (data.settings.thinking_enabled !== undefined ? data.settings.thinking_enabled : true);
                         document.getElementById('aiThinkingProvider').value = savedThinkingProvider || data.settings.thinking_provider || data.settings.provider || 'deepseek';
                         document.getElementById('aiThinkingBaseUrl').value = savedThinkingBaseUrl || data.settings.thinking_base_url || data.settings.base_url || '';
@@ -2812,6 +2823,7 @@
         function saveAISettings() {
             const apiKey = document.getElementById('aiApiKey').value;
             const systemPrompt = document.getElementById('aiSystemPrompt').value;
+            const hasSystemPrompt = systemPrompt && systemPrompt.trim().length > 0;
             const provider = document.getElementById('aiProvider').value;
 
             let baseUrl = sanitizeBaseUrl(document.getElementById('aiBaseUrl').value);
@@ -2820,6 +2832,7 @@
             const model = document.getElementById('aiModel').value;
             const expectReasoning = document.getElementById('aiExpectReasoning').checked;
             const compatMode = document.getElementById('aiCompatMode').checked;
+            const stripBrackets = document.getElementById('aiStripBrackets').checked;
             const thinkingEnabled = document.getElementById('aiThinkingEnabled').checked;
 
             const thinkingProvider = document.getElementById('aiThinkingProvider').value;
@@ -2828,6 +2841,7 @@
             const thinkingModel = document.getElementById('aiThinkingModel').value;
             const thinkingApiKey = document.getElementById('aiThinkingApiKey').value;
             const thinkingPrompt = document.getElementById('aiThinkingPrompt').value;
+            const hasThinkingPrompt = thinkingPrompt && thinkingPrompt.trim().length > 0;
 
             // 保存设置到localStorage
             if (apiKey) {
@@ -2836,7 +2850,7 @@
                 localStorage.removeItem('aiApiKey');
             }
 
-            if (systemPrompt) {
+            if (hasSystemPrompt) {
                 localStorage.setItem('aiSystemPrompt', systemPrompt);
             } else {
                 localStorage.removeItem('aiSystemPrompt');
@@ -2847,6 +2861,7 @@
             localStorage.setItem('aiModel', model);
             localStorage.setItem('aiExpectReasoning', expectReasoning);
             localStorage.setItem('aiCompatMode', compatMode);
+            localStorage.setItem('aiStripBrackets', stripBrackets);
             localStorage.setItem('aiThinkingEnabled', thinkingEnabled);
 
             if (thinkingApiKey) {
@@ -2855,7 +2870,7 @@
                 localStorage.removeItem('aiThinkingApiKey');
             }
 
-            if (thinkingPrompt) {
+            if (hasThinkingPrompt) {
                 localStorage.setItem('aiThinkingPrompt', thinkingPrompt);
             } else {
                 localStorage.removeItem('aiThinkingPrompt');
@@ -2886,6 +2901,7 @@
                     model: model,
                     expect_reasoning: expectReasoning,
                     compat_mode: compatMode,
+                    strip_brackets: stripBrackets,
                     thinking_enabled: thinkingEnabled,
                     thinking_api_key: thinkingApiKey,
                     thinking_provider: thinkingProvider,
@@ -2897,6 +2913,35 @@
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
+                    const resolvedSystemPrompt = data.system_prompt || '';
+                    if (resolvedSystemPrompt.trim().length > 0) {
+                        localStorage.setItem('aiSystemPrompt', resolvedSystemPrompt);
+                        const systemPromptInput = document.getElementById('aiSystemPrompt');
+                        if (systemPromptInput) {
+                            systemPromptInput.value = resolvedSystemPrompt;
+                        }
+                    } else {
+                        localStorage.removeItem('aiSystemPrompt');
+                    }
+
+                    const resolvedThinkingPrompt = data.thinking_system_prompt || '';
+                    if (resolvedThinkingPrompt.trim().length > 0) {
+                        localStorage.setItem('aiThinkingPrompt', resolvedThinkingPrompt);
+                        const thinkingPromptInput = document.getElementById('aiThinkingPrompt');
+                        if (thinkingPromptInput) {
+                            thinkingPromptInput.value = resolvedThinkingPrompt;
+                        }
+                    } else {
+                        localStorage.removeItem('aiThinkingPrompt');
+                    }
+
+                    const resolvedStripBrackets = data.strip_brackets !== undefined ? !!data.strip_brackets : false;
+                    localStorage.setItem('aiStripBrackets', resolvedStripBrackets);
+                    const stripBracketsInput = document.getElementById('aiStripBrackets');
+                    if (stripBracketsInput) {
+                        stripBracketsInput.checked = resolvedStripBrackets;
+                    }
+
                     alert('设置已保存！');
                     closeAISettings();
                 } else {

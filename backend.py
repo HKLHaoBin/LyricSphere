@@ -299,6 +299,7 @@ AI_TRANSLATION_SETTINGS = {
     'base_url': 'https://api.deepseek.com',
     'model': 'deepseek-reasoner',
     'expect_reasoning': True,
+    'strip_brackets': False,
     'compat_mode': False,
     'thinking_enabled': True,
     'thinking_api_key': '',
@@ -308,6 +309,7 @@ AI_TRANSLATION_SETTINGS = {
     'thinking_system_prompt': '''你是一位资深的歌词分析师。请通读整首歌的歌词，生成对歌曲主题、情绪、叙事视角和潜在文化背景的综合理解，并指出可能影响翻译语气的关键细节。'''
 }
 
+AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
 
 # ===== 动画配置（前端共用） =====
 # 默认动画配置：控制歌词行进入、移动、退出及占位时长，以及歌词垂直偏移比例
@@ -382,6 +384,22 @@ def parse_bool(value, default=False):
     return bool(value)
 
 NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
+BRACKET_PATTERNS = [
+    re.compile(r'\([^)]*\)'),
+    re.compile(r'（[^）]*）'),
+    re.compile(r'\[[^\]]*\]'),
+    re.compile(r'【[^】]*】')
+]
+
+
+def strip_bracket_blocks(content: str) -> str:
+    """移除常见括号及其内容，用于翻译前预处理。"""
+    if not content:
+        return ''
+    cleaned = content
+    for pattern in BRACKET_PATTERNS:
+        cleaned = pattern.sub('', cleaned)
+    return cleaned.strip()
 
 
 def strip_timing_tags(content: str) -> str:
@@ -566,7 +584,7 @@ def index():
                 })
     # 按修改时间排序（最新在前）
     json_files.sort(key=lambda x: x['mtime'], reverse=True)
-    return render_template('Famyliam_Everywhere.html', json_files=json_files)
+    return render_template('LyricSphere.html', json_files=json_files)
 
 # 在Flask应用中添加自定义过滤器
 @app.template_filter('escape_js')
@@ -2666,6 +2684,13 @@ def extract_lyrics():
 
 @app.route('/get_ai_settings', methods=['GET'])
 def get_ai_settings():
+    global AI_TRANSLATION_SETTINGS
+    if isinstance(AI_TRANSLATION_SETTINGS.get('system_prompt'), str) and not AI_TRANSLATION_SETTINGS['system_prompt'].strip():
+        AI_TRANSLATION_SETTINGS['system_prompt'] = AI_TRANSLATION_DEFAULTS['system_prompt']
+    if isinstance(AI_TRANSLATION_SETTINGS.get('thinking_system_prompt'), str) and not AI_TRANSLATION_SETTINGS['thinking_system_prompt'].strip():
+        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
+    if 'strip_brackets' not in AI_TRANSLATION_SETTINGS:
+        AI_TRANSLATION_SETTINGS['strip_brackets'] = AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)
     return jsonify({
         'status': 'success',
         'settings': AI_TRANSLATION_SETTINGS
@@ -2679,18 +2704,32 @@ def save_ai_settings():
         data = request.json
         global AI_TRANSLATION_SETTINGS
         AI_TRANSLATION_SETTINGS['api_key'] = data.get('api_key', '')
-        AI_TRANSLATION_SETTINGS['system_prompt'] = data.get('system_prompt', AI_TRANSLATION_SETTINGS['system_prompt'])
+        system_prompt_input = data.get('system_prompt')
+        if isinstance(system_prompt_input, str) and not system_prompt_input.strip():
+            system_prompt_input = AI_TRANSLATION_DEFAULTS['system_prompt']
+        elif system_prompt_input is None:
+            system_prompt_input = AI_TRANSLATION_SETTINGS['system_prompt'] or AI_TRANSLATION_DEFAULTS['system_prompt']
+        AI_TRANSLATION_SETTINGS['system_prompt'] = system_prompt_input
         AI_TRANSLATION_SETTINGS['provider'] = data.get('provider', AI_TRANSLATION_SETTINGS['provider'])
         AI_TRANSLATION_SETTINGS['base_url'] = data.get('base_url', AI_TRANSLATION_SETTINGS['base_url'])
         AI_TRANSLATION_SETTINGS['model'] = data.get('model', AI_TRANSLATION_SETTINGS['model'])
         AI_TRANSLATION_SETTINGS['expect_reasoning'] = data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+        AI_TRANSLATION_SETTINGS['strip_brackets'] = parse_bool(
+            data.get('strip_brackets'),
+            AI_TRANSLATION_SETTINGS.get('strip_brackets', AI_TRANSLATION_DEFAULTS.get('strip_brackets', False))
+        )
         AI_TRANSLATION_SETTINGS['compat_mode'] = parse_bool(data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
         AI_TRANSLATION_SETTINGS['thinking_enabled'] = parse_bool(data.get('thinking_enabled'), AI_TRANSLATION_SETTINGS['thinking_enabled'])
         AI_TRANSLATION_SETTINGS['thinking_api_key'] = data.get('thinking_api_key', AI_TRANSLATION_SETTINGS['thinking_api_key'])
         AI_TRANSLATION_SETTINGS['thinking_provider'] = data.get('thinking_provider', AI_TRANSLATION_SETTINGS['thinking_provider'])
         AI_TRANSLATION_SETTINGS['thinking_base_url'] = data.get('thinking_base_url', AI_TRANSLATION_SETTINGS['thinking_base_url'])
         AI_TRANSLATION_SETTINGS['thinking_model'] = data.get('thinking_model', AI_TRANSLATION_SETTINGS['thinking_model'])
-        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = data.get('thinking_system_prompt', AI_TRANSLATION_SETTINGS['thinking_system_prompt'])
+        thinking_prompt_input = data.get('thinking_system_prompt')
+        if isinstance(thinking_prompt_input, str) and not thinking_prompt_input.strip():
+            thinking_prompt_input = AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
+        elif thinking_prompt_input is None:
+            thinking_prompt_input = AI_TRANSLATION_SETTINGS['thinking_system_prompt'] or AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
+        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = thinking_prompt_input
         return jsonify({
             'status': 'success',
             'api_key': AI_TRANSLATION_SETTINGS['api_key'],
@@ -2699,6 +2738,7 @@ def save_ai_settings():
             'base_url': AI_TRANSLATION_SETTINGS['base_url'],
             'model': AI_TRANSLATION_SETTINGS['model'],
             'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning'],
+            'strip_brackets': AI_TRANSLATION_SETTINGS['strip_brackets'],
             'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode'],
             'thinking_enabled': AI_TRANSLATION_SETTINGS['thinking_enabled'],
             'thinking_api_key': AI_TRANSLATION_SETTINGS['thinking_api_key'],
@@ -2757,13 +2797,23 @@ def translate_lyrics():
         content = request_data.get('content', '')
         api_key = request_data.get('api_key', '')
         # 优先用前端传的 system_prompt，没有则用全局默认
-        system_prompt = request_data.get('system_prompt') or AI_TRANSLATION_SETTINGS['system_prompt']
+        system_prompt_input = request_data.get('system_prompt')
+        if isinstance(system_prompt_input, str) and not system_prompt_input.strip():
+            system_prompt = AI_TRANSLATION_SETTINGS['system_prompt']
+        elif system_prompt_input is None:
+            system_prompt = AI_TRANSLATION_SETTINGS['system_prompt']
+        else:
+            system_prompt = system_prompt_input
 
         # 获取API配置参数，优先使用请求数据中的参数，否则使用全局默认值
         provider = request_data.get('provider') or AI_TRANSLATION_SETTINGS['provider']
         base_url = request_data.get('base_url') or AI_TRANSLATION_SETTINGS['base_url']
         model = request_data.get('model') or AI_TRANSLATION_SETTINGS['model']
         expect_reasoning = request_data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+        strip_brackets = parse_bool(
+            request_data.get('strip_brackets'),
+            AI_TRANSLATION_SETTINGS.get('strip_brackets', False)
+        )
 
         compat_mode = parse_bool(request_data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
         thinking_enabled = parse_bool(
@@ -2777,7 +2827,13 @@ def translate_lyrics():
         thinking_provider = request_data.get('thinking_provider') or AI_TRANSLATION_SETTINGS.get('thinking_provider') or provider
         thinking_base_url = request_data.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or base_url
         thinking_model = request_data.get('thinking_model') or AI_TRANSLATION_SETTINGS.get('thinking_model') or model
-        thinking_system_prompt = request_data.get('thinking_system_prompt') or AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
+        thinking_prompt_input = request_data.get('thinking_system_prompt')
+        if isinstance(thinking_prompt_input, str) and not thinking_prompt_input.strip():
+            thinking_system_prompt = AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
+        elif thinking_prompt_input is None:
+            thinking_system_prompt = AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
+        else:
+            thinking_system_prompt = thinking_prompt_input
 
         # 规范化 base_url，自动剔除多余路径
         def _normalize_base_url(u: str) -> str:
@@ -2818,6 +2874,18 @@ def translate_lyrics():
         lyrics = lyrics_response.json.get('content', '').split('\n')
 
         app.logger.info(f"提取的时间戳数量: {len(timestamps)}")
+        if strip_brackets:
+            bracket_modified = 0
+            processed_lyrics = []
+            for line in lyrics:
+                cleaned_line = strip_bracket_blocks(line)
+                if cleaned_line != line:
+                    bracket_modified += 1
+                processed_lyrics.append(cleaned_line)
+            lyrics = processed_lyrics
+            app.logger.info(f"去括号预处理: 开启，修改行数: {bracket_modified}")
+        else:
+            app.logger.info("去括号预处理: 关闭")
         app.logger.info(f"提取的歌词行数: {len(lyrics)}")
         app.logger.info(f"系统提示词: {system_prompt[:100]}..." if len(system_prompt) > 100 else f"系统提示词: {system_prompt}")
         app.logger.info(f"兼容模式: {'开启' if compat_mode else '关闭'}")
