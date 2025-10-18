@@ -55,10 +55,6 @@
   },
   {
    "optionDest": "datas",
-   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Famyliam_Everywhere.html;."
-  },
-  {
-   "optionDest": "datas",
    "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML;."
   },
   {
@@ -88,6 +84,10 @@
   {
    "optionDest": "datas",
    "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML-COK.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/LyricSphere.html;."
   }
  ],
  "nonPyinstallerOptions": {
