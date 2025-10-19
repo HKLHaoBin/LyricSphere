@@ -153,4 +153,5 @@ The application supports AI-powered lyric translation with:
 - API connection testing functionality
 - Support for reasoning chain content from AI models
 - Lyric analysis thinking model support for enhanced translation quality
-- Lyric bracket preprocessing with strip_brackets configuration option to remove bracketed content
+- Optimized lyric bracket preprocessing with strip_brackets configuration option to remove bracketed content using high-performance string translation table instead of regex for better performance
+- Additional whitespace cleanup logic to improve output quality
