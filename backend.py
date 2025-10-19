@@ -269,6 +269,15 @@ log_handler = TimedRotatingFileHandler(os.path.join(LOG_DIR, 'upload.log'),
 log_handler.setFormatter(logging.Formatter(log_format))
 app.logger.addHandler(log_handler)
 
+# 将日志同步输出到终端，方便实时查看处理结果
+if not any(
+    isinstance(handler, logging.StreamHandler) and getattr(handler, 'stream', None) is sys.stdout
+    for handler in app.logger.handlers
+):
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(log_format))
+    app.logger.addHandler(console_handler)
+
 # 设置日志级别，支持通过环境变量启用调试日志
 log_level = logging.DEBUG if os.environ.get('DEBUG_LOGGING', '0') == '1' else logging.INFO
 app.logger.setLevel(log_level)
@@ -384,21 +393,16 @@ def parse_bool(value, default=False):
     return bool(value)
 
 NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
-BRACKET_PATTERNS = [
-    re.compile(r'\([^)]*\)'),
-    re.compile(r'（[^）]*）'),
-    re.compile(r'\[[^\]]*\]'),
-    re.compile(r'【[^】]*】')
-]
+BRACKET_CHARACTERS = '()（）[]【】'
+BRACKET_TRANSLATION = str.maketrans('', '', BRACKET_CHARACTERS)
 
 
 def strip_bracket_blocks(content: str) -> str:
-    """移除常见括号及其内容，用于翻译前预处理。"""
+    """移除常见括号字符但保留其中文本，用于翻译前预处理。"""
     if not content:
         return ''
-    cleaned = content
-    for pattern in BRACKET_PATTERNS:
-        cleaned = pattern.sub('', cleaned)
+    cleaned = content.translate(BRACKET_TRANSLATION)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
     return cleaned.strip()
 
 
@@ -2887,6 +2891,8 @@ def translate_lyrics():
         else:
             app.logger.info("去括号预处理: 关闭")
         app.logger.info(f"提取的歌词行数: {len(lyrics)}")
+        processed_preview = '\n'.join(f"{i+1}. {line}" for i, line in enumerate(lyrics))
+        app.logger.info("预处理后的歌词内容（带行号）:\n%s", processed_preview if processed_preview else "[无可用歌词]")
         app.logger.info(f"系统提示词: {system_prompt[:100]}..." if len(system_prompt) > 100 else f"系统提示词: {system_prompt}")
         app.logger.info(f"兼容模式: {'开启' if compat_mode else '关闭'}")
         app.logger.info(f"翻译模型配置: provider={provider}, base_url={base_url}, model={model}")

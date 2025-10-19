@@ -110,6 +110,8 @@ Backup functionality is built into most file operations, maintaining up to 7 ver
 
 The application also implements filename sanitization to ensure secure file handling. The `sanitize_filename` function removes potentially dangerous characters from filenames while preserving safe punctuation and Unicode characters, preventing directory traversal and other security issues.
 
+The application now features enhanced logging capabilities with console output for real-time monitoring of processing results, in addition to file-based logging.
+
 ### Lyric Format Support
 
 1. **.lys Format**: Custom syllable-level timed lyrics format
