@@ -17,6 +17,17 @@
             --modal-bg: #ffffff;
             --button-bg: #495057;
             --button-text: #fff;
+            --status-bg-default: #e7f5ff;
+            --status-color-default: #1c7ed6;
+            --status-bg-info: #e7f5ff;
+            --status-color-info: #1c7ed6;
+            --status-bg-success: #e6fcf5;
+            --status-color-success: #0c8599;
+            --status-bg-error: #ffe3e3;
+            --status-color-error: #c92a2a;
+            --status-progress-bg: rgba(33, 33, 33, 0.92);
+            --status-progress-color: #ffffff;
+            --status-progress-desc-color: rgba(0, 0, 0, 0.72);
         }
 
         .dark-mode {
@@ -30,6 +41,17 @@
             --modal-bg: #333333;
             --button-bg: #606060;
             --button-text: #ffffff;
+            --status-bg-default: rgba(77, 171, 247, 0.18);
+            --status-color-default: #9bd4ff;
+            --status-bg-info: rgba(77, 171, 247, 0.18);
+            --status-color-info: #9bd4ff;
+            --status-bg-success: rgba(18, 184, 134, 0.2);
+            --status-color-success: #7fe7c7;
+            --status-bg-error: rgba(255, 107, 107, 0.25);
+            --status-color-error: #ffb3b3;
+            --status-progress-bg: rgba(20, 20, 20, 0.92);
+            --status-progress-color: #ffffff;
+            --status-progress-desc-color: rgba(255, 255, 255, 0.78);
         }
 
         body {
@@ -365,6 +387,203 @@
         .lyrics-editor {
             height: 176px;
             margin: 10px 0;
+        }
+
+        .lyrics-editor.error-highlight {
+            border-color: #ff6b6b;
+            box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.2);
+        }
+
+        .status-message {
+            margin-top: 8px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--status-bg-default);
+            color: var(--status-color-default);
+            display: none;
+            white-space: pre-wrap;
+            line-height: 1.4;
+            font-size: 0.95em;
+        }
+
+        .status-message.status-error {
+            background: var(--status-bg-error);
+            color: var(--status-color-error);
+        }
+
+        .status-message.status-info {
+            background: var(--status-bg-info);
+            color: var(--status-color-info);
+        }
+
+        .status-message.status-success {
+            background: var(--status-bg-success);
+            color: var(--status-color-success);
+        }
+
+        #translationStatusMessage {
+            position: relative;
+        }
+
+        #translationStatusMessage.translation-in-progress {
+            background: var(--status-progress-bg);
+            color: var(--status-progress-color);
+            display: block;
+            padding: 24px 20px;
+        }
+
+        #translationStatusMessage.translation-in-progress .btn-shine {
+            position: relative;
+            top: auto;
+            left: auto;
+            transform: none;
+            display: inline-block;
+            margin: 0 auto 16px;
+        }
+
+        #translationStatusMessage.translation-in-progress .status-progress {
+            margin-top: 12px;
+        }
+
+        /* From Uiverse.io by neerajbaniwal */
+        .btn-shine {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 12px 48px;
+            color: #fff;
+            background: linear-gradient(to right, #9f9f9f 0, #fff 10%, #868686 20%);
+            background-position: -150% 0;
+            background-size: 300% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 3s infinite linear;
+            animation-fill-mode: forwards;
+            -webkit-text-size-adjust: none;
+            font-weight: 600;
+            font-size: 16px;
+            text-decoration: none;
+            white-space: nowrap;
+            font-family: "Poppins", sans-serif;
+        }
+
+        @-moz-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @-webkit-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @-o-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        .status-message__list {
+            margin: 6px 0 0;
+            padding-left: 18px;
+        }
+
+        .status-message__list li {
+            margin-bottom: 4px;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .status-message__summary {
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 1.05em;
+        }
+
+        .status-progress {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        @media (min-width: 769px) {
+            .status-progress {
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+
+            .status-progress__item {
+                flex: 1 1 220px;
+            }
+        }
+
+        .status-progress__item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .status-progress__item--pending {
+            opacity: 0.6;
+        }
+
+        .status-progress__item--active {
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 12px rgba(255, 255, 255, 0.18);
+        }
+
+        .status-progress__item--success {
+            border-color: rgba(85, 233, 171, 0.6);
+            background: rgba(12, 133, 153, 0.18);
+        }
+
+        .status-progress__item--error {
+            border-color: rgba(255, 107, 107, 0.6);
+            background: rgba(255, 107, 107, 0.18);
+        }
+
+        .status-progress__label {
+            font-weight: 600;
+            letter-spacing: 0.4px;
+        }
+
+        .status-progress__desc {
+            font-size: 0.85em;
+            color: var(--status-progress-desc-color);
         }
 
         /* 移动端适配 */
@@ -847,6 +1066,10 @@
                                 <input type="file" id="translationUpload" accept=".lrc,.lys,.ttml" style="display:none;"
                                     onchange="handleTranslationUpload()">
                             </label>
+                        </div>
+                        <div id="translationStatusMessage" class="status-message">
+                            <!-- From Uiverse.io by neerajbaniwal -->
+                            <a href="#" class="btn-shine">正在翻译 · 请求思考阶段</a>
                         </div>
                     </div>
                     <textarea id="translationEditor" class="lyrics-editor"></textarea>
@@ -2157,7 +2380,7 @@
         }
 
         function deleteJson(filename) {
-            if (confirm(`确定要永久删除 ${filename} 及其所有关联文件吗？`)) {
+            if (confirm(`确定要删除 ${filename} 吗？此操作仅删除对应的 JSON 文件，其他关联文件将被保留。`)) {
                 fetch('/delete_json', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2511,39 +2734,348 @@
             }
         }
 
+        function updateTranslationStatus(message, type = 'info', suspectLines = []) {
+            const statusEl = document.getElementById('translationStatusMessage');
+            if (!statusEl) {
+                return;
+            }
+
+            statusEl.style.display = 'none';
+            statusEl.className = 'status-message';
+            statusEl.classList.remove('translation-in-progress');
+            statusEl.innerHTML = '';
+
+            if (!message) {
+                return;
+            }
+
+            statusEl.classList.add(`status-${type}`);
+            const isProgressMessage = typeof message === 'object' && message !== null && Array.isArray(message.stages);
+            const appendSuspectLines = () => {
+                if (type !== 'error' || !Array.isArray(suspectLines) || suspectLines.length === 0) {
+                    return;
+                }
+
+                const reminder = document.createElement('div');
+                reminder.textContent = '需要检查的行：';
+                reminder.style.marginTop = '6px';
+                statusEl.appendChild(reminder);
+
+                const list = document.createElement('ul');
+                list.className = 'status-message__list';
+                suspectLines.slice(0, 5).forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = `第${item.line_number}行：${item.line_content}`;
+                    list.appendChild(li);
+                });
+                statusEl.appendChild(list);
+
+                if (suspectLines.length > 5) {
+                    const extra = document.createElement('div');
+                    extra.textContent = `还有 ${suspectLines.length - 5} 行可能存在问题，请继续检查歌词。`;
+                    extra.style.marginTop = '4px';
+                    statusEl.appendChild(extra);
+                }
+            };
+
+            if (isProgressMessage) {
+                const stages = Array.isArray(message.stages) ? message.stages : [];
+                const activeStage = stages.find(stage => stage && stage.state === 'active');
+                const summaryText = typeof message.summary === 'string' && message.summary.trim().length > 0
+                    ? message.summary.trim()
+                    : (activeStage && activeStage.label ? activeStage.label : (type === 'info' ? '正在翻译 · 请求思考阶段' : '翻译进度'));
+                const useShine = type === 'info' && message.useShine !== false;
+
+                if (useShine && summaryText) {
+                    statusEl.classList.add('translation-in-progress');
+                    const shineLink = document.createElement('a');
+                    shineLink.href = '#';
+                    shineLink.className = 'btn-shine';
+                    shineLink.textContent = summaryText;
+                    statusEl.appendChild(shineLink);
+                } else if (summaryText) {
+                    const summaryBlock = document.createElement('div');
+                    summaryBlock.className = 'status-message__summary';
+                    summaryBlock.textContent = summaryText;
+                    statusEl.appendChild(summaryBlock);
+                }
+
+                if (stages.length > 0) {
+                    const list = document.createElement('ul');
+                    list.className = 'status-progress';
+                    stages.forEach(stage => {
+                        if (!stage) {
+                            return;
+                        }
+                        const li = document.createElement('li');
+                        const stateClass = stage.state ? `status-progress__item--${stage.state}` : 'status-progress__item--pending';
+                        li.className = `status-progress__item ${stateClass}`;
+
+                        const label = document.createElement('span');
+                        label.className = 'status-progress__label';
+                        label.textContent = stage.label || stage.key || '';
+                        li.appendChild(label);
+
+                        if (stage.description) {
+                            const desc = document.createElement('div');
+                            desc.className = 'status-progress__desc';
+                            desc.textContent = stage.description;
+                            li.appendChild(desc);
+                        }
+
+                        list.appendChild(li);
+                    });
+                    statusEl.appendChild(list);
+                }
+
+                if (message.details && Array.isArray(message.details)) {
+                    message.details.forEach(detail => {
+                        const detailBlock = document.createElement('div');
+                        detailBlock.textContent = detail;
+                        statusEl.appendChild(detailBlock);
+                    });
+                }
+
+                appendSuspectLines();
+            } else {
+                const isTranslating = type === 'info' && typeof message === 'string' && message.includes('正在翻译');
+
+                if (isTranslating) {
+                    statusEl.classList.add('translation-in-progress');
+                    const shineLink = document.createElement('a');
+                    shineLink.href = '#';
+                    shineLink.className = 'btn-shine';
+                    shineLink.textContent = '正在翻译 · 请求思考阶段';
+                    statusEl.appendChild(shineLink);
+                } else {
+                    const messageBlock = document.createElement('div');
+                    messageBlock.textContent = message;
+                    statusEl.appendChild(messageBlock);
+                }
+
+                appendSuspectLines();
+            }
+
+            statusEl.style.display = 'block';
+        }
+
+        function highlightSuspectLinesInEditor(suspectLines = []) {
+            const editor = document.getElementById('lyricsEditor');
+            if (!editor) {
+                return;
+            }
+
+            if (!Array.isArray(suspectLines) || suspectLines.length === 0) {
+                editor.classList.remove('error-highlight');
+                return;
+            }
+
+            editor.classList.add('error-highlight');
+            const targetLine = suspectLines[0]?.line_number;
+            if (!targetLine || targetLine < 1) {
+                return;
+            }
+
+            const lines = editor.value.split('\n');
+            if (targetLine > lines.length) {
+                return;
+            }
+
+            let start = 0;
+            for (let i = 0; i < targetLine - 1; i++) {
+                start += lines[i].length + 1;
+            }
+            const end = start + lines[targetLine - 1].length;
+
+            editor.focus();
+            if (typeof editor.setSelectionRange === 'function') {
+                editor.setSelectionRange(start, end);
+            }
+
+            const approxLineHeight = editor.scrollHeight / Math.max(lines.length, 1);
+            editor.scrollTop = Math.max(0, approxLineHeight * (targetLine - 3));
+        }
+
         async function translateLyrics() {
-            // 保存按钮的原始文本
             const translateBtn = document.querySelector('button[onclick="translateLyrics()"]');
             const originalBtnText = translateBtn.textContent;
-            
+            highlightSuspectLinesInEditor([]);
+            updateTranslationStatus('');
+
+            const translationStages = [
+                { key: 'lyricsPrep', label: '歌词预处理阶段', state: 'active', description: '检查歌词内容...' },
+                { key: 'thinkingRequest', label: '请求思考阶段', state: 'pending' },
+                { key: 'thinkingOutput', label: '输出思考阶段', state: 'pending' },
+                { key: 'translationRequest', label: '请求翻译阶段', state: 'pending' },
+                { key: 'translationOutput', label: '输出翻译阶段', state: 'pending' },
+                { key: 'postProcessing', label: '翻译处理阶段', state: 'pending' }
+            ];
+            const stageMap = new Map(translationStages.map(stage => [stage.key, stage]));
+            const getActiveStage = () => translationStages.find(stage => stage.state === 'active');
+            let stageDirty = false;
+
+            const markDirty = (changed) => {
+                if (changed) {
+                    stageDirty = true;
+                }
+                return changed;
+            };
+
+            const renderStages = (summary, statusType = 'info', options = {}) => {
+                const activeStage = getActiveStage();
+                let summaryText = summary;
+                if (!summaryText) {
+                    if (statusType === 'info' && activeStage) {
+                        summaryText = `正在翻译 · ${activeStage.label}`;
+                    } else if (activeStage) {
+                        summaryText = activeStage.label;
+                    } else if (statusType === 'success') {
+                        summaryText = '翻译完成';
+                    } else if (statusType === 'error') {
+                        const errorStage = translationStages.find(stage => stage.state === 'error');
+                        summaryText = errorStage ? `${errorStage.label}出现问题` : '翻译失败';
+                    } else {
+                        summaryText = '翻译状态';
+                    }
+                }
+
+                updateTranslationStatus({
+                    summary: summaryText,
+                    stages: translationStages.map(stage => ({
+                        key: stage.key,
+                        label: stage.label,
+                        state: stage.state,
+                        description: stage.description
+                    })),
+                    useShine: options.useShine !== undefined ? options.useShine : (statusType === 'info' && Boolean(activeStage))
+                }, statusType, options.suspectLines);
+
+                stageDirty = false;
+            };
+
+            const activateStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                if (stage.state === 'error') {
+                    if (description !== undefined && stage.description !== description) {
+                        stage.description = description;
+                        return true;
+                    }
+                    return false;
+                }
+
+                let changed = false;
+                translationStages.forEach(item => {
+                    if (item.key !== key && item.state === 'active') {
+                        item.state = 'success';
+                        changed = true;
+                    }
+                });
+                if (stage.state !== 'active') {
+                    stage.state = 'active';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const completeStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                let changed = false;
+                if (stage.state !== 'error' && stage.state !== 'success') {
+                    stage.state = 'success';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const failStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                let changed = false;
+                if (stage.state !== 'error') {
+                    stage.state = 'error';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const updateStageDescription = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                if (stage.description !== description) {
+                    stage.description = description;
+                    return true;
+                }
+                return false;
+            };
+
+            const getStageState = (key) => {
+                const stage = stageMap.get(key);
+                return stage ? stage.state : undefined;
+            };
+
+            const flushStages = (summary, statusType = 'info', options = {}) => {
+                const hasOptions = options && (Array.isArray(options.suspectLines) && options.suspectLines.length > 0 || options.useShine !== undefined);
+                if (!stageDirty && !summary && statusType === 'info' && !hasOptions) {
+                    return;
+                }
+                renderStages(summary, statusType, options || {});
+            };
+
+            renderStages('正在准备翻译 · 歌词预处理阶段');
+
             try {
                 const lyricsContent = document.getElementById('lyricsEditor').value;
                 if (!lyricsContent) {
+                    markDirty(failStage('lyricsPrep', '歌词内容为空，无法继续'));
+                    flushStages('歌词内容为空，无法继续', 'error', { useShine: false });
                     alert('请先输入歌词内容！');
                     return;
                 }
 
-                // 从localStorage获取API密钥
                 const apiKey = localStorage.getItem('aiApiKey');
                 if (!apiKey) {
+                    markDirty(failStage('lyricsPrep', '缺少AI密钥，无法继续'));
+                    flushStages('缺少AI密钥，无法继续', 'error', { useShine: false });
                     alert('请先在AI设置中设置API密钥！');
                     return;
                 }
 
                 console.log('开始翻译过程...');
                 console.log('歌词内容长度:', lyricsContent.length);
-                console.log('歌词行数:', lyricsContent.split('\n').length);
+                const lyricLines = lyricsContent.split('\n').length;
+                console.log('歌词行数:', lyricLines);
 
-                // 显示加载状态
                 translateBtn.textContent = '翻译中...';
                 translateBtn.disabled = true;
 
-                // 清空翻译编辑器
+                markDirty(completeStage('lyricsPrep', `已读取 ${lyricLines} 行歌词`));
+
                 const translationEditor = document.getElementById('translationEditor');
                 translationEditor.value = '';
 
                 console.log('发送翻译请求到服务器...');
-                // 从localStorage获取所有AI设置
                 const systemPrompt = localStorage.getItem('aiSystemPrompt');
                 const provider = localStorage.getItem('aiProvider') || 'deepseek';
                 const baseUrl = localStorage.getItem('aiBaseUrl') || 'https://api.deepseek.com';
@@ -2563,6 +3095,25 @@
                 const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
                 const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
                 const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
+
+                let thinkingRequestAcknowledged = !thinkingEnabled;
+                let thinkingOutputCompleted = !thinkingEnabled;
+                let translationRequestActivated = false;
+                let translationRequestAcknowledged = false;
+                let translationOutputActivated = false;
+                let postProcessingActivated = false;
+
+                if (thinkingEnabled) {
+                    markDirty(activateStage('thinkingRequest', `准备请求思考模型（${thinkingProvider}/${thinkingModel}）...`));
+                } else {
+                    markDirty(completeStage('thinkingRequest', '已跳过（思考功能关闭）'));
+                    markDirty(completeStage('thinkingOutput', '已跳过（思考功能关闭）'));
+                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                    thinkingOutputCompleted = true;
+                    translationRequestActivated = true;
+                }
+
+                flushStages();
 
                 const response = await fetch('/translate_lyrics', {
                     method: 'POST',
@@ -2589,14 +3140,46 @@
                 });
 
                 console.log('开始接收流式响应...');
+                const contentType = response.headers.get('Content-Type') || '';
+                if (!response.ok || contentType.includes('application/json')) {
+                    let errorData = {};
+                    try {
+                        errorData = await response.json();
+                    } catch (parseError) {
+                        console.error('解析错误响应失败:', parseError);
+                    }
+
+                    const errorMessage = errorData.message || `翻译失败（HTTP ${response.status}）`;
+                    const activeStage = getActiveStage();
+                    if (activeStage) {
+                        markDirty(failStage(activeStage.key, `失败：${errorMessage}`));
+                    } else {
+                        markDirty(failStage('translationRequest', `失败：${errorMessage}`));
+                    }
+                    flushStages(errorMessage, 'error', { useShine: false, suspectLines: errorData.suspectLines });
+                    highlightSuspectLinesInEditor(errorData.suspectLines || []);
+                    if (!errorData.suspectLines || errorData.suspectLines.length === 0) {
+                        alert(errorMessage);
+                    }
+                    return;
+                }
+
+                if (!response.body || !response.body.getReader) {
+                    markDirty(failStage('translationRequest', '当前浏览器不支持流式响应'));
+                    flushStages('当前浏览器不支持流式响应', 'error', { useShine: false });
+                    throw new Error('当前浏览器不支持流式响应。');
+                }
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let translationContent = '';
                 let reasoningContent = '';
                 let thinkingContent = '';
                 let buffer = '';
+                let translationHasTimestamps = true;
+                let translationReceived = false;
 
-                const updateEditor = () => {
+                const translationEditorUpdater = () => {
                     const sections = [];
                     if (translationContent) {
                         sections.push(translationContent);
@@ -2614,38 +3197,103 @@
                     if (!line) {
                         return;
                     }
-                    if (line.startsWith('content:')) {
-                        try {
-                            const content = JSON.parse(line.slice(8));
-                            if (content.translations) {
-                                translationContent = content.translations.join('\n');
-                                updateEditor();
-                            }
-                        } catch (e) {
-                            console.error('解析翻译内容时出错:', e);
+
+                    if (line.startsWith('thinking:')) {
+                        if (!thinkingRequestAcknowledged && getStageState('thinkingRequest') === 'active') {
+                            markDirty(completeStage('thinkingRequest', '思考请求已响应'));
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
+                            thinkingRequestAcknowledged = true;
+                        } else if (getStageState('thinkingOutput') === 'pending') {
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
                         }
-                    } else if (line.startsWith('thinking:')) {
+
                         try {
                             const content = JSON.parse(line.slice(9));
                             if (content.summary) {
                                 thinkingContent = content.summary;
+                                translationEditorUpdater();
+                                if (!thinkingOutputCompleted) {
+                                    markDirty(completeStage('thinkingOutput', '思考内容已生成'));
+                                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                    thinkingOutputCompleted = true;
+                                    translationRequestActivated = true;
+                                }
                             } else if (content.error) {
                                 thinkingContent = '思考模型调用失败：' + content.error;
+                                translationEditorUpdater();
+                                markDirty(failStage('thinkingOutput', '思考模型调用失败'));
+                                if (!translationRequestActivated) {
+                                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                    translationRequestActivated = true;
+                                }
+                                thinkingOutputCompleted = true;
+                            } else {
+                                translationEditorUpdater();
                             }
-                            updateEditor();
                         } catch (e) {
                             console.error('解析思考内容时出错:', e);
                         }
-                    } else if (line.startsWith('reasoning:')) {
+
+                        flushStages();
+                        return;
+                    }
+
+                    if (line.startsWith('reasoning:')) {
+                        if (!thinkingRequestAcknowledged && getStageState('thinkingRequest') === 'active') {
+                            markDirty(completeStage('thinkingRequest', '思考请求已响应'));
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
+                            thinkingRequestAcknowledged = true;
+                        }
                         try {
                             const content = JSON.parse(line.slice(10));
                             if (content.reasoning) {
                                 reasoningContent = content.reasoning;
-                                updateEditor();
+                                translationEditorUpdater();
+                                if (!thinkingOutputCompleted) {
+                                    markDirty(updateStageDescription('thinkingOutput', '正在整理思考过程...'));
+                                }
                             }
                         } catch (e) {
                             console.error('解析思维链内容时出错:', e);
                         }
+
+                        flushStages();
+                        return;
+                    }
+
+                    if (line.startsWith('content:')) {
+                        try {
+                            const content = JSON.parse(line.slice(8));
+                            if (Object.prototype.hasOwnProperty.call(content, 'hasTimestamps')) {
+                                translationHasTimestamps = content.hasTimestamps;
+                            }
+
+                            if (!translationRequestActivated) {
+                                markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                translationRequestActivated = true;
+                            }
+
+                            if (!translationRequestAcknowledged) {
+                                markDirty(completeStage('translationRequest', '翻译服务已响应'));
+                                translationRequestAcknowledged = true;
+                            }
+
+                            if (!translationOutputActivated) {
+                                markDirty(activateStage('translationOutput', '正在生成翻译文本...'));
+                                translationOutputActivated = true;
+                            }
+
+                            if (content.translations) {
+                                translationContent = content.translations.join('\n');
+                                translationReceived = true;
+                                translationEditorUpdater();
+                            }
+                        } catch (e) {
+                            console.error('解析翻译内容时出错:', e);
+                        }
+
+                        flushStages();
+                        return;
                     }
                 };
 
@@ -2677,9 +3325,22 @@
                     }
                 }
 
+                markDirty(completeStage('translationRequest', '翻译流程已结束'));
+                markDirty(completeStage('translationOutput', translationReceived ? '翻译文本接收完毕' : '未接收到翻译文本'));
+                if (!postProcessingActivated) {
+                    markDirty(activateStage('postProcessing', '正在写入翻译内容...'));
+                    postProcessingActivated = true;
+                }
+                markDirty(completeStage('postProcessing', translationReceived ? '翻译内容已写入编辑器' : '翻译内容为空'));
+                flushStages();
+
+                const successMessage = (!translationHasTimestamps && translationReceived)
+                    ? '翻译完成（原始歌词无时间戳，已跳过时间戳添加）'
+                    : '翻译完成！';
+
+                flushStages(successMessage, 'success', { useShine: false });
+                highlightSuspectLinesInEditor([]);
                 console.log('翻译完成');
-                translateBtn.textContent = originalBtnText;
-                translateBtn.disabled = false;
 
             } catch (error) {
                 console.error('翻译出错：', error);
@@ -2688,7 +3349,19 @@
                     message: error.message,
                     stack: error.stack
                 });
+                const fallbackMessage = error && error.message ? error.message : '翻译过程中出现错误，请检查控制台日志。';
+                const activeStage = getActiveStage();
+                if (activeStage) {
+                    markDirty(failStage(activeStage.key, '翻译过程中出现错误'));
+                } else {
+                    markDirty(failStage('translationOutput', '翻译过程中出现错误'));
+                }
+                flushStages(`翻译失败：${fallbackMessage}`, 'error', { useShine: false });
+                highlightSuspectLinesInEditor([]);
                 alert('翻译过程中出现错误，请查看控制台获取详细信息。');
+            } finally {
+                translateBtn.textContent = originalBtnText;
+                translateBtn.disabled = false;
             }
         }
 

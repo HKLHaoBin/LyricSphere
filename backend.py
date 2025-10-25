@@ -2786,9 +2786,40 @@ def probe_ai():
 
         from openai import OpenAI
         client = OpenAI(api_key=api_key, base_url=base_url)
-        models = client.models.list()
-        names = [m.id for m in getattr(models, 'data', [])]
-        return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url, 'mode': mode})
+        def _models_endpoint_missing(err: Exception) -> bool:
+            status_code = getattr(err, 'status_code', None)
+            if status_code == 404:
+                return True
+            resp = getattr(err, 'response', None)
+            if resp is not None and getattr(resp, 'status_code', None) == 404:
+                return True
+            text = str(err)
+            if not text:
+                return False
+            if '404' in text and '/v1/models' in text:
+                return True
+            return False
+
+        try:
+            models = client.models.list()
+            names = [m.id for m in getattr(models, 'data', [])]
+            return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url, 'mode': mode})
+        except Exception as probe_error:
+            if _models_endpoint_missing(probe_error):
+                app.logger.warning(
+                    "AI模型探活: 目标接口返回404，推测不支持 /v1/models 列表。继续返回成功状态。Base URL: %s, Mode: %s, 错误: %s",
+                    base_url,
+                    mode,
+                    probe_error
+                )
+                return jsonify({
+                    'status': 'success',
+                    'models': [],
+                    'base_url': base_url,
+                    'mode': mode,
+                    'note': 'models_endpoint_unavailable'
+                })
+            raise
     except Exception as e:
         app.logger.error(f"探活AI服务时出错: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'探活失败: {e}', 'base_url': base_url_raw, 'mode': request_data.get('mode', 'translation')})
@@ -2877,7 +2908,21 @@ def translate_lyrics():
         timestamps = timestamps_response.json.get('timestamps', [])
         lyrics = lyrics_response.json.get('content', '').split('\n')
 
+        # 基于原始歌词判断是否存在时间戳模式
+        candidate_lines = [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip()
+            and not line.startswith('[by:')
+            and not line.startswith('[ti:')
+            and not line.startswith('[ar:')
+        ]
+        timestamp_candidates = sum(1 for line in candidate_lines if re.search(r'\(\d+,\d+\)', line))
+        has_timestamp_candidates = timestamp_candidates > 0
+        has_timestamps = len(timestamps) > 0
+
         app.logger.info(f"提取的时间戳数量: {len(timestamps)}")
+        app.logger.info(f"检测到包含时间戳标记的行数: {timestamp_candidates}")
         if strip_brackets:
             bracket_modified = 0
             processed_lyrics = []
@@ -2903,17 +2948,49 @@ def translate_lyrics():
             app.logger.info(f"思考提示词: {thinking_system_prompt[:100]}..." if len(thinking_system_prompt) > 100 else f"思考提示词: {thinking_system_prompt}")
 
         # 验证提取的内容
-        if not timestamps:
-            app.logger.error("未提取到任何时间戳")
-            return jsonify({'status': 'error', 'message': '未提取到任何时间戳，请检查歌词格式是否正确'})
-
         if not lyrics or all(not line.strip() for line in lyrics):
             app.logger.error("未提取到任何歌词内容")
             return jsonify({'status': 'error', 'message': '未提取到任何歌词内容，请检查歌词格式是否正确'})
 
-        if len(timestamps) != len(lyrics):
-            app.logger.error(f"时间戳数量({len(timestamps)})与歌词行数({len(lyrics)})不匹配")
-            return jsonify({'status': 'error', 'message': '时间戳数量与歌词行数不匹配，请检查歌词格式是否正确'})
+        if not has_timestamps:
+            if has_timestamp_candidates:
+                app.logger.error("原始歌词包含时间戳标记，但未能成功解析任何时间戳")
+                return jsonify({'status': 'error', 'message': '未提取到任何时间戳，请检查歌词格式是否正确'})
+            app.logger.info("检测到无时间戳歌词，将跳过时间戳对齐与输出。")
+        else:
+            if len(timestamps) != len(lyrics):
+                app.logger.error(f"时间戳数量({len(timestamps)})与歌词行数({len(lyrics)})不匹配")
+                suspect_lines = []
+                for idx, raw_line in enumerate(content.splitlines(), 1):
+                    stripped_line = raw_line.strip()
+                    if not stripped_line:
+                        continue
+                    if stripped_line.startswith('[by:') or stripped_line.startswith('[ti:') or stripped_line.startswith('[ar:'):
+                        continue
+                    if re.search(r'\(\d+,\d+\)', stripped_line) and not re.match(r'^\[(\d*)\]', stripped_line):
+                        suspect_lines.append({'line_number': idx, 'line_content': stripped_line})
+
+                if suspect_lines:
+                    formatted = '; '.join(
+                        f"第{item['line_number']}行: {item['line_content']}"
+                        for item in suspect_lines[:3]
+                    )
+                    hint_message = (
+                        f"检测到可能缺少中括号的行，请修正后重试。疑似问题行: {formatted}"
+                    )
+                    app.logger.error(hint_message)
+                    return jsonify({
+                        'status': 'error',
+                        'message': f"时间戳数量与歌词行数不匹配。{hint_message}",
+                        'suspectLines': suspect_lines
+                    })
+
+                return jsonify({
+                    'status': 'error',
+                    'message': '时间戳数量与歌词行数不匹配，请检查歌词格式是否正确'
+                })
+
+        line_prefixes = timestamps if has_timestamps else [''] * len(lyrics)
 
         # 检查歌词内容是否包含非法字符
         illegal_chars = ['content:', 'reasoning:']
@@ -3100,16 +3177,22 @@ def translate_lyrics():
 
                         # 使用字典按行号稳定对齐，即使行号乱序或缺失也能正确处理
                         if translated_dict:
-                            # 按时间戳顺序构建翻译结果（与原文词序一致）
+                            # 按原始顺序合并翻译结果；若缺失时间戳则直接返回纯文本
                             final_lyrics = []
-                            for i, timestamp in enumerate(timestamps):
-                                translation = translated_dict.get(i)  # 获取对应行的翻译（如果存在）
+                            for i in range(len(lyrics)):
+                                translation = translated_dict.get(i)
                                 if translation is not None:
-                                    final_lyrics.append(f"{timestamp}{translation}")
+                                    prefix = line_prefixes[i] if i < len(line_prefixes) else ''
+                                    final_line = f"{prefix}{translation}" if prefix else translation
+                                    final_lyrics.append(final_line)
 
                             # 发送翻译内容（只发送有翻译的行）
                             if final_lyrics:
-                                yield f"content:{json.dumps({'translations': final_lyrics})}\n"
+                                payload = {
+                                    'translations': final_lyrics,
+                                    'hasTimestamps': has_timestamps
+                                }
+                                yield f"content:{json.dumps(payload)}\n"
                                 app.logger.debug(f"成功合并 {len(final_lyrics)} 行翻译歌词")
                         else:
                             app.logger.warning("未提取到有效的翻译内容")
