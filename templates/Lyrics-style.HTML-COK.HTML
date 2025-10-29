@@ -151,6 +151,17 @@
             will-change: transform, background-position;
         }
 
+        .syllable.non-latin,
+        .blur-text.non-latin {
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .syllable.non-latin {
+            flex-shrink: 1;
+        }
+
         .word-wrapper {
             display: inline-flex;
             flex: 0 0 auto;
@@ -758,17 +769,34 @@
                 );
                 if (targetElements.length === 0) return;
 
+                const hasCJK = (text) => /[\u3040-\u30FF\u3100-\u312F\u31A0-\u31BF\u3130-\u318F\u3300-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u1100-\u11FF]/.test(text);
+                const hasLatin = (text) => /[A-Za-z0-9]/.test(text);
+
                 let currentWrapper = null;
                 targetElements.forEach((element) => {
                     const text = element.textContent || '';
-                    const hasVisibleChar = /\S/.test(text);
+                    const trimmed = text.replace(/\s+/g, '');
+                    const hasVisibleChar = trimmed.length > 0;
                     const endsWithSpace = /\s$/.test(text);
+                    const isWhitespaceOnly = !hasVisibleChar;
+                    const isLatinSegment = hasLatin(trimmed) && !hasCJK(trimmed);
 
-                    if (!hasVisibleChar) {
+                    if (isWhitespaceOnly) {
                         currentWrapper = null;
                         element.classList.add('word-space');
+                        element.classList.remove('non-latin');
                         return;
                     }
+
+                    element.classList.remove('word-space');
+
+                    if (!isLatinSegment) {
+                        currentWrapper = null;
+                        element.classList.add('non-latin');
+                        return;
+                    }
+
+                    element.classList.remove('non-latin');
 
                     if (!currentWrapper) {
                         currentWrapper = document.createElement('span');
