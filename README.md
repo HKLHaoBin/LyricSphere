@@ -16,6 +16,7 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - 改进的安全路径处理，包含路径验证与越界检查
 - CORS处理支持，为跨域请求提供更好的兼容性
 - 与 AMLL（Advanced Music Live Lyrics）集成的 WebSocket 服务器
+- AMLL Web 播放器集成，支持自定义基础URL配置与丰富的播放控制
 - Server-Sent Events (SSE) 实现实时歌词更新
 - LYS/LRC 与 TTML 格式双向转换功能
 - AMLL 规则编写支持
@@ -102,6 +103,8 @@ LyricSphere/
 `/player/animation-config` 接口用于在页面加载时同步前端上报的动画参数，默认把进入/移动/退出动画时长统一到 600ms，并提供 `useComputedDisappear` 开关以控制是否启用后端计算的消失时机，便于在调试与演示之间切换。
 
 系统还实现了资源URL的规范化处理，支持安全和高效的资源处理，为不同类型的资源提供动态路径解析。
+
+新增 AMLL Web 播放器集成，提供现代化的 Web 界面，支持自定义基础URL配置，并包含丰富的播放控制功能，如播放速度调整、音量控制、歌词延迟设置、封面样式定制等。
 
 ## AI 歌词翻译
 

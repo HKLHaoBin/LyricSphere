@@ -64,6 +64,7 @@ pip install flask openai bcrypt waitress
 
 3. **Real-time Features**:
    - WebSocket server on port 11444 for AMLL integration
+   - AMLL Web Player integration with customizable base URL configuration
    - Server-Sent Events (SSE) for real-time lyric updates
    - Progress tracking and synchronization
    - Real-time lyric animation with disappearing effects
@@ -97,6 +98,9 @@ pip install flask openai bcrypt waitress
 - `/export_lyrics_csv`: API endpoint for exporting lyrics to CSV format
 - `/translate_lyrics`: API endpoint for AI-powered lyric translation
 - `/player/animation-config`: API endpoint for synchronizing animation configuration between frontend and backend
+- `/amll-web`: Serve the AMLL web player template
+- `/amll-web/assets/<path:filename>`: Provide asset files for the AMLL web player
+- `/amll-web/public/<path:filename>`: Provide public files for the AMLL web player
 
 ### File Management
 

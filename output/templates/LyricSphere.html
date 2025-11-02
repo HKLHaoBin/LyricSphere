@@ -1,0 +1,4554 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LyricSphere</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --card-bg: #ffffff;
+            --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            --input-bg: rgba(255, 255, 255, 0.9);
+            --border-color: #e9ecef;
+            --tag-bg: #f8f9fa;
+            --modal-bg: #ffffff;
+            --button-bg: #495057;
+            --button-text: #fff;
+            --status-bg-default: #e7f5ff;
+            --status-color-default: #1c7ed6;
+            --status-bg-info: #e7f5ff;
+            --status-color-info: #1c7ed6;
+            --status-bg-success: #e6fcf5;
+            --status-color-success: #0c8599;
+            --status-bg-error: #ffe3e3;
+            --status-color-error: #c92a2a;
+            --status-progress-bg: rgba(33, 33, 33, 0.92);
+            --status-progress-color: #ffffff;
+            --status-progress-desc-color: rgba(0, 0, 0, 0.72);
+        }
+
+        .dark-mode {
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --card-bg: rgba(45, 45, 45, 0.9);
+            --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --input-bg: rgba(45, 45, 45, 0.9);
+            --border-color: #404040;
+            --tag-bg: #404040;
+            --modal-bg: #333333;
+            --button-bg: #606060;
+            --button-text: #ffffff;
+            --status-bg-default: rgba(77, 171, 247, 0.18);
+            --status-color-default: #9bd4ff;
+            --status-bg-info: rgba(77, 171, 247, 0.18);
+            --status-color-info: #9bd4ff;
+            --status-bg-success: rgba(18, 184, 134, 0.2);
+            --status-color-success: #7fe7c7;
+            --status-bg-error: rgba(255, 107, 107, 0.25);
+            --status-color-error: #ffb3b3;
+            --status-progress-bg: rgba(20, 20, 20, 0.92);
+            --status-progress-color: #ffffff;
+            --status-progress-desc-color: rgba(255, 255, 255, 0.78);
+        }
+
+        body {
+            background: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            /* max-width: 100%; */
+            margin: 0;
+            /* padding: 39px; */
+            padding-top: 70px;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* 移动端适配 */
+        @media screen and (max-width: 768px), screen and (orientation: portrait) {
+            body {
+                padding-top: 80px;
+            }
+        }
+
+        .json-list {
+            display: flex;
+            /* margin: 12px; */
+            flex-wrap: wrap;
+            /* gap: 0px; */
+            /* margin: 2px -8px; */
+            /* width: calc(100% + 20px); */
+            list-style: none;
+            padding: 0 10px;
+            justify-content: center;
+        }
+
+        .json-item {
+            background: var(--card-bg);
+            border-radius: 30px;
+            box-shadow: var(--card-shadow);
+            transition: transform 0.2s, box-shadow 0.2s;
+            /* flex: 0 0 calc(33.33% - 20px); */
+            margin: 12px;
+            padding: 18px;
+            /* box-sizing: border-box; */
+            max-width: 570px;
+            min-width: 420px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .json-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .json-item-header {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .file-name {
+            color: var(--text-color);
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .file-name::before {
+            content: '🎵';
+            font-size: 1.2em;
+        }
+
+        .json-item-actions {
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-top: 12px;
+        }
+
+        .style-buttons {
+            display: flex;
+            flex-direction: row;
+            gap: 12px;
+            margin: 0;
+        }
+
+        .style-button {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .am-style {
+            background: linear-gradient(135deg, #4dabf7, #69db7c);
+            color: #fff;
+        }
+
+        .fs-style {
+            background: linear-gradient(135deg, #ff6b6b, #ff922b);
+            color: #fff;
+        }
+
+        .fslr-style {
+            background: linear-gradient(135deg, #da77f2, #cc5de8);
+            color: #fff;
+        }
+
+        .action-button {
+            background: var(--button-bg, #495057);
+            color: var(--button-text, #fff);
+            padding: 8px 16px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .action-button:hover {
+            background: #343a40;
+        }
+
+        .search-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            padding: 15px 0;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.3s ease,
+                box-shadow 0.3s ease,
+                border-color 0.3s ease;
+        }
+
+        .search-box {
+            flex: 1;
+            padding: 12px 18px;
+            border-radius: 12px;
+            border: 2px solid var(--border-color);
+            font-size: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: var(--input-bg);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .search-box:focus {
+            border-color: #4dabf7;
+            box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.15),
+                0 4px 12px rgba(77, 171, 247, 0.1);
+            background: white;
+        }
+
+        .search-box::placeholder {
+            color: #868e96;
+            opacity: 0.8;
+        }
+
+        .file-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 0;
+        }
+
+        .file-preview {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f8f8;
+            border-radius: 3px;
+            display: none;
+        }
+
+        .preview-content {
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background: var(--modal-bg);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin: 6% auto;
+            padding: 20px;
+            width: 95%;
+            height: 80%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: background-color 0.3s ease;
+        }
+
+        .modal-content>div {
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .modal-content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .modal-content::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+        }
+
+        .modal-content::-webkit-scrollbar-thumb {
+            background: var(--button-bg);
+            border-radius: 4px;
+        }
+
+        .dark-mode .modal-content::-webkit-scrollbar-thumb {
+            background: #606060;
+        }
+
+        .lyrics-editor {
+            width: calc(100% - 24px);
+            height: calc(100% - 60px);
+            margin-top: 10px;
+            font-family: 'Fira Code', monospace;
+            resize: vertical;
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            padding: 12px;
+            background: var(--input-bg);
+            color: var(--text-color);
+        }
+
+        .editor-buttons {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        .file-path-input {
+            width: calc(100% - 24px);
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 2px solid var(--border-color);
+            background: var(--input-bg);
+            color: var(--text-color);
+            margin: 8px 0;
+            box-sizing: border-box;
+            transition: all 0.3s ease;
+        }
+
+        .file-path-input:focus {
+            border-color: #4dabf7;
+            box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.15);
+        }
+
+        .editor-buttons button {
+            padding: 10px 24px;
+            border-radius: 8px;
+            border: none;
+            background: var(--button-bg);
+            color: var(--button-text);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .editor-buttons button:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        .editor-buttons button:active {
+            transform: translateY(0);
+        }
+
+        .modal-content h3 {
+            margin: 15px 0 10px;
+            color: var(--text-color);
+            font-size: 1.1em;
+        }
+
+        .sort-button {
+            background-color: #2196F3;
+            color: white;
+            padding: 5px 10px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .sort-button:hover {
+            opacity: 0.8;
+        }
+
+        .song-tags {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .song-tag {
+            font-size: 0.9rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background: var(--tag-bg);
+        }
+
+        .duet-tag {
+            background: #9c36b5;
+            color: #fff;
+        }
+
+        .background-vocals-tag {
+            background: #FF8B36;
+            color: #fff;
+        }
+
+        .lyrics-editor {
+            height: 176px;
+            margin: 10px 0;
+        }
+
+        .lyrics-editor.error-highlight {
+            border-color: #ff6b6b;
+            box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.2);
+        }
+
+        .status-message {
+            margin-top: 8px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--status-bg-default);
+            color: var(--status-color-default);
+            display: none;
+            white-space: pre-wrap;
+            line-height: 1.4;
+            font-size: 0.95em;
+        }
+
+        .status-message.status-error {
+            background: var(--status-bg-error);
+            color: var(--status-color-error);
+        }
+
+        .status-message.status-info {
+            background: var(--status-bg-info);
+            color: var(--status-color-info);
+        }
+
+        .status-message.status-success {
+            background: var(--status-bg-success);
+            color: var(--status-color-success);
+        }
+
+        #translationStatusMessage {
+            position: relative;
+        }
+
+        #translationStatusMessage.translation-in-progress {
+            background: var(--status-progress-bg);
+            color: var(--status-progress-color);
+            display: block;
+            padding: 24px 20px;
+        }
+
+        #translationStatusMessage.translation-in-progress .btn-shine {
+            position: relative;
+            top: auto;
+            left: auto;
+            transform: none;
+            display: inline-block;
+            margin: 0 auto 16px;
+        }
+
+        #translationStatusMessage.translation-in-progress .status-progress {
+            margin-top: 12px;
+        }
+
+        /* From Uiverse.io by neerajbaniwal */
+        .btn-shine {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 12px 48px;
+            color: #fff;
+            background: linear-gradient(to right, #9f9f9f 0, #fff 10%, #868686 20%);
+            background-position: -150% 0;
+            background-size: 300% auto;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 3s infinite linear;
+            animation-fill-mode: forwards;
+            -webkit-text-size-adjust: none;
+            font-weight: 600;
+            font-size: 16px;
+            text-decoration: none;
+            white-space: nowrap;
+            font-family: "Poppins", sans-serif;
+        }
+
+        @-moz-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @-webkit-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @-o-keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        @keyframes shine {
+            0% {
+                background-position: -150% 0;
+            }
+
+            100% {
+                background-position: 300% 0;
+            }
+        }
+
+        .status-message__list {
+            margin: 6px 0 0;
+            padding-left: 18px;
+        }
+
+        .status-message__list li {
+            margin-bottom: 4px;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .status-message__summary {
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 1.05em;
+        }
+
+        .status-progress {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        @media (min-width: 769px) {
+            .status-progress {
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+
+            .status-progress__item {
+                flex: 1 1 220px;
+            }
+        }
+
+        .status-progress__item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .status-progress__item--pending {
+            opacity: 0.6;
+        }
+
+        .status-progress__item--active {
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 12px rgba(255, 255, 255, 0.18);
+        }
+
+        .status-progress__item--success {
+            border-color: rgba(85, 233, 171, 0.6);
+            background: rgba(12, 133, 153, 0.18);
+        }
+
+        .status-progress__item--error {
+            border-color: rgba(255, 107, 107, 0.6);
+            background: rgba(255, 107, 107, 0.18);
+        }
+
+        .status-progress__label {
+            font-weight: 600;
+            letter-spacing: 0.4px;
+        }
+
+        .status-progress__desc {
+            font-size: 0.85em;
+            color: var(--status-progress-desc-color);
+        }
+
+        /* 移动端适配 */
+        @media screen and (max-width: 768px), screen and (orientation: portrait) {
+            /* 给固定的 .search-container 预留空间，按你实际高度微调 */
+            body {
+                padding-top: 80px;   /* 你前面也用过 80px，这里沿用即可。 */
+                padding-bottom: 60px;
+            }
+
+            /* 确保列表参与正常滚动，不"常驻" */
+            .json-list {
+                position: static !important;  /* 覆盖相对定位 */
+                z-index: auto !important;
+            }
+
+            .search-container {
+                position: static;
+                padding: 12px 16px 16px;
+                background: var(--card-bg);
+                box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+                border-bottom: 1px solid var(--border-color);
+                width: 92%;
+            }
+
+            .search-wrapper {
+                justify-content: flex-start;
+            }
+
+            .search-tools {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 16px;
+            }
+
+            .search-row {
+                width: 100%;
+                display: grid;
+                gap: 10px;
+                flex-wrap: nowrap;
+            }
+
+            .search-row--focus {
+                grid-template-columns: 1fr;
+            }
+
+            .search-row--focus .search-box {
+                max-width: none;
+            }
+
+            .search-row--sort,
+            .search-row--main,
+            .search-row--system {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .search-row .action-button,
+            .search-row button {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .device-manage-button {
+                width: 100%;
+            }
+
+            .dropdown-menu {
+                position: fixed !important;
+                top: auto !important;
+                right: 16px !important;
+                left: 16px !important;
+                bottom: 16px !important;
+                min-width: unset !important;
+                border-radius: 12px !important;
+                padding: 12px !important;
+                box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25) !important;
+            }
+
+            .json-list {
+                margin: 0;
+                padding: 16px;
+                display: flex;
+                gap: 16px;
+            }
+
+            .json-item {
+                margin: 0;
+                min-width: unset;
+                width: 100%;
+                padding: 18px;
+                border-radius: 20px;
+            }
+
+            .file-name {
+                font-size: 1.2rem;
+                line-height: 1.3;
+                flex-wrap: wrap;
+            }
+
+            .json-item-actions {
+                gap: 16px;
+            }
+
+            .style-buttons {
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+
+            .style-button {
+                flex: 1 1 calc(50% - 10px);
+                justify-content: center;
+            }
+
+            .file-actions {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+            }
+
+            .file-actions .action-button {
+                width: 100%;
+            }
+
+            .modal {
+                padding: 0;
+            }
+
+            .modal-content {
+                margin: 40px auto;
+                width: calc(100% - 24px);
+                height: calc(100% - 80px);
+                border-radius: 14px;
+                max-height: 92vh;
+            }
+
+            .lyrics-editor {
+                height: 220px;
+            }
+
+            .modal-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+
+            .modal-header-actions,
+            .modal-flex-group {
+                width: 100%;
+            }
+
+            .modal-header-actions button,
+            .modal-flex-group button,
+            .modal-flex-group .lyrics-action-btn,
+            .modal-flex-group label,
+            .modal-header-actions .lyrics-action-btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* 增强对比度 */
+        .style-button:hover {
+            opacity: 0.9;
+            filter: brightness(1.05);
+        }
+
+        .search-box {
+            max-width: 300px;
+            padding: 11px 14px;
+        }
+
+        .lyrics-action-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            margin: 5px 0;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .path-update-btn {
+            background: #4dabf7;
+            color: white;
+        }
+
+        .save-btn {
+            background: #37b24d;
+            color: white;
+        }
+
+        .close-btn {
+            background: #f03e3e;
+            color: white;
+        }
+
+        .lyrics-action-btn:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .save-all-btn {
+            background: #f59f00;
+            color: white;
+        }
+
+        .copy-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 2px 6px;
+            font-size: 1rem;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        .copy-btn:hover {
+            opacity: 1;
+        }
+        .search-wrapper {
+            display: flex;
+            width: 100%;
+            justify-content: center;
+        }
+        .search-tools {
+            display: flex;
+            width: 100%;
+            max-width: 1200px;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .search-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .search-row--focus .search-box {
+            width: 100%;
+        }
+        .device-manage-button {
+            position: relative;
+            display: inline-flex;
+        }
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: var(--modal-bg);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            padding: 8px;
+            min-width: 200px;
+            z-index: 1000;
+        }
+        .dropdown-menu button {
+            width: 100%;
+            text-align: left;
+            padding: 8px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            color: var(--text-color);
+            border-radius: 6px;
+        }
+        .dropdown-menu button:hover {
+            background: var(--tag-bg);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 8px 0;
+            gap: 12px;
+        }
+
+        .modal-header-actions,
+        .modal-flex-group {
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .modal-path-group {
+            margin-top: 8px;
+        }
+
+        .style-button.disabled-style {
+            background: #e9ecef !important;
+            color: #bbb !important;
+            cursor: not-allowed !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="search-container">
+        <div class="search-wrapper">
+            <div class="search-tools">
+                <div class="search-row search-row--focus">
+                    <input type="text" class="search-box" id="searchBox" placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
+                </div>
+                <div class="search-row search-row--sort">
+                    <button class="action-button" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
+                    <button class="action-button" onclick="toggleSort('time')" id="timeSortBtn">时间倒序</button>
+                </div>
+                <div class="search-row search-row--main">
+                    <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
+                    <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
+                    <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
+                </div>
+                <div class="search-row search-row--system">
+                    <button class="action-button" id="securityToggleBtn" onclick="toggleSecurityMode()" title="安全保护：默认开启，防止外部修改">🔒 安全保护</button>
+                    <button class="action-button" id="authToggleBtn" onclick="toggleAuthModal()" title="解锁本设备编辑权限">🔑 解锁本设备</button>
+                    <button class="action-button" onclick="openAMLL()" title="打开AMLL歌词界面">AMLL源</button>
+                    <div class="action-button device-manage-button">
+                        ⚙️ 设备管理
+                        <div class="dropdown-menu" style="display: none;">
+                            <button onclick="showTrustedDevices()">📋 查看设备</button>
+                            <button onclick="showSetPasswordModal()">🔐 设置密码</button>
+                            <button onclick="showRevokeDeviceModal()">🚫 吊销设备</button>
+                            <button onclick="revokeAllDevices()">🗑️ 清空设备</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <ul class="json-list" id="jsonList">
+        {% for file in json_files %}
+        <li class="json-item" data-mtime="{{ file.mtime }}">
+            <div class="json-item-header">
+                <div class="file-name">{{ file.filename.replace('.json', '') }} <button class="copy-btn" onclick="copyFileName(this)" title="复制文件名">📋</button></div>
+                <div class="song-tags">
+                    {% if '::' in file.data.meta.lyrics %}
+                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
+                    {% if lyrics_parts|length >= 4 and lyrics_parts[1] != '!' %}
+                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
+                    <script>
+                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
+                        document.addEventListener('DOMContentLoaded', function () {
+                            checkLyrics('{{ lyrics_parts[1] }}', '{{ file.filename }}')
+                        });
+                    </script>
+                    {% endif %}
+                    {% elif file.data.meta.lyrics.startswith('http://') %}
+                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
+                    <script>
+                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
+                        document.addEventListener('DOMContentLoaded', function () {
+                            checkLyrics('{{ file.data.meta.lyrics }}', '{{ file.filename }}')
+                        });
+                    </script>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="json-item-actions">
+                <div class="style-buttons">
+                <!--<button class="style-button am-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fsam')">AM歌词样式</button>-->
+                <button class="style-button fs-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fs')">全屏歌词样式</button>
+                <button class="style-button fslr-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fslr')">全屏对唱歌词样式</button>
+                <button class="style-button am-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'amll')">AMLL-web</button>
+                <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', '亮起')">亮起</button>
+                <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', 'Kok')">Kok</button>
+                <!-- <button class="style-button am-style"
+                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'am')">visual-lyric歌词样式</button> -->
+                </div>
+                <div class="file-actions">
+                    {% if '::' in file.data.meta.lyrics %}
+                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
+                    {% if lyrics_parts|length >= 4 %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ lyrics_parts[1]|e }}', '{{ lyrics_parts[2]|e }}', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% else %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% endif %}
+                    {% else %}
+                    <button class="action-button" 
+                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
+                    {% endif %}
+                    <button class="action-button" 
+                        onclick="editMusicPath('{{ file.data.song|e }}', '{{ file.filename|e }}')">修改音乐路径</button>
+                    <button class="action-button" 
+                        onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
+                    <button class="action-button" 
+                        onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
+                    <button class="action-button"
+                        onclick="if(confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
+                </div>
+            </div>
+            <div class="file-preview" id="preview-{{ file.filename }}">
+                <div class="preview-content"></div>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+
+    <div id="lyricsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 style="margin: 0; font-size: 1.5rem;">编辑歌词 ： <span id="currentFileName"></span><button class="copy-btn" onclick="copyCurrentFileName()" title="复制文件名">📋</button></h2>
+                <div class="modal-header-actions">
+                    <button class="lyrics-action-btn save-all-btn" onclick="saveAllLyrics()">💾 保存全部</button>
+                    <button class="lyrics-action-btn close-btn" onclick="closeLyricsModal()">🚪 关闭</button>
+                </div>
+            </div>
+            <div style="display: flex; flex-direction: column;">
+                <div>
+                    <h3>歌词</h3>
+                    <div>
+                        <label>歌词文件路径：</label>
+                        <input type="text" id="lyricsPath" class="file-path-input">
+                        <div class="modal-flex-group modal-path-group">
+                            <button class="lyrics-action-btn path-update-btn" onclick="updateLyricsPath(0)">🔄
+                                更新路径</button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="convertTTML()">
+                                🔄 TTML转LYS/LRC
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="convertToTTML()">
+                                🔄 LYS/LRC转TTML
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" id="mergeLQEButton" style="display: none;" onclick="mergeToLQE()">
+                                🔄 合并为LQE
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="setCurrentFileNameAsLyrics()">
+                                📝 为当前歌词命名
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="extractLyrics()">
+                                📋 提取歌词
+                            </button>
+
+                            <label class="lyrics-action-btn path-update-btn" style="cursor:pointer;">
+                                📤 上传歌词
+                                <input type="file" id="lyricsUpload" accept=".lrc,.lys,.ttml" style="display:none;"
+                                    onchange="handleLyricsUpload()">
+                            </label>
+                        </div>
+                    </div>
+                    <textarea id="lyricsEditor" class="lyrics-editor"></textarea>
+                    <button class="lyrics-action-btn save-btn" onclick="saveLyrics(0)">💾 保存歌词</button>
+                </div>
+
+                <div>
+                    <h3>翻译</h3>
+                    <div>
+                        <label>翻译文件路径：</label>
+                        <input type="text" id="translationPath" class="file-path-input">
+                        <div class="modal-flex-group modal-path-group">
+                            <button class="lyrics-action-btn path-update-btn" onclick="updateLyricsPath(1)">🔄
+                                更新路径</button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="setCurrentFileNameAsTranslation()">
+                                📝 为当前翻译命名
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="extractTimestamps()">
+                                ⏱️ 添加时间戳
+                            </button>
+                            <!-- <button class="lyrics-action-btn path-update-btn" onclick="window.open('https://famyliam.ft2.ltd/translate_lyrics', '_blank')">
+                                🤖 AI翻译
+                            </button> -->
+                            <button class="lyrics-action-btn path-update-btn" onclick="translateLyrics()">
+                                🤖 AI翻译
+                            </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="showAISettings()">
+                                ⚙️ AI设置
+                            </button>
+                            <label class="lyrics-action-btn path-update-btn" style="cursor:pointer;">
+                                📤 上传翻译
+                                <input type="file" id="translationUpload" accept=".lrc,.lys,.ttml" style="display:none;"
+                                    onchange="handleTranslationUpload()">
+                            </label>
+                        </div>
+                        <div id="translationStatusMessage" class="status-message">
+                            <!-- From Uiverse.io by neerajbaniwal -->
+                            <a href="#" class="btn-shine">正在翻译 · 请求思考阶段</a>
+                        </div>
+                    </div>
+                    <textarea id="translationEditor" class="lyrics-editor"></textarea>
+                    <button class="lyrics-action-btn save-btn" onclick="saveLyrics(1)">💾 保存翻译</button>
+                </div>
+
+                <div class="editor-buttons">
+                    <button class="lyrics-action-btn close-btn" onclick="closeLyricsModal()">🚪 关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="musicPathModal" class="modal">
+        <div class="modal-content">
+            <h2>修改音乐文件路径</h2>
+            <div>
+                <label>当前路径：</label>
+                <input type="text" id="musicPath" class="file-path-input" readonly>
+                <label>新路径：</label>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <input type="text" id="newMusicPath" class="file-path-input" style="flex:1">
+                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
+                        📤 上传文件
+                        <input type="file" id="musicUpload" accept="audio/*,video/*" style="display:none;"
+                            onchange="handleMusicUpload()">
+                    </label>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    提示：可直接输入文件名或上传音频视频文件（支持所有格式）
+                </small>
+            </div>
+            <div class="editor-buttons">
+                <button onclick="updateMusicPath()">保存</button>
+                <button onclick="closeMusicPathModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="imagePathModal" class="modal">
+        <div class="modal-content">
+            <h2>修改图片路径</h2>
+            <div>
+                <h3>专辑封面</h3>
+                <label>当前路径：</label>
+                <input type="text" id="imagePath" class="file-path-input" readonly>
+                <label>新路径：</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="newImagePath" class="file-path-input" style="flex:1">
+                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
+                        📤 上传专辑图
+                        <input type="file" id="imageUpload" accept="image/*" style="display: none;"
+                            onchange="handleImageUpload(this.files[0], 'album')">
+                    </label>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
+                </small>
+            </div>
+            
+            <div>
+                <h3>背景图片</h3>
+                <label>当前路径：</label>
+                <input type="text" id="backgroundPath" class="file-path-input" readonly>
+                <label>新路径：</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="newBackgroundPath" class="file-path-input" style="flex:1">
+                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
+                        📤 上传背景图
+                        <input type="file" id="backgroundUpload" accept="image/*" style="display: none;"
+                            onchange="handleImageUpload(this.files[0], 'background')">
+                    </label>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
+                </small>
+            </div>
+            
+            <div class="editor-buttons">
+                <button onclick="updateImagePath()">保存专辑图</button>
+                <button onclick="updateBackgroundPath()">保存背景图</button>
+                <button onclick="closeImagePathModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="createJsonModal" class="modal">
+        <div class="modal-content">
+            <h2>创建新歌曲</h2>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div>
+                    <label>歌曲名：</label>
+                    <input type="text" id="songTitle" class="file-path-input">
+                </div>
+                <div>
+                    <label>歌手名（多个歌手用逗号分隔）：</label>
+                    <input type="text" id="songArtists" class="file-path-input" placeholder="歌手1,歌手2">
+                </div>
+                <div class="editor-buttons">
+                    <button onclick="createJsonFile()">创建</button>
+                    <button onclick="closeCreateModal()">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="renameModal" class="modal">
+        <div class="modal-content">
+            <h2>重命名歌曲</h2>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div>
+                    <label>歌曲名：</label>
+                    <input type="text" id="renameSongTitle" class="file-path-input">
+                </div>
+                <div>
+                    <label>歌手名（多个歌手用逗号分隔）：</label>
+                    <input type="text" id="renameSongArtists" class="file-path-input" placeholder="歌手1,歌手2">
+                </div>
+                <div class="editor-buttons">
+                    <button onclick="renameJsonFile()">保存</button>
+                    <button onclick="closeRenameModal()">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="backupModal" class="modal">
+        <div class="modal-content">
+            <h2>选择恢复版本</h2>
+            <div id="backupList" style="max-height: 60vh; overflow-y: auto; margin: 15px 0;"></div>
+            <div class="editor-buttons">
+                <button onclick="closeBackupModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加认证对话框 -->
+    <div id="authModal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <h2>🔑 设备认证</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div id="authStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center;">
+                    正在检查设备状态...
+                </div>
+                <div id="authForm" style="display: none;">
+                    <div>
+                        <label>密码：</label>
+                        <input type="password" id="authPassword" class="file-path-input" placeholder="请输入访问密码">
+                    </div>
+                    <div class="editor-buttons">
+                        <button onclick="authLogin()">登录</button>
+                        <button onclick="authLogout()" id="authLogoutBtn" style="display: none;">登出</button>
+                        <button onclick="closeAuthModal()">取消</button>
+                    </div>
+                </div>
+                <div id="authSuccess" style="display: none; text-align: center; color: #37b24d;">
+                    <div style="font-size: 3rem; margin-bottom: 10px;">✅</div>
+                    <div>设备已成功认证！</div>
+                    <div style="font-size: 0.9em; color: #666; margin-top: 10px;">您现在可以编辑内容了</div>
+                    <button onclick="closeAuthModal()" style="margin-top: 15px;">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加密码设置对话框 -->
+    <div id="setPasswordModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <h2>🔐 设置系统密码</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div id="setPasswordStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center; display: none;">
+                    <!-- 状态信息将动态显示 -->
+                </div>
+                <div>
+                    <label>当前密码（如已设置）：</label>
+                    <input type="password" id="currentPassword" class="file-path-input" placeholder="如已设置密码，请输入当前密码">
+                </div>
+                <div>
+                    <label>新密码：</label>
+                    <input type="password" id="newPassword" class="file-path-input" placeholder="请输入新密码（最少8位）">
+                </div>
+                <div>
+                    <label>确认新密码：</label>
+                    <input type="password" id="confirmPassword" class="file-path-input" placeholder="请再次输入新密码">
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                    💡 密码要求：最少8个字符，建议包含字母、数字和特殊字符
+                </div>
+                <div class="editor-buttons">
+                    <button onclick="setPassword()">保存密码</button>
+                    <button onclick="closeSetPasswordModal()">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加设备吊销对话框 -->
+    <div id="revokeDeviceModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2>🚫 吊销设备</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div id="revokeDeviceStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center;">
+                    正在加载设备列表...
+                </div>
+                <div id="revokeDeviceList" style="max-height: 300px; overflow-y: auto; display: none;">
+                    <!-- 设备列表将动态加载 -->
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="deviceSearch" class="file-path-input" placeholder="搜索设备ID..." style="flex: 1;">
+                    <button onclick="searchDevices()">搜索</button>
+                </div>
+                <div class="editor-buttons">
+                    <button onclick="closeRevokeDeviceModal()">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加AI设置对话框 -->
+    <div id="aiSettingsModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2>AI翻译设置</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <div>
+                    <label>API提供商：</label>
+                    <select id="aiProvider" class="file-path-input">
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="together">Together</option>
+                        <option value="groq">Groq</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                <div>
+                    <label>基础URL：</label>
+                    <input type="text" id="aiBaseUrl" class="file-path-input" placeholder="例如: https://api.deepseek.com">
+                </div>
+                <div>
+                    <label>模型名称：</label>
+                    <input type="text" id="aiModel" class="file-path-input" placeholder="例如: deepseek-reasoner">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExpectReasoning"> 期望思维链内容（仅部分模型支持）
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiCompatMode"> 兼容模式：将提示词合并到用户消息中
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiStripBrackets"> 预处理歌词时去掉括号
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiThinkingEnabled" checked> 启用思考模式（先生成整首歌理解）
+                    </label>
+                </div>
+                <div>
+                    <label>API密钥：</label>
+                    <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入API密钥">
+                    <div style="margin-top: 5px; font-size: 12px; color: #666;">
+                        <a href="https://platform.deepseek.com/usage" target="_blank" style="color: #0066cc; text-decoration: none;">点击这里获取 DeepSeek API 密钥 →</a>
+                    </div>
+                </div>
+                <div>
+                    <label>翻译提示词：</label>
+                    <textarea id="aiSystemPrompt" class="lyrics-editor" style="height: 150px;" placeholder="设置AI翻译的提示词，用于指导AI如何翻译歌词"></textarea>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+                    <h3 style="margin: 0 0 8px 0;">思考模型设置</h3>
+                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                        可选：先调用思考模型生成整首歌理解，再将结果传给翻译模型。留空的字段将沿用翻译设置。
+                    </div>
+                    <div>
+                        <label>思考模型提供商：</label>
+                        <select id="aiThinkingProvider" class="file-path-input">
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="together">Together</option>
+                            <option value="groq">Groq</option>
+                            <option value="custom">自定义</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>思考模型基础URL：</label>
+                        <input type="text" id="aiThinkingBaseUrl" class="file-path-input" placeholder="默认沿用翻译模型的基础URL">
+                    </div>
+                    <div>
+                        <label>思考模型名称：</label>
+                        <input type="text" id="aiThinkingModel" class="file-path-input" placeholder="默认沿用翻译模型名称">
+                    </div>
+                    <div>
+                        <label>思考模型API密钥（可选）：</label>
+                        <input type="password" id="aiThinkingApiKey" class="file-path-input" placeholder="留空则沿用翻译API密钥">
+                    </div>
+                    <div>
+                        <label>思考提示词：</label>
+                        <textarea id="aiThinkingPrompt" class="lyrics-editor" style="height: 120px;" placeholder="设置思考模型的提示词，用于生成整首歌的理解"></textarea>
+                    </div>
+                </div>
+                <div class="editor-buttons">
+                    <button onclick="probeAIConnection('translation', this)" data-probe="translation">测试翻译模型</button>
+                    <button onclick="probeAIConnection('thinking', this)" data-probe="thinking">测试思考模型</button>
+                    <button onclick="saveAISettings()">保存设置</button>
+                    <button onclick="closeAISettings()">取消</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script id="amllPlayerConfig" type="application/json">{{ amll_player_base_url|tojson }}</script>
+    <script>
+        const backendOrigin = window.location.origin;
+        const backendRootUrl = new URL('/', backendOrigin).toString();
+        const amllPlayerConfigElement = document.getElementById('amllPlayerConfig');
+        let amllPlayerBaseUrl = null;
+        if (amllPlayerConfigElement && amllPlayerConfigElement.textContent) {
+            try {
+                amllPlayerBaseUrl = JSON.parse(amllPlayerConfigElement.textContent);
+            } catch (error) {
+                console.warn('Failed to parse AMLL player base URL from config, fallback to local path.', error);
+            }
+        }
+        amllPlayerBaseUrl = amllPlayerBaseUrl || new URL('/amll-web', backendOrigin).toString();
+
+        function safeDecodeURIComponent(value) {
+            try {
+                return decodeURIComponent(value);
+            } catch (error) {
+                return value;
+            }
+        }
+
+        function createResourceConfig(segment) {
+            const baseUrl = new URL(`${segment}/`, backendRootUrl).toString();
+            const path = new URL(`${segment}/`, backendRootUrl).pathname;
+            return { base: baseUrl, path, name: segment };
+        }
+
+        const RESOURCE_CONFIG = {
+            songs: createResourceConfig('songs'),
+            static: createResourceConfig('static'),
+            backups: createResourceConfig('backups')
+        };
+
+        function normalizeResourceUrl(value, resourceKey) {
+            if (!value || typeof value !== 'string') {
+                return value;
+            }
+            if (value === '!') {
+                return value;
+            }
+            const config = RESOURCE_CONFIG[resourceKey];
+            if (!config) {
+                return value;
+            }
+
+            try {
+                const parsed = new URL(value);
+                if (parsed.pathname.startsWith(config.path)) {
+                    const decodedPath = safeDecodeURIComponent(parsed.pathname);
+                    const normalizedPath = decodedPath.startsWith(config.path)
+                        ? decodedPath
+                        : config.path + decodedPath.replace(/^\//, '');
+                    const search = parsed.search ? safeDecodeURIComponent(parsed.search) : '';
+                    const hash = parsed.hash ? safeDecodeURIComponent(parsed.hash) : '';
+                    return `${window.location.protocol}//${window.location.host}${normalizedPath}${search}${hash}`;
+                }
+                return value;
+            } catch (error) {
+                let normalized = value.replace(/\\/g, '/').replace(/^[./]+/, '');
+                if (normalized.startsWith(`${config.name}/`)) {
+                    normalized = normalized.substring(config.name.length + 1);
+                }
+                normalized = safeDecodeURIComponent(normalized);
+                if (!normalized) {
+                    return config.base;
+                }
+                return config.base + normalized;
+            }
+        }
+
+        function stripResourcePrefix(value, resourceKey) {
+            if (!value || typeof value !== 'string') {
+                return value || '';
+            }
+            if (value === '!') {
+                return value;
+            }
+            const config = RESOURCE_CONFIG[resourceKey];
+            if (!config) {
+                return value;
+            }
+
+            try {
+                const parsed = new URL(value);
+                if (parsed.pathname.startsWith(config.path)) {
+                    return safeDecodeURIComponent(parsed.pathname.substring(config.path.length));
+                }
+            } catch (error) {
+                const normalizedValue = value.replace(/\\/g, '/');
+                if (normalizedValue.startsWith(config.base)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.base.length));
+                }
+                if (normalizedValue.startsWith(config.path)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.path.length));
+                }
+                if (normalizedValue.startsWith(`${config.name}/`)) {
+                    return safeDecodeURIComponent(normalizedValue.substring(config.name.length + 1));
+                }
+            }
+            return value;
+        }
+
+        function normalizeSongsUrl(value) {
+            return normalizeResourceUrl(value, 'songs');
+        }
+
+        function stripSongsPrefix(value) {
+            return stripResourcePrefix(value, 'songs');
+        }
+
+        function normalizeStaticUrl(value) {
+            return normalizeResourceUrl(value, 'static');
+        }
+
+        function normalizeBackupsUrl(value) {
+            return normalizeResourceUrl(value, 'backups');
+        }
+
+        // 在页面开始就定义 checkLyrics 函数
+        function checkLyrics(lyricsPath, filename) {
+            fetch('/check_lyrics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: lyricsPath
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const tagsContainer = document.getElementById(`tags-${filename}`)
+                        if (data.hasDuet) {
+                            const duetTag = document.createElement('span')
+                            duetTag.className = 'song-tag duet-tag'
+                            duetTag.textContent = '包含对唱歌词'
+                            tagsContainer.appendChild(duetTag)
+                        }
+                        if (data.hasBackgroundVocals) {
+                            const bgTag = document.createElement('span')
+                            bgTag.className = 'song-tag background-vocals-tag'
+                            bgTag.textContent = '包含背景歌词'
+                            tagsContainer.appendChild(bgTag)
+                        }
+                    }
+                })
+        }
+
+        function openFamyliamCloud(filename, preset) {
+            // 如果是AMLL规则编写网址
+            if (preset === 'amll') {
+                // 获取歌曲信息
+                fetch('/get_json_data?filename=' + encodeURIComponent(filename))
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            const jsonData = data.jsonData;
+
+                            const title = encodeURIComponent(jsonData.meta.title || '');
+                            const artists = encodeURIComponent((jsonData.meta.artists || []).join(' / '));
+
+                            let musicPath = '';
+                            if (jsonData.song) {
+                                const resolvedSongUrl = normalizeSongsUrl(jsonData.song);
+                                if (resolvedSongUrl && resolvedSongUrl !== '!') {
+                                    musicPath = encodeURIComponent(resolvedSongUrl);
+                                }
+                            }
+
+                            let lyricsPath = '';
+                            let originalLyricsRelative = '';
+                            const lyricsField = jsonData.meta.lyrics || '';
+                            const lyricCandidate = lyricsField.includes('::')
+                                ? (lyricsField.split('::')[1] || '')
+                                : lyricsField;
+                            if (lyricCandidate && lyricCandidate !== '!') {
+                                const resolvedLyricsUrl = normalizeSongsUrl(lyricCandidate);
+                                if (resolvedLyricsUrl && resolvedLyricsUrl !== '!') {
+                                    lyricsPath = encodeURIComponent(resolvedLyricsUrl);
+                                    originalLyricsRelative = stripSongsPrefix(resolvedLyricsUrl);
+                                }
+                            }
+
+                            let coverPath = '';
+                            if (jsonData.meta.albumImgSrc) {
+                                const resolvedCoverUrl = normalizeSongsUrl(jsonData.meta.albumImgSrc);
+                                if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
+                                    const coverFileName = safeDecodeURIComponent((resolvedCoverUrl.split('/').pop() || '')).toLowerCase();
+                                    if (coverFileName && coverFileName !== '专辑图.jpg' && coverFileName !== 'album_cover.jpg') {
+                                        coverPath = encodeURIComponent(resolvedCoverUrl);
+                                    }
+                                }
+                            }
+
+                            if (!coverPath && jsonData.meta['Background-image']) {
+                                const resolvedBackgroundUrl = normalizeSongsUrl(jsonData.meta['Background-image']);
+                                if (resolvedBackgroundUrl && resolvedBackgroundUrl !== '!') {
+                                    coverPath = encodeURIComponent(resolvedBackgroundUrl);
+                                }
+                            }
+
+                            // 检查歌词文件格式，如果不是TTML则临时转换
+                            if (originalLyricsRelative && !originalLyricsRelative.toLowerCase().endsWith('.ttml')) {
+                                // 请求后端将歌词临时转换为TTML格式
+                                fetch('/convert_to_ttml_temp', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: originalLyricsRelative })
+                                })
+                                .then(response => response.json())
+                                .then(convertData => {
+                                    if (convertData.status === 'success') {
+                                        const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
+                                        const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
+                                        const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+                                        const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
+                                        window.open(amllUrl, '_blank');
+                                    } else {
+                                        alert('歌词转换失败: ' + convertData.message);
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('歌词转换请求失败:', error);
+                                    alert('歌词转换请求失败');
+                                });
+                            } else {
+                                // 构建AMLL规则编写网址
+                                const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+                                const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${lyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
+                                // 打开网址
+                                window.open(amllUrl, '_blank');
+                            }
+                        } else {
+                            alert('无法获取歌曲信息');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('获取歌曲信息失败:', error);
+                        alert('获取歌曲信息失败');
+                    });
+            } else {
+                // 原有的处理逻辑
+                const baseUrl = preset === 'am' ?
+                    `http://localhost:8081/app/?#${backendRootUrl}` :
+                    `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#${backendRootUrl}`;
+                window.open(baseUrl + filename);
+            }
+        }
+
+        // 搜索功能
+        const searchBox = document.getElementById('searchBox')
+        const jsonList = document.getElementById('jsonList')
+        const items = jsonList.getElementsByTagName('li')
+
+        searchBox.addEventListener('input', function () {
+            const searchText = this.value.toLowerCase()
+
+            for (let item of items) {
+                const fileName = item.querySelector('.file-name').textContent.toLowerCase()
+                const searchMatch = fileName.includes(searchText)
+                item.style.display = searchMatch ? '' : 'none'
+            }
+        })
+
+        let currentEditingFile = ''
+        let currentLyricsPath = ''
+        let currentLyricsIndex = 0
+        let currentJsonFile = ''
+        let currentMusicPath = ''
+        let currentMusicJsonFile = ''
+        let currentImagePath = ''
+        let currentImageJsonFile = ''
+        let currentRenameFile = ''
+        let currentSort = { type: 'time', asc: false } // 初始为时间倒序
+        let currentRestoreFile = ''
+
+        function toggleSort(type) {
+            if (type === currentSort.type) {
+                currentSort.asc = !currentSort.asc
+            } else {
+                currentSort.type = type
+                currentSort.asc = (type === 'name') // 名称排序默认升序
+            }
+            updateSortButtons()
+            sortList()
+        }
+
+        function updateSortButtons() {
+            const nameBtn = document.getElementById('nameSortBtn')
+            const timeBtn = document.getElementById('timeSortBtn')
+
+            nameBtn.textContent = `A-Z ${currentSort.type === 'name' ? (currentSort.asc ? '↑' : '↓') : ''}`
+            timeBtn.textContent = `时间 ${currentSort.type === 'time' ? (currentSort.asc ? '↑' : '↓') : ''}`
+        }
+
+        function sortList() {
+            const list = document.getElementById('jsonList')
+            const items = Array.from(list.getElementsByTagName('li'))
+
+            items.sort((a, b) => {
+                if (currentSort.type === 'name') {
+                    const textA = a.querySelector('.file-name').textContent.toLowerCase()
+                    const textB = b.querySelector('.file-name').textContent.toLowerCase()
+                    return currentSort.asc ? textA.localeCompare(textB, 'zh-Hans-CN')
+                        : textB.localeCompare(textA, 'zh-Hans-CN')
+                } else {
+                    const timeA = parseFloat(a.dataset.mtime)
+                    const timeB = parseFloat(b.dataset.mtime)
+                    return currentSort.asc ? timeA - timeB : timeB - timeA
+                }
+            })
+
+            while (list.firstChild) {
+                list.removeChild(list.firstChild)
+            }
+            items.forEach(item => list.appendChild(item))
+        }
+
+        // 初始化时更新按钮状态
+        window.onload = function () {
+            sortList()
+            updateSortButtons()
+        }
+
+        function viewFile(type, path) {
+            // 实现文件预览逻辑
+        }
+
+        function editJson(filename) {
+            currentEditingFile = filename
+            const modal = document.getElementById('editModal')
+            const editor = document.getElementById('jsonEditor')
+            // 获取JSON内容并显示在编辑器中
+            modal.style.display = 'block'
+        }
+
+        function saveJson() {
+            const editor = document.getElementById('jsonEditor')
+            fetch('/update_json', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filename: currentEditingFile,
+                    content: JSON.parse(editor.value)
+                })
+            }).then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeModal()
+                        location.reload()
+                    }
+                })
+        }
+
+        function closeModal() {
+            document.getElementById('editModal').style.display = 'none'
+        }
+
+        function restoreFile(filename) {
+            fetch('/restore_file', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    file_path: normalizeStaticUrl(filename)
+                })
+            }).then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        location.reload()
+                    }
+                })
+        }
+
+        function editLyrics(lyricsPath, translationPath, index, jsonFile) {
+            currentJsonFile = jsonFile
+            const modal = document.getElementById('lyricsModal')
+            const lyricsEditor = document.getElementById('lyricsEditor')
+            const translationEditor = document.getElementById('translationEditor')
+            const lyricsPathInput = document.getElementById('lyricsPath')
+            const translationPathInput = document.getElementById('translationPath')
+            
+            // 设置当前文件名
+            document.getElementById('currentFileName').textContent = jsonFile.replace('.json', '')
+
+            // 设置路径
+            lyricsPathInput.value = stripSongsPrefix(lyricsPath)
+            if (translationPath && translationPath !== '!') {
+                translationPathInput.value = stripSongsPrefix(translationPath)
+            } else {
+                translationPathInput.value = ''
+            }
+
+            // 加载歌词内容
+            fetch('/get_lyrics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: lyricsPath })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        lyricsEditor.value = data.content
+                    }
+                })
+
+            // 加载翻译内容
+            if (translationPath && translationPath !== '!') {
+                fetch('/get_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: translationPath })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            translationEditor.value = data.content
+                        }
+                    })
+            } else {
+                translationEditor.value = ''
+            }
+
+            modal.style.display = 'block'
+            checkFileExtension()
+        }
+
+        function saveLyrics(index) {
+            const path = index === 0 ?
+                document.getElementById('lyricsPath').value :
+                document.getElementById('translationPath').value
+            const content = index === 0 ?
+                document.getElementById('lyricsEditor').value :
+                document.getElementById('translationEditor').value
+
+            // 验证路径
+            if (!path || path === '.' || path === './') {
+                return Promise.reject(new Error('无效的文件路径'));
+            }
+
+            return new Promise((resolve, reject) => {
+                const fullPath = normalizeSongsUrl(path)
+
+                fetch('/save_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: fullPath,
+                        content: content
+                    })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            resolve()
+                        } else if (data.status === 'warning') {
+                            alert(data.message)
+                            resolve()  // 仍然resolve因为文件已经保存成功
+                        } else {
+                            reject(new Error(data.message || '保存失败'))
+                        }
+                    })
+                    .catch(error => reject(error))
+            })
+        }
+
+        async function saveAllLyrics() {
+            const saveBtn = document.querySelector('.save-all-btn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '正在保存...';
+
+            try {
+                const lyricsPath = document.getElementById('lyricsPath').value;
+                const translationPath = document.getElementById('translationPath').value;
+
+                // 验证歌词路径
+                if (!lyricsPath || lyricsPath === '.' || lyricsPath === './') {
+                    throw new Error('请先设置有效的歌词文件路径');
+                }
+
+                // 验证翻译路径（如果有）
+                if (translationPath && (translationPath === '.' || translationPath === './')) {
+                    throw new Error('翻译文件路径无效');
+                }
+
+                await updateLyricsPath(0);
+                await saveLyrics(0);
+
+                // 只有在有翻译路径时才保存翻译
+                if (translationPath) {
+                    await updateLyricsPath(1);
+                    await saveLyrics(1);
+                }
+
+                alert('全部保存成功！');
+            } catch (err) {
+                alert('保存过程中出现错误：' + err.message);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 保存全部';
+            }
+        }
+
+        function updateLyricsPath(index) {
+            return new Promise((resolve, reject) => {
+                const pathInput = index === 0 ?
+                    document.getElementById('lyricsPath') :
+                    document.getElementById('translationPath')
+                const newPath = pathInput.value
+
+                fetch('/update_file_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonFile: currentJsonFile,
+                        fileType: 'lyrics',
+                        newPath: newPath,
+                        index: index,
+                        clear: !newPath
+                    })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            resolve()
+                        } else {
+                            reject(new Error('路径更新失败'))
+                        }
+                    })
+                    .catch(error => reject(error))
+            })
+        }
+
+        function closeLyricsModal() {
+            document.getElementById('lyricsModal').style.display = 'none'
+            location.reload()
+        }
+
+        function editMusicPath(path, jsonFile) {
+            currentMusicPath = path
+            currentMusicJsonFile = jsonFile
+            const modal = document.getElementById('musicPathModal')
+            const currentPathInput = document.getElementById('musicPath')
+            const newPathInput = document.getElementById('newMusicPath')
+
+            // 显示当前路径（去掉前缀）
+            currentPathInput.value = stripSongsPrefix(path)
+            newPathInput.value = currentPathInput.value
+
+            modal.style.display = 'block'
+        }
+
+        function updateMusicPath() {
+            const newPath = document.getElementById('newMusicPath').value.trim()
+
+            if (!newPath) {
+                alert('请输入新的文件路径！')
+                return
+            }
+
+            fetch('/update_file_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonFile: currentMusicJsonFile,
+                    fileType: 'music',
+                    newPath: newPath
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeMusicPathModal()
+                        location.reload()
+                    } else {
+                        alert('更新失败：' + data.message)
+                    }
+                })
+                .catch(error => {
+                    alert('更新失败：' + error)
+                })
+        }
+
+        function closeMusicPathModal() {
+            document.getElementById('musicPathModal').style.display = 'none'
+        }
+
+        function editImagePath(path, jsonFile) {
+            currentImagePath = path
+            currentImageJsonFile = jsonFile
+            const modal = document.getElementById('imagePathModal')
+            const currentPathInput = document.getElementById('imagePath')
+            const newPathInput = document.getElementById('newImagePath')
+            const backgroundPathInput = document.getElementById('backgroundPath')
+            const newBackgroundPathInput = document.getElementById('newBackgroundPath')
+
+            // 显示当前路径（去掉前缀）
+            currentPathInput.value = stripSongsPrefix(path)
+            newPathInput.value = currentPathInput.value
+            
+            // 获取当前背景图片路径
+            fetch('/get_json_data?filename=' + encodeURIComponent(jsonFile))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const backgroundPath = data.jsonData.meta['Background-image'] || ''
+                        backgroundPathInput.value = backgroundPath
+                        const editableBackgroundPath = backgroundPath === '!' ? '' : stripSongsPrefix(backgroundPath)
+                        newBackgroundPathInput.value = editableBackgroundPath
+                    }
+                })
+
+            modal.style.display = 'block'
+        }
+
+        function updateImagePath() {
+            const newPath = document.getElementById('newImagePath').value.trim()
+
+            if (!newPath) {
+                alert('请输入新的文件路径！')
+                return
+            }
+
+            // 检查文件扩展名
+            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
+            if (!hasValidExtension) {
+                alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                return
+            }
+
+            fetch('/update_file_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonFile: currentImageJsonFile,
+                    fileType: 'image',
+                    newPath: newPath
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeImagePathModal()
+                        location.reload()
+                    } else {
+                        alert('更新失败：' + data.message)
+                    }
+                })
+                .catch(error => {
+                    alert('更新失败：' + error)
+                })
+        }
+
+        function updateBackgroundPath() {
+            const rawPath = document.getElementById('newBackgroundPath').value.trim()
+            const newPath = rawPath === '!' ? '' : stripSongsPrefix(rawPath)
+
+            if (newPath) {
+                // 检查文件扩展名
+                const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+                const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
+                if (!hasValidExtension) {
+                    alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                    return
+                }
+            }
+
+            fetch('/update_file_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonFile: currentImageJsonFile,
+                    fileType: 'background',
+                    newPath: newPath
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeImagePathModal()
+                        location.reload()
+                    } else {
+                        alert('更新失败：' + data.message)
+                    }
+                })
+                .catch(error => {
+                    alert('更新失败：' + error)
+                })
+        }
+
+        function closeImagePathModal() {
+            document.getElementById('imagePathModal').style.display = 'none'
+        }
+        
+        function convertTTML() {
+            const lyricsPath = document.getElementById('lyricsPath').value.trim();
+            if (!lyricsPath || !lyricsPath.toLowerCase().endsWith('.ttml')) {
+                alert('请先在"歌词文件路径"输入框中填写TTML文件名（如 xxx.ttml）');
+                return;
+            }
+
+            fetch('/convert_ttml_by_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: lyricsPath })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const lyricsEditor = document.getElementById('lyricsEditor');
+                if (data.status === 'success') {
+                    document.getElementById('lyricsPath').value = stripSongsPrefix(data.lyricPath);
+                    if (data.transPath) {
+                        document.getElementById('translationPath').value = stripSongsPrefix(data.transPath);
+                    }
+                    // 自动获取并应用歌词内容
+                    fetch('/get_lyrics', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: data.lyricPath })
+                    })
+                    .then(response => response.json())
+                    .then(lyricsData => {
+                        if (lyricsData.status === 'success') {
+                            lyricsEditor.value = lyricsData.content;
+                        }
+                    });
+                    // 自动获取并应用翻译内容
+                    if (data.transPath) {
+                        fetch('/get_lyrics', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: data.transPath })
+                        })
+                        .then(response => response.json())
+                        .then(transData => {
+                            if (transData.status === 'success') {
+                                document.getElementById('translationEditor').value = transData.content;
+                            }
+                        });
+                    }
+                    alert('TTML自动转换成功！需要点击"保存全部"应用，若转换出错 请直接点击关闭!');
+                } else {
+                    alert('自动转换失败：' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('自动转换失败：' + error);
+            });
+        }
+
+        function convertToTTML() {
+            const lyricsPath = document.getElementById('lyricsPath').value.trim();
+            if (!lyricsPath) {
+                alert('请先在"歌词文件路径"输入框中填写文件名');
+                return;
+            }
+
+            // 检查文件扩展名
+            const fileExt = lyricsPath.toLowerCase().substring(lyricsPath.lastIndexOf('.'));
+            if (fileExt !== '.lys' && fileExt !== '.lrc') {
+                alert('只支持LYS和LRC格式的歌词文件');
+                return;
+            }
+
+            fetch('/convert_to_ttml', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: lyricsPath })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 更新歌词路径为TTML文件
+                    document.getElementById('lyricsPath').value = stripSongsPrefix(data.ttmlPath);
+
+                    // 自动获取并应用转换后的TTML内容
+                    fetch('/get_lyrics', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: data.ttmlPath })
+                    })
+                    .then(response => response.json())
+                    .then(lyricsData => {
+                        if (lyricsData.status === 'success') {
+                            document.getElementById('lyricsEditor').value = lyricsData.content;
+                        }
+                    });
+
+                    alert('LYS/LRC转TTML转换成功！需要点击"保存全部"应用，若转换出错请直接点击关闭!');
+                } else {
+                    alert('转换失败：' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('转换失败：' + error);
+            });
+        }
+
+        function showCreateModal() {
+            document.getElementById('createJsonModal').style.display = 'block'
+            document.getElementById('songTitle').value = ''
+            document.getElementById('songArtists').value = ''
+        }
+
+        function closeCreateModal() {
+            document.getElementById('createJsonModal').style.display = 'none'
+        }
+
+        function createJsonFile() {
+            const title = document.getElementById('songTitle').value.trim()
+            const artistsInput = document.getElementById('songArtists').value.trim()
+
+            if (!title || !artistsInput) {
+                alert('请填写歌曲名和歌手名！')
+                return
+            }
+
+            const artists = artistsInput.split(',').map(artist => artist.trim()).filter(artist => artist)
+
+            if (artists.length === 0) {
+                alert('请至少输入一位歌手！')
+                return
+            }
+
+            // 清理文件名，移除不允许的特殊字符，替换全角引号
+            const cleanTitle = title.replace(/[\\/:*<>|]/g, '').replace(/[\"\']/g, '＂')
+            const cleanArtists = artists.map(artist => artist.replace(/[\\/:*<>|]/g, '').replace(/[\"\']/g, '＂'))
+            // 构建文件名
+            const fileName = `${cleanTitle} - ${cleanArtists.join(' _ ')}.json`
+
+            // 构建JSON数据
+            const jsonData = {
+                serial: 123456,
+                meta: {
+                    title: title,
+                    artists: artists,
+                    albumImgSrc: `${RESOURCE_CONFIG.songs.base}专辑图.jpg`,
+                    duration_ms: 0,
+                    lyrics: `::${RESOURCE_CONFIG.songs.base}歌词.lys::!::!::`
+                },
+                song: `${RESOURCE_CONFIG.songs.base}音乐.mp3`
+            }
+
+            // 发送创建请求
+            fetch('/create_json', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: fileName,
+                    content: jsonData
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeCreateModal()
+                        location.reload()
+                    } else {
+                        alert('创建失败：' + data.message)
+                    }
+                })
+                .catch(error => {
+                    alert('创建失败：' + error)
+                })
+        }
+
+        function showRenameModal(filename, title, artists) {
+            currentRenameFile = filename
+            const modal = document.getElementById('renameModal')
+            const titleInput = document.getElementById('renameSongTitle')
+            const artistsInput = document.getElementById('renameSongArtists')
+
+            // 清理文件名，替换全角引号
+            const cleanTitle = title.replace(/[\"\']/g, '＂')
+            const cleanArtists = artists.split(',').map(artist => artist.trim().replace(/[\"\']/g, '＂')).join(',')
+            titleInput.value = cleanTitle
+            artistsInput.value = cleanArtists
+
+            modal.style.display = 'block'
+        }
+
+        function closeRenameModal() {
+            document.getElementById('renameModal').style.display = 'none'
+        }
+
+        function renameJsonFile() {
+            const title = document.getElementById('renameSongTitle').value.trim()
+            const artistsInput = document.getElementById('renameSongArtists').value.trim()
+
+            if (!title || !artistsInput) {
+                alert('请填写歌曲名和歌手名！')
+                return
+            }
+
+            const artists = artistsInput.split(',').map(artist => artist.trim()).filter(artist => artist)
+
+            if (artists.length === 0) {
+                alert('请至少输入一位歌手！')
+                return
+            }
+
+            // 构建新文件名
+            const newFileName = `${title} - ${artists.join(' _ ')}.json`
+
+            fetch('/rename_json', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    oldFilename: currentRenameFile,
+                    newFilename: newFileName,
+                    title: title,
+                    artists: artists
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        closeRenameModal()
+                        location.reload()
+                    } else {
+                        alert('重命名失败：' + data.message)
+                    }
+                })
+                .catch(error => {
+                    alert('重命名失败：' + error)
+                })
+        }
+
+        // 主题切换功能
+        function toggleDarkMode() {
+            document.body.classList.toggle('dark-mode')
+            const isDark = document.body.classList.contains('dark-mode')
+            localStorage.setItem('darkMode', isDark)
+            document.getElementById('themeToggle').textContent = isDark ? '🌞 浅色模式' : '🌒 深色模式'
+        }
+
+        // 初始化主题
+        function initTheme() {
+            const savedDarkMode = localStorage.getItem('darkMode') === 'true'
+            if (savedDarkMode) {
+                document.body.classList.add('dark-mode')
+                document.getElementById('themeToggle').textContent = '🌞 浅色模式'
+            }
+        }
+        initTheme()
+
+        function handleMusicUpload() {
+            const fileInput = document.getElementById('musicUpload')
+            const file = fileInput.files[0]
+
+            if (!file) return
+
+            // 允许所有音频视频格式
+            if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+                alert('请上传音频或视频文件')
+                return
+            }
+
+            // 清理文件名（替换特殊字符）
+            const cleanFileName = file.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5\-_.]/g, '')
+
+            const formData = new FormData()
+            formData.append('file', file, cleanFileName)
+
+            fetch('/upload_music', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('newMusicPath').value = cleanFileName
+                        updateMusicPath() // 自动触发保存
+                    } else {
+                        alert('上传失败: ' + data.message)
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error)
+                    alert('上传失败')
+                })
+        }
+
+        async function handleImageUpload(file, type) {
+            if (!file) return
+
+            const formData = new FormData()
+            formData.append('file', file)
+
+            try {
+                const response = await fetch('/upload_image', {
+                    method: 'POST',
+                    body: formData
+                })
+                const result = await response.json()
+
+                if (result.status === 'success') {
+                    if (type === 'album') {
+                        document.getElementById('newImagePath').value = result.filename
+                    } else if (type === 'background') {
+                        document.getElementById('newBackgroundPath').value = result.filename
+                    }
+                } else {
+                    alert('上传失败: ' + result.message)
+                }
+            } catch (error) {
+                alert('上传出错: ' + error.message)
+            }
+        }
+
+        function deleteJson(filename) {
+            if (confirm(`确定要删除 ${filename} 吗？此操作仅删除对应的 JSON 文件，其他关联文件将被保留。`)) {
+                fetch('/delete_json', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: filename })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert('删除成功')
+                            location.reload()
+                        } else {
+                            alert('删除失败: ' + data.message)
+                        }
+                    })
+            }
+        }
+
+        function handleLyricsUpload() {
+            const fileInput = document.getElementById('lyricsUpload')
+            const file = fileInput.files[0]
+            if (!file) return
+
+            const formData = new FormData()
+            formData.append('file', file)
+
+            fetch('/upload_lyrics', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('lyricsPath').value = data.filename
+                        updateLyricsPath(0)
+                        // 隐藏歌词相关按钮
+                        document.querySelector('.save-all-btn').style.display = 'none'
+                        document.querySelector('button[onclick="saveLyrics(0)"]').style.display = 'none'
+                        alert('歌词已上传成功，点击"关闭"后生效')
+                    } else {
+                        alert('上传失败: ' + data.message)
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error)
+                    alert('上传失败')
+                })
+        }
+
+        function handleTranslationUpload() {
+            const fileInput = document.getElementById('translationUpload')
+            const file = fileInput.files[0]
+            if (!file) return
+
+            const formData = new FormData()
+            formData.append('file', file)
+
+            fetch('/upload_translation', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        document.getElementById('translationPath').value = data.filename
+                        updateLyricsPath(1)
+                        // 隐藏翻译相关按钮
+                        document.querySelector('.save-all-btn').style.display = 'none'
+                        document.querySelector('button[onclick="saveLyrics(1)"]').style.display = 'none'
+                        alert('歌词已上传成功，点击"关闭"后生效')
+                    } else {
+                        alert('上传失败: ' + data.message)
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error)
+                    alert('上传失败')
+                })
+        }
+
+        async function showBackupVersions(filename) {
+            currentRestoreFile = filename
+            const modal = document.getElementById('backupModal')
+            const backupList = document.getElementById('backupList')
+            backupList.innerHTML = '<div class="loading">加载中...</div>'
+
+            try {
+                const response = await fetch('/get_backups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: normalizeStaticUrl(filename) })
+                })
+                const data = await response.json()
+
+                backupList.innerHTML = ''
+                if (data.backups && data.backups.length > 0) {
+                    data.backups.forEach(backup => {
+                        const btn = document.createElement('button')
+                        btn.className = 'action-button'
+                        btn.style.margin = '5px'
+                        btn.innerHTML = `
+                            ${backup.time}
+                            <div style="font-size:0.8em; color:#666;">${backup.path.split('/').pop()}</div>
+                        `
+                        btn.onclick = () => restoreToVersion(backup.path)
+                        backupList.appendChild(btn)
+                    })
+                } else {
+                    backupList.innerHTML = '<div>暂无历史版本</div>'
+                }
+                modal.style.display = 'block'
+            } catch (error) {
+                alert('获取备份失败: ' + error)
+            }
+        }
+
+        function closeBackupModal() {
+            document.getElementById('backupModal').style.display = 'none'
+        }
+
+        async function quickRestore(filename) {
+            if (confirm(`确定要恢复到最新备份版本吗？`)) {
+                try {
+                    const response = await fetch('/restore_file', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ file_path: normalizeStaticUrl(filename) })
+                    })
+                    const result = await response.json()
+                    if (result.status === 'success') {
+                        alert('恢复成功！')
+                        location.reload()
+                    }
+                } catch (error) {
+                    alert('恢复失败: ' + error)
+                }
+            }
+        }
+
+        async function restoreToVersion(backupPath) {
+            if (confirm(`确定要恢复到该版本吗？\n${backupPath}`)) {
+                try {
+                    const response = await fetch('/restore_file', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ file_path: backupPath })
+                    })
+                    const result = await response.json()
+                    if (result.status === 'success') {
+                        alert('恢复成功！')
+                        location.reload()
+                    }
+                } catch (error) {
+                    alert('恢复失败: ' + error)
+                }
+            }
+        }
+
+        function checkFileExtension() {
+            const lyricsPath = document.getElementById('lyricsPath').value;
+            const mergeLQEButton = document.getElementById('mergeLQEButton');
+            if (lyricsPath && !lyricsPath.toLowerCase().endsWith('.ttml')) {
+                mergeLQEButton.style.display = 'inline-block';
+            } else {
+                mergeLQEButton.style.display = 'none';
+            }
+        }
+
+        function mergeToLQE() {
+            const lyricsPath = document.getElementById('lyricsPath').value;
+            const translationPath = document.getElementById('translationPath').value;
+            
+            if (!lyricsPath || !translationPath) {
+                alert('请确保歌词和翻译文件路径都已设置！');
+                return;
+            }
+
+            fetch('/merge_to_lqe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    lyricsPath: lyricsPath,
+                    translationPath: translationPath
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 自动下载为.lqe文件
+                    const blob = new Blob([data.content], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    // 文件名可根据歌词文件名自动生成
+                    let baseName = lyricsPath.replace(/\.[^/.]+$/, '');
+                    a.download = baseName + '.lqe';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    alert('LQE文件已导出！');
+                } else {
+                    alert('合并失败：' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('合并失败：' + error);
+            });
+        }
+
+        // 在更新路径时检查文件扩展名
+        const originalUpdateLyricsPath = updateLyricsPath;
+        updateLyricsPath = function(index) {
+            originalUpdateLyricsPath(index);
+            setTimeout(checkFileExtension, 100); // 延迟检查以确保路径已更新
+        };
+
+        // 页面加载时检查一次
+        window.addEventListener('DOMContentLoaded', function() {
+            checkFileExtension();
+        });
+        // 歌词路径输入变化时检查
+        document.getElementById('lyricsPath').addEventListener('input', checkFileExtension);
+
+        function detectLyricsExtension(content = '') {
+            const text = (content || '').trim();
+            if (!text) {
+                return '';
+            }
+            if (/<tt\b|<\/tt>/i.test(text)) {
+                return '.ttml';
+            }
+            if (/\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/.test(text)) {
+                return '.lrc';
+            }
+            if (/\[\d+\s*,\s*\d+\]/.test(text)) {
+                return '.qrc';
+            }
+            if (/\[\d+\]/.test(text)) {
+                return '.lys';
+            }
+            return '';
+        }
+
+        function setCurrentFileNameAsLyrics() {
+            const currentFileName = document.getElementById('currentFileName').textContent;
+            const lyricsPathInput = document.getElementById('lyricsPath');
+            const lyricsContent = document.getElementById('lyricsEditor').value;
+
+            const existingExtension = (lyricsPathInput.value.match(/\.[^.]+$/) || [])[0] || '';
+            let extension = detectLyricsExtension(lyricsContent) || existingExtension || '.lys';
+
+            if (!extension.startsWith('.')) {
+                extension = `.${extension}`;
+            }
+
+            lyricsPathInput.value = currentFileName + extension;
+            checkFileExtension();
+        }
+
+        function setCurrentFileNameAsTranslation() {
+            const currentFileName = document.getElementById('currentFileName').textContent;
+            const translationPathInput = document.getElementById('translationPath');
+            const translationContent = document.getElementById('translationEditor').value;
+
+            let extension = detectLyricsExtension(translationContent) || '.lrc';
+            if (extension === '.lys') {
+                // 翻译默认使用逐行格式
+                extension = '.lrc';
+            }
+            if (!extension.startsWith('.')) {
+                extension = `.${extension}`;
+            }
+
+            translationPathInput.value = currentFileName + extension;
+        }
+
+        function copyFileName(button) {
+            const fileName = button.parentElement.textContent.replace('📋', '').trim();
+            navigator.clipboard.writeText(fileName).then(() => {
+                const originalText = button.textContent;
+                button.textContent = '✓';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 1000);
+            });
+        }
+
+        function copyCurrentFileName() {
+            const fileName = document.getElementById('currentFileName').textContent;
+            const button = document.querySelector('h2 .copy-btn');
+            navigator.clipboard.writeText(fileName).then(() => {
+                const originalText = button.textContent;
+                button.textContent = '✓';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 1000);
+            });
+        }
+
+        async function extractTimestamps() {
+            const lyricsPath = document.getElementById('lyricsPath').value;
+            const lyricsContent = document.getElementById('lyricsEditor').value;
+
+            console.log('开始提取时间戳...');
+            console.log('歌词路径:', lyricsPath);
+            console.log('歌词内容长度:', lyricsContent.length);
+
+            const allowedExtensions = ['.lys', '.qrc', '.lrc'];
+            const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+            const detectedExtension = detectLyricsExtension(lyricsContent);
+            const resolvedExtension = allowedExtensions.includes(pathExtension)
+                ? pathExtension
+                : (allowedExtensions.includes(detectedExtension) ? detectedExtension : '');
+
+            if (!resolvedExtension) {
+                console.error('文件格式错误：不支持的歌词格式');
+                alert('请先选择 LYS/QRC/LRC 格式的歌词文件！');
+                return;
+            }
+
+            try {
+                console.log('正在发送请求到服务器...');
+                const response = await fetch('/extract_timestamps', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: lyricsContent
+                    })
+                });
+                
+                console.log('服务器响应状态:', response.status);
+                const data = await response.json();
+                console.log('服务器返回数据:', data);
+                
+                if (data.status === 'success') {
+                    console.log('成功获取时间戳，数量:', data.timestamps.length);
+                    // 将时间戳写入翻译编辑器
+                    document.getElementById('translationEditor').value = data.timestamps.join('\n');
+                    console.log('时间戳已写入翻译编辑器');
+                } else {
+                    console.error('提取时间戳失败:', data.message);
+                    alert('提取时间戳失败：' + data.message);
+                }
+            } catch (error) {
+                console.error('提取时间戳时出错：', error);
+                console.error('错误详情:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                alert('提取时间戳时出错，请查看控制台获取详细信息。');
+            }
+        }
+
+        async function extractLyrics() {
+            const lyricsContent = document.getElementById('lyricsEditor').value;
+            
+            try {
+                const response = await fetch('/extract_lyrics', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: lyricsContent
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    // 将提取的歌词复制到剪贴板
+                    await navigator.clipboard.writeText(data.content);
+                    alert('已成功提取歌词并复制到剪贴板！');
+                } else {
+                    alert('提取歌词失败：' + data.message);
+                }
+            } catch (error) {
+                console.error('提取歌词时出错：', error);
+                alert('提取歌词时出错，请查看控制台获取详细信息。');
+            }
+        }
+
+        function updateTranslationStatus(message, type = 'info', suspectLines = []) {
+            const statusEl = document.getElementById('translationStatusMessage');
+            if (!statusEl) {
+                return;
+            }
+
+            statusEl.style.display = 'none';
+            statusEl.className = 'status-message';
+            statusEl.classList.remove('translation-in-progress');
+            statusEl.innerHTML = '';
+
+            if (!message) {
+                return;
+            }
+
+            statusEl.classList.add(`status-${type}`);
+            const isProgressMessage = typeof message === 'object' && message !== null && Array.isArray(message.stages);
+            const appendSuspectLines = () => {
+                if (type !== 'error' || !Array.isArray(suspectLines) || suspectLines.length === 0) {
+                    return;
+                }
+
+                const reminder = document.createElement('div');
+                reminder.textContent = '需要检查的行：';
+                reminder.style.marginTop = '6px';
+                statusEl.appendChild(reminder);
+
+                const list = document.createElement('ul');
+                list.className = 'status-message__list';
+                suspectLines.slice(0, 5).forEach(item => {
+                    const li = document.createElement('li');
+                    li.textContent = `第${item.line_number}行：${item.line_content}`;
+                    list.appendChild(li);
+                });
+                statusEl.appendChild(list);
+
+                if (suspectLines.length > 5) {
+                    const extra = document.createElement('div');
+                    extra.textContent = `还有 ${suspectLines.length - 5} 行可能存在问题，请继续检查歌词。`;
+                    extra.style.marginTop = '4px';
+                    statusEl.appendChild(extra);
+                }
+            };
+
+            if (isProgressMessage) {
+                const stages = Array.isArray(message.stages) ? message.stages : [];
+                const activeStage = stages.find(stage => stage && stage.state === 'active');
+                const summaryText = typeof message.summary === 'string' && message.summary.trim().length > 0
+                    ? message.summary.trim()
+                    : (activeStage && activeStage.label ? activeStage.label : (type === 'info' ? '正在翻译 · 请求思考阶段' : '翻译进度'));
+                const useShine = type === 'info' && message.useShine !== false;
+
+                if (useShine && summaryText) {
+                    statusEl.classList.add('translation-in-progress');
+                    const shineLink = document.createElement('a');
+                    shineLink.href = '#';
+                    shineLink.className = 'btn-shine';
+                    shineLink.textContent = summaryText;
+                    statusEl.appendChild(shineLink);
+                } else if (summaryText) {
+                    const summaryBlock = document.createElement('div');
+                    summaryBlock.className = 'status-message__summary';
+                    summaryBlock.textContent = summaryText;
+                    statusEl.appendChild(summaryBlock);
+                }
+
+                if (stages.length > 0) {
+                    const list = document.createElement('ul');
+                    list.className = 'status-progress';
+                    stages.forEach(stage => {
+                        if (!stage) {
+                            return;
+                        }
+                        const li = document.createElement('li');
+                        const stateClass = stage.state ? `status-progress__item--${stage.state}` : 'status-progress__item--pending';
+                        li.className = `status-progress__item ${stateClass}`;
+
+                        const label = document.createElement('span');
+                        label.className = 'status-progress__label';
+                        label.textContent = stage.label || stage.key || '';
+                        li.appendChild(label);
+
+                        if (stage.description) {
+                            const desc = document.createElement('div');
+                            desc.className = 'status-progress__desc';
+                            desc.textContent = stage.description;
+                            li.appendChild(desc);
+                        }
+
+                        list.appendChild(li);
+                    });
+                    statusEl.appendChild(list);
+                }
+
+                if (message.details && Array.isArray(message.details)) {
+                    message.details.forEach(detail => {
+                        const detailBlock = document.createElement('div');
+                        detailBlock.textContent = detail;
+                        statusEl.appendChild(detailBlock);
+                    });
+                }
+
+                appendSuspectLines();
+            } else {
+                const isTranslating = type === 'info' && typeof message === 'string' && message.includes('正在翻译');
+
+                if (isTranslating) {
+                    statusEl.classList.add('translation-in-progress');
+                    const shineLink = document.createElement('a');
+                    shineLink.href = '#';
+                    shineLink.className = 'btn-shine';
+                    shineLink.textContent = '正在翻译 · 请求思考阶段';
+                    statusEl.appendChild(shineLink);
+                } else {
+                    const messageBlock = document.createElement('div');
+                    messageBlock.textContent = message;
+                    statusEl.appendChild(messageBlock);
+                }
+
+                appendSuspectLines();
+            }
+
+            statusEl.style.display = 'block';
+        }
+
+        function highlightSuspectLinesInEditor(suspectLines = []) {
+            const editor = document.getElementById('lyricsEditor');
+            if (!editor) {
+                return;
+            }
+
+            if (!Array.isArray(suspectLines) || suspectLines.length === 0) {
+                editor.classList.remove('error-highlight');
+                return;
+            }
+
+            editor.classList.add('error-highlight');
+            const targetLine = suspectLines[0]?.line_number;
+            if (!targetLine || targetLine < 1) {
+                return;
+            }
+
+            const lines = editor.value.split('\n');
+            if (targetLine > lines.length) {
+                return;
+            }
+
+            let start = 0;
+            for (let i = 0; i < targetLine - 1; i++) {
+                start += lines[i].length + 1;
+            }
+            const end = start + lines[targetLine - 1].length;
+
+            editor.focus();
+            if (typeof editor.setSelectionRange === 'function') {
+                editor.setSelectionRange(start, end);
+            }
+
+            const approxLineHeight = editor.scrollHeight / Math.max(lines.length, 1);
+            editor.scrollTop = Math.max(0, approxLineHeight * (targetLine - 3));
+        }
+
+        async function translateLyrics() {
+            const translateBtn = document.querySelector('button[onclick="translateLyrics()"]');
+            const originalBtnText = translateBtn.textContent;
+            highlightSuspectLinesInEditor([]);
+            updateTranslationStatus('');
+
+            const translationStages = [
+                { key: 'lyricsPrep', label: '歌词预处理阶段', state: 'active', description: '检查歌词内容...' },
+                { key: 'thinkingRequest', label: '请求思考阶段', state: 'pending' },
+                { key: 'thinkingOutput', label: '输出思考阶段', state: 'pending' },
+                { key: 'translationRequest', label: '请求翻译阶段', state: 'pending' },
+                { key: 'translationOutput', label: '输出翻译阶段', state: 'pending' },
+                { key: 'postProcessing', label: '翻译处理阶段', state: 'pending' }
+            ];
+            const stageMap = new Map(translationStages.map(stage => [stage.key, stage]));
+            const getActiveStage = () => translationStages.find(stage => stage.state === 'active');
+            let stageDirty = false;
+
+            const markDirty = (changed) => {
+                if (changed) {
+                    stageDirty = true;
+                }
+                return changed;
+            };
+
+            const renderStages = (summary, statusType = 'info', options = {}) => {
+                const activeStage = getActiveStage();
+                let summaryText = summary;
+                if (!summaryText) {
+                    if (statusType === 'info' && activeStage) {
+                        summaryText = `正在翻译 · ${activeStage.label}`;
+                    } else if (activeStage) {
+                        summaryText = activeStage.label;
+                    } else if (statusType === 'success') {
+                        summaryText = '翻译完成';
+                    } else if (statusType === 'error') {
+                        const errorStage = translationStages.find(stage => stage.state === 'error');
+                        summaryText = errorStage ? `${errorStage.label}出现问题` : '翻译失败';
+                    } else {
+                        summaryText = '翻译状态';
+                    }
+                }
+
+                updateTranslationStatus({
+                    summary: summaryText,
+                    stages: translationStages.map(stage => ({
+                        key: stage.key,
+                        label: stage.label,
+                        state: stage.state,
+                        description: stage.description
+                    })),
+                    useShine: options.useShine !== undefined ? options.useShine : (statusType === 'info' && Boolean(activeStage))
+                }, statusType, options.suspectLines);
+
+                stageDirty = false;
+            };
+
+            const activateStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                if (stage.state === 'error') {
+                    if (description !== undefined && stage.description !== description) {
+                        stage.description = description;
+                        return true;
+                    }
+                    return false;
+                }
+
+                let changed = false;
+                translationStages.forEach(item => {
+                    if (item.key !== key && item.state === 'active') {
+                        item.state = 'success';
+                        changed = true;
+                    }
+                });
+                if (stage.state !== 'active') {
+                    stage.state = 'active';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const completeStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                let changed = false;
+                if (stage.state !== 'error' && stage.state !== 'success') {
+                    stage.state = 'success';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const failStage = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                let changed = false;
+                if (stage.state !== 'error') {
+                    stage.state = 'error';
+                    changed = true;
+                }
+                if (description !== undefined && stage.description !== description) {
+                    stage.description = description;
+                    changed = true;
+                }
+                return changed;
+            };
+
+            const updateStageDescription = (key, description) => {
+                const stage = stageMap.get(key);
+                if (!stage) {
+                    return false;
+                }
+                if (stage.description !== description) {
+                    stage.description = description;
+                    return true;
+                }
+                return false;
+            };
+
+            const getStageState = (key) => {
+                const stage = stageMap.get(key);
+                return stage ? stage.state : undefined;
+            };
+
+            const flushStages = (summary, statusType = 'info', options = {}) => {
+                const hasOptions = options && (Array.isArray(options.suspectLines) && options.suspectLines.length > 0 || options.useShine !== undefined);
+                if (!stageDirty && !summary && statusType === 'info' && !hasOptions) {
+                    return;
+                }
+                renderStages(summary, statusType, options || {});
+            };
+
+            renderStages('正在准备翻译 · 歌词预处理阶段');
+
+            try {
+                const lyricsContent = document.getElementById('lyricsEditor').value;
+                if (!lyricsContent) {
+                    markDirty(failStage('lyricsPrep', '歌词内容为空，无法继续'));
+                    flushStages('歌词内容为空，无法继续', 'error', { useShine: false });
+                    alert('请先输入歌词内容！');
+                    return;
+                }
+
+                const apiKey = localStorage.getItem('aiApiKey');
+                if (!apiKey) {
+                    markDirty(failStage('lyricsPrep', '缺少AI密钥，无法继续'));
+                    flushStages('缺少AI密钥，无法继续', 'error', { useShine: false });
+                    alert('请先在AI设置中设置API密钥！');
+                    return;
+                }
+
+                console.log('开始翻译过程...');
+                console.log('歌词内容长度:', lyricsContent.length);
+                const lyricLines = lyricsContent.split('\n').length;
+                console.log('歌词行数:', lyricLines);
+
+                translateBtn.textContent = '翻译中...';
+                translateBtn.disabled = true;
+
+                markDirty(completeStage('lyricsPrep', `已读取 ${lyricLines} 行歌词`));
+
+                const translationEditor = document.getElementById('translationEditor');
+                translationEditor.value = '';
+
+                console.log('发送翻译请求到服务器...');
+                const systemPrompt = localStorage.getItem('aiSystemPrompt');
+                const provider = localStorage.getItem('aiProvider') || 'deepseek';
+                const baseUrl = localStorage.getItem('aiBaseUrl') || 'https://api.deepseek.com';
+                const model = localStorage.getItem('aiModel') || 'deepseek-reasoner';
+                const expectReasoning = localStorage.getItem('aiExpectReasoning') === 'true';
+                const compatModeStorage = localStorage.getItem('aiCompatMode');
+                const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
+                const thinkingEnabledStorage = localStorage.getItem('aiThinkingEnabled');
+                const thinkingEnabled = thinkingEnabledStorage ? thinkingEnabledStorage === 'true' : true;
+                const thinkingApiKey = localStorage.getItem('aiThinkingApiKey') || '';
+                const thinkingProviderStored = localStorage.getItem('aiThinkingProvider');
+                const thinkingBaseUrlStored = localStorage.getItem('aiThinkingBaseUrl');
+                const thinkingModelStored = localStorage.getItem('aiThinkingModel');
+                const thinkingPrompt = localStorage.getItem('aiThinkingPrompt');
+                const stripBracketsStored = localStorage.getItem('aiStripBrackets');
+                const thinkingProvider = thinkingProviderStored && thinkingProviderStored.length > 0 ? thinkingProviderStored : provider;
+                const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
+                const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
+                const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
+
+                let thinkingRequestAcknowledged = !thinkingEnabled;
+                let thinkingOutputCompleted = !thinkingEnabled;
+                let translationRequestActivated = false;
+                let translationRequestAcknowledged = false;
+                let translationOutputActivated = false;
+                let postProcessingActivated = false;
+
+                if (thinkingEnabled) {
+                    markDirty(activateStage('thinkingRequest', `准备请求思考模型（${thinkingProvider}/${thinkingModel}）...`));
+                } else {
+                    markDirty(completeStage('thinkingRequest', '已跳过（思考功能关闭）'));
+                    markDirty(completeStage('thinkingOutput', '已跳过（思考功能关闭）'));
+                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                    thinkingOutputCompleted = true;
+                    translationRequestActivated = true;
+                }
+
+                flushStages();
+
+                const response = await fetch('/translate_lyrics', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        content: lyricsContent,
+                        api_key: apiKey,
+                        system_prompt: systemPrompt,
+                        provider: provider,
+                        base_url: baseUrl,
+                        model: model,
+                        expect_reasoning: expectReasoning,
+                        compat_mode: compatMode,
+                        thinking_enabled: thinkingEnabled,
+                        thinking_api_key: thinkingApiKey,
+                        thinking_provider: thinkingProvider,
+                        thinking_base_url: thinkingBaseUrl,
+                        thinking_model: thinkingModel,
+                        thinking_system_prompt: thinkingPrompt,
+                        strip_brackets: stripBrackets
+                    })
+                });
+
+                console.log('开始接收流式响应...');
+                const contentType = response.headers.get('Content-Type') || '';
+                if (!response.ok || contentType.includes('application/json')) {
+                    let errorData = {};
+                    try {
+                        errorData = await response.json();
+                    } catch (parseError) {
+                        console.error('解析错误响应失败:', parseError);
+                    }
+
+                    const errorMessage = errorData.message || `翻译失败（HTTP ${response.status}）`;
+                    const activeStage = getActiveStage();
+                    if (activeStage) {
+                        markDirty(failStage(activeStage.key, `失败：${errorMessage}`));
+                    } else {
+                        markDirty(failStage('translationRequest', `失败：${errorMessage}`));
+                    }
+                    flushStages(errorMessage, 'error', { useShine: false, suspectLines: errorData.suspectLines });
+                    highlightSuspectLinesInEditor(errorData.suspectLines || []);
+                    if (!errorData.suspectLines || errorData.suspectLines.length === 0) {
+                        alert(errorMessage);
+                    }
+                    return;
+                }
+
+                if (!response.body || !response.body.getReader) {
+                    markDirty(failStage('translationRequest', '当前浏览器不支持流式响应'));
+                    flushStages('当前浏览器不支持流式响应', 'error', { useShine: false });
+                    throw new Error('当前浏览器不支持流式响应。');
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let translationContent = '';
+                let reasoningContent = '';
+                let thinkingContent = '';
+                let buffer = '';
+                let translationHasTimestamps = true;
+                let translationReceived = false;
+
+                const translationEditorUpdater = () => {
+                    const sections = [];
+                    if (translationContent) {
+                        sections.push(translationContent);
+                    }
+                    if (thinkingContent) {
+                        sections.push('歌曲理解:\n' + thinkingContent);
+                    }
+                    if (reasoningContent) {
+                        sections.push('思考过程:\n' + reasoningContent);
+                    }
+                    translationEditor.value = sections.join('\n\n');
+                };
+
+                const processLine = (line) => {
+                    if (!line) {
+                        return;
+                    }
+
+                    if (line.startsWith('thinking:')) {
+                        if (!thinkingRequestAcknowledged && getStageState('thinkingRequest') === 'active') {
+                            markDirty(completeStage('thinkingRequest', '思考请求已响应'));
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
+                            thinkingRequestAcknowledged = true;
+                        } else if (getStageState('thinkingOutput') === 'pending') {
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
+                        }
+
+                        try {
+                            const content = JSON.parse(line.slice(9));
+                            if (content.summary) {
+                                thinkingContent = content.summary;
+                                translationEditorUpdater();
+                                if (!thinkingOutputCompleted) {
+                                    markDirty(completeStage('thinkingOutput', '思考内容已生成'));
+                                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                    thinkingOutputCompleted = true;
+                                    translationRequestActivated = true;
+                                }
+                            } else if (content.error) {
+                                thinkingContent = '思考模型调用失败：' + content.error;
+                                translationEditorUpdater();
+                                markDirty(failStage('thinkingOutput', '思考模型调用失败'));
+                                if (!translationRequestActivated) {
+                                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                    translationRequestActivated = true;
+                                }
+                                thinkingOutputCompleted = true;
+                            } else {
+                                translationEditorUpdater();
+                            }
+                        } catch (e) {
+                            console.error('解析思考内容时出错:', e);
+                        }
+
+                        flushStages();
+                        return;
+                    }
+
+                    if (line.startsWith('reasoning:')) {
+                        if (!thinkingRequestAcknowledged && getStageState('thinkingRequest') === 'active') {
+                            markDirty(completeStage('thinkingRequest', '思考请求已响应'));
+                            markDirty(activateStage('thinkingOutput', '正在生成思考内容...'));
+                            thinkingRequestAcknowledged = true;
+                        }
+                        try {
+                            const content = JSON.parse(line.slice(10));
+                            if (content.reasoning) {
+                                reasoningContent = content.reasoning;
+                                translationEditorUpdater();
+                                if (!thinkingOutputCompleted) {
+                                    markDirty(updateStageDescription('thinkingOutput', '正在整理思考过程...'));
+                                }
+                            }
+                        } catch (e) {
+                            console.error('解析思维链内容时出错:', e);
+                        }
+
+                        flushStages();
+                        return;
+                    }
+
+                    if (line.startsWith('content:')) {
+                        try {
+                            const content = JSON.parse(line.slice(8));
+                            if (Object.prototype.hasOwnProperty.call(content, 'hasTimestamps')) {
+                                translationHasTimestamps = content.hasTimestamps;
+                            }
+
+                            if (!translationRequestActivated) {
+                                markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                translationRequestActivated = true;
+                            }
+
+                            if (!translationRequestAcknowledged) {
+                                markDirty(completeStage('translationRequest', '翻译服务已响应'));
+                                translationRequestAcknowledged = true;
+                            }
+
+                            if (!translationOutputActivated) {
+                                markDirty(activateStage('translationOutput', '正在生成翻译文本...'));
+                                translationOutputActivated = true;
+                            }
+
+                            if (content.translations) {
+                                translationContent = content.translations.join('\n');
+                                translationReceived = true;
+                                translationEditorUpdater();
+                            }
+                        } catch (e) {
+                            console.error('解析翻译内容时出错:', e);
+                        }
+
+                        flushStages();
+                        return;
+                    }
+                };
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    buffer += chunk;
+
+                    let newlineIndex;
+                    while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.slice(0, newlineIndex);
+                        buffer = buffer.slice(newlineIndex + 1);
+                        processLine(line);
+                    }
+                }
+
+                const finalChunk = decoder.decode();
+                if (finalChunk) {
+                    buffer += finalChunk;
+                }
+                if (buffer) {
+                    const remainingLines = buffer.split('\n');
+                    for (const line of remainingLines) {
+                        processLine(line);
+                    }
+                }
+
+                markDirty(completeStage('translationRequest', '翻译流程已结束'));
+                markDirty(completeStage('translationOutput', translationReceived ? '翻译文本接收完毕' : '未接收到翻译文本'));
+                if (!postProcessingActivated) {
+                    markDirty(activateStage('postProcessing', '正在写入翻译内容...'));
+                    postProcessingActivated = true;
+                }
+                markDirty(completeStage('postProcessing', translationReceived ? '翻译内容已写入编辑器' : '翻译内容为空'));
+                flushStages();
+
+                const successMessage = (!translationHasTimestamps && translationReceived)
+                    ? '翻译完成（原始歌词无时间戳，已跳过时间戳添加）'
+                    : '翻译完成！';
+
+                flushStages(successMessage, 'success', { useShine: false });
+                highlightSuspectLinesInEditor([]);
+                console.log('翻译完成');
+
+            } catch (error) {
+                console.error('翻译出错：', error);
+                console.error('错误详情:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                const fallbackMessage = error && error.message ? error.message : '翻译过程中出现错误，请检查控制台日志。';
+                const activeStage = getActiveStage();
+                if (activeStage) {
+                    markDirty(failStage(activeStage.key, '翻译过程中出现错误'));
+                } else {
+                    markDirty(failStage('translationOutput', '翻译过程中出现错误'));
+                }
+                flushStages(`翻译失败：${fallbackMessage}`, 'error', { useShine: false });
+                highlightSuspectLinesInEditor([]);
+                alert('翻译过程中出现错误，请查看控制台获取详细信息。');
+            } finally {
+                translateBtn.textContent = originalBtnText;
+                translateBtn.disabled = false;
+            }
+        }
+
+        function showAISettings() {
+            // 从localStorage获取API密钥和提示词
+            const savedApiKey = localStorage.getItem('aiApiKey');
+            const savedSystemPrompt = localStorage.getItem('aiSystemPrompt');
+            const savedProvider = localStorage.getItem('aiProvider');
+            const savedBaseUrl = localStorage.getItem('aiBaseUrl');
+            const savedModel = localStorage.getItem('aiModel');
+            const savedExpectReasoning = localStorage.getItem('aiExpectReasoning');
+            const savedCompatMode = localStorage.getItem('aiCompatMode');
+            const savedThinkingEnabled = localStorage.getItem('aiThinkingEnabled');
+            const savedThinkingProvider = localStorage.getItem('aiThinkingProvider');
+            const savedThinkingBaseUrl = localStorage.getItem('aiThinkingBaseUrl');
+            const savedThinkingModel = localStorage.getItem('aiThinkingModel');
+            const savedThinkingApiKey = localStorage.getItem('aiThinkingApiKey');
+            const savedThinkingPrompt = localStorage.getItem('aiThinkingPrompt');
+            const savedStripBrackets = localStorage.getItem('aiStripBrackets');
+
+            // 获取当前设置
+            fetch('/get_ai_settings')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // 优先使用localStorage中的API密钥和提示词
+                        document.getElementById('aiApiKey').value = savedApiKey || data.settings.api_key;
+                        document.getElementById('aiSystemPrompt').value = savedSystemPrompt || data.settings.system_prompt;
+                        document.getElementById('aiProvider').value = savedProvider || data.settings.provider || 'deepseek';
+                        document.getElementById('aiBaseUrl').value = savedBaseUrl || data.settings.base_url || 'https://api.deepseek.com';
+                        document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
+                        document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
+                        document.getElementById('aiCompatMode').checked = savedCompatMode ? savedCompatMode === 'true' : (data.settings.compat_mode !== undefined ? data.settings.compat_mode : false);
+                        const backendStripBrackets = data.settings.strip_brackets !== undefined ? !!data.settings.strip_brackets : false;
+                        document.getElementById('aiStripBrackets').checked = savedStripBrackets !== null ? savedStripBrackets === 'true' : backendStripBrackets;
+                        document.getElementById('aiThinkingEnabled').checked = savedThinkingEnabled ? savedThinkingEnabled === 'true' : (data.settings.thinking_enabled !== undefined ? data.settings.thinking_enabled : true);
+                        document.getElementById('aiThinkingProvider').value = savedThinkingProvider || data.settings.thinking_provider || data.settings.provider || 'deepseek';
+                        document.getElementById('aiThinkingBaseUrl').value = savedThinkingBaseUrl || data.settings.thinking_base_url || data.settings.base_url || '';
+                        document.getElementById('aiThinkingModel').value = savedThinkingModel || data.settings.thinking_model || data.settings.model || '';
+                        document.getElementById('aiThinkingApiKey').value = savedThinkingApiKey || data.settings.thinking_api_key || '';
+                        document.getElementById('aiThinkingPrompt').value = savedThinkingPrompt || data.settings.thinking_system_prompt || '';
+                        document.getElementById('aiSettingsModal').style.display = 'block';
+                        updateBaseUrlAndModel(); // 根据选择的提供商更新URL和模型
+                        updateThinkingBaseUrlAndModel();
+                    }
+                })
+                .catch(error => {
+                    console.error('获取AI设置失败：', error);
+                    alert('获取AI设置失败，请查看控制台获取详细信息。');
+                });
+        }
+
+        function closeAISettings() {
+            document.getElementById('aiSettingsModal').style.display = 'none';
+        }
+
+        const PROVIDER_PRESETS = {
+            'deepseek': {
+                baseUrl: 'https://api.deepseek.com',
+                model: 'deepseek-reasoner'
+            },
+            'openai': {
+                baseUrl: 'https://api.openai.com/v1',
+                model: 'gpt-4o-mini'
+            },
+            'openrouter': {
+                baseUrl: 'https://openrouter.ai/api/v1',
+                model: 'openai/gpt-4o-mini'
+            },
+            'together': {
+                baseUrl: 'https://api.together.xyz/v1',
+                model: 'mistralai/Mistral-7B-Instruct-v0.3'
+            },
+            'groq': {
+                baseUrl: 'https://api.groq.com/openai/v1',
+                model: 'llama-3.1-70b-versatile'
+            }
+        };
+
+        // 根据选择的提供商更新基础URL和模型
+        function applyProviderPreset(providerSelectId, baseInputId, modelInputId) {
+            const providerSelect = document.getElementById(providerSelectId);
+            const baseUrlInput = document.getElementById(baseInputId);
+            const modelInput = document.getElementById(modelInputId);
+
+            if (!providerSelect || !baseUrlInput || !modelInput) {
+                return;
+            }
+
+            const provider = providerSelect.value;
+            const preset = PROVIDER_PRESETS[provider];
+
+            if (provider === 'custom' || !preset) {
+                baseUrlInput.readOnly = false;
+                modelInput.readOnly = false;
+                return;
+            }
+
+            baseUrlInput.value = preset.baseUrl;
+            modelInput.value = preset.model;
+            baseUrlInput.readOnly = true;
+            modelInput.readOnly = true;
+        }
+
+        function updateBaseUrlAndModel() {
+            applyProviderPreset('aiProvider', 'aiBaseUrl', 'aiModel');
+        }
+
+        function updateThinkingBaseUrlAndModel() {
+            applyProviderPreset('aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel');
+        }
+
+        // 页面加载完成后添加事件监听器
+        document.addEventListener('DOMContentLoaded', function() {
+            const providerSelect = document.getElementById('aiProvider');
+            if (providerSelect) {
+                providerSelect.addEventListener('change', updateBaseUrlAndModel);
+            }
+            const thinkingProviderSelect = document.getElementById('aiThinkingProvider');
+            if (thinkingProviderSelect) {
+                thinkingProviderSelect.addEventListener('change', updateThinkingBaseUrlAndModel);
+            }
+        });
+
+        function sanitizeBaseUrl(value) {
+            if (!value) {
+                return '';
+            }
+            return value.trim().replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
+        }
+
+        function saveAISettings() {
+            const apiKey = document.getElementById('aiApiKey').value;
+            const systemPrompt = document.getElementById('aiSystemPrompt').value;
+            const hasSystemPrompt = systemPrompt && systemPrompt.trim().length > 0;
+            const provider = document.getElementById('aiProvider').value;
+
+            let baseUrl = sanitizeBaseUrl(document.getElementById('aiBaseUrl').value);
+            document.getElementById('aiBaseUrl').value = baseUrl;
+
+            const model = document.getElementById('aiModel').value;
+            const expectReasoning = document.getElementById('aiExpectReasoning').checked;
+            const compatMode = document.getElementById('aiCompatMode').checked;
+            const stripBrackets = document.getElementById('aiStripBrackets').checked;
+            const thinkingEnabled = document.getElementById('aiThinkingEnabled').checked;
+
+            const thinkingProvider = document.getElementById('aiThinkingProvider').value;
+            let thinkingBaseUrl = sanitizeBaseUrl(document.getElementById('aiThinkingBaseUrl').value);
+            document.getElementById('aiThinkingBaseUrl').value = thinkingBaseUrl;
+            const thinkingModel = document.getElementById('aiThinkingModel').value;
+            const thinkingApiKey = document.getElementById('aiThinkingApiKey').value;
+            const thinkingPrompt = document.getElementById('aiThinkingPrompt').value;
+            const hasThinkingPrompt = thinkingPrompt && thinkingPrompt.trim().length > 0;
+
+            // 保存设置到localStorage
+            if (apiKey) {
+                localStorage.setItem('aiApiKey', apiKey);
+            } else {
+                localStorage.removeItem('aiApiKey');
+            }
+
+            if (hasSystemPrompt) {
+                localStorage.setItem('aiSystemPrompt', systemPrompt);
+            } else {
+                localStorage.removeItem('aiSystemPrompt');
+            }
+
+            localStorage.setItem('aiProvider', provider);
+            localStorage.setItem('aiBaseUrl', baseUrl);
+            localStorage.setItem('aiModel', model);
+            localStorage.setItem('aiExpectReasoning', expectReasoning);
+            localStorage.setItem('aiCompatMode', compatMode);
+            localStorage.setItem('aiStripBrackets', stripBrackets);
+            localStorage.setItem('aiThinkingEnabled', thinkingEnabled);
+
+            if (thinkingApiKey) {
+                localStorage.setItem('aiThinkingApiKey', thinkingApiKey);
+            } else {
+                localStorage.removeItem('aiThinkingApiKey');
+            }
+
+            if (hasThinkingPrompt) {
+                localStorage.setItem('aiThinkingPrompt', thinkingPrompt);
+            } else {
+                localStorage.removeItem('aiThinkingPrompt');
+            }
+
+            localStorage.setItem('aiThinkingProvider', thinkingProvider);
+            if (thinkingBaseUrl) {
+                localStorage.setItem('aiThinkingBaseUrl', thinkingBaseUrl);
+            } else {
+                localStorage.removeItem('aiThinkingBaseUrl');
+            }
+            if (thinkingModel) {
+                localStorage.setItem('aiThinkingModel', thinkingModel);
+            } else {
+                localStorage.removeItem('aiThinkingModel');
+            }
+
+            fetch('/save_ai_settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    api_key: apiKey,
+                    system_prompt: systemPrompt,
+                    provider: provider,
+                    base_url: baseUrl,
+                    model: model,
+                    expect_reasoning: expectReasoning,
+                    compat_mode: compatMode,
+                    strip_brackets: stripBrackets,
+                    thinking_enabled: thinkingEnabled,
+                    thinking_api_key: thinkingApiKey,
+                    thinking_provider: thinkingProvider,
+                    thinking_base_url: thinkingBaseUrl,
+                    thinking_model: thinkingModel,
+                    thinking_system_prompt: thinkingPrompt
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const resolvedSystemPrompt = data.system_prompt || '';
+                    if (resolvedSystemPrompt.trim().length > 0) {
+                        localStorage.setItem('aiSystemPrompt', resolvedSystemPrompt);
+                        const systemPromptInput = document.getElementById('aiSystemPrompt');
+                        if (systemPromptInput) {
+                            systemPromptInput.value = resolvedSystemPrompt;
+                        }
+                    } else {
+                        localStorage.removeItem('aiSystemPrompt');
+                    }
+
+                    const resolvedThinkingPrompt = data.thinking_system_prompt || '';
+                    if (resolvedThinkingPrompt.trim().length > 0) {
+                        localStorage.setItem('aiThinkingPrompt', resolvedThinkingPrompt);
+                        const thinkingPromptInput = document.getElementById('aiThinkingPrompt');
+                        if (thinkingPromptInput) {
+                            thinkingPromptInput.value = resolvedThinkingPrompt;
+                        }
+                    } else {
+                        localStorage.removeItem('aiThinkingPrompt');
+                    }
+
+                    const resolvedStripBrackets = data.strip_brackets !== undefined ? !!data.strip_brackets : false;
+                    localStorage.setItem('aiStripBrackets', resolvedStripBrackets);
+                    const stripBracketsInput = document.getElementById('aiStripBrackets');
+                    if (stripBracketsInput) {
+                        stripBracketsInput.checked = resolvedStripBrackets;
+                    }
+
+                    alert('设置已保存！');
+                    closeAISettings();
+                } else {
+                    alert('保存设置失败：' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('保存AI设置失败：', error);
+                alert('保存AI设置失败，请查看控制台获取详细信息。');
+            });
+        }
+
+        // 测试AI连接
+        async function probeAIConnection(mode = 'translation', btn = null) {
+            const isThinking = mode === 'thinking';
+            const targetLabel = isThinking ? '思考模型' : '翻译模型';
+
+            const mainApiKeyInput = document.getElementById('aiApiKey');
+            const mainBaseUrlInput = document.getElementById('aiBaseUrl');
+            const thinkingApiKeyInput = document.getElementById('aiThinkingApiKey');
+            const thinkingBaseUrlInput = document.getElementById('aiThinkingBaseUrl');
+
+            let apiKeyInput = isThinking ? thinkingApiKeyInput : mainApiKeyInput;
+            let baseUrlInput = isThinking ? thinkingBaseUrlInput : mainBaseUrlInput;
+
+            let apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+            if (!apiKey && isThinking && mainApiKeyInput) {
+                apiKey = mainApiKeyInput.value.trim();
+            }
+
+            if (!apiKey) {
+                alert(`请先填写${targetLabel}的API密钥`);
+                return;
+            }
+
+            let baseUrl = baseUrlInput ? baseUrlInput.value.trim() : '';
+            if (!baseUrl && isThinking && mainBaseUrlInput) {
+                baseUrl = mainBaseUrlInput.value.trim();
+            }
+
+            if (!baseUrl) {
+                alert(`请先填写${targetLabel}的Base URL`);
+                return;
+            }
+
+            baseUrl = sanitizeBaseUrl(baseUrl);
+            if (baseUrlInput && baseUrlInput.value.trim() !== baseUrl) {
+                baseUrlInput.value = baseUrl;
+            }
+
+            const probeBtn = btn || document.querySelector(`button[data-probe="${isThinking ? 'thinking' : 'translation'}"]`);
+            const originalText = probeBtn ? probeBtn.textContent : '';
+            if (probeBtn) {
+                probeBtn.textContent = '测试中...';
+                probeBtn.disabled = true;
+            }
+
+            try {
+                const response = await fetch('/probe_ai', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        mode,
+                        api_key: apiKey,
+                        base_url: baseUrl
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    const models = data.models || [];
+                    const modelList = models.slice(0, 10).join('\n');
+                    const moreCount = Math.max(0, models.length - 10);
+                    const moreText = moreCount > 0 ? `\n...还有${moreCount}个模型` : '';
+                    alert(`${targetLabel}连接成功！\n可用模型（前10个）：\n${modelList || '（空）'}${moreText}`);
+                } else {
+                    alert(`${targetLabel}连接失败：${data.message}`);
+                }
+            } catch (error) {
+                console.error(`${targetLabel}测试连接失败：`, error);
+                alert(`${targetLabel}测试连接失败，请查看控制台获取详细信息。`);
+            } finally {
+                if (probeBtn) {
+                    probeBtn.textContent = originalText;
+                    probeBtn.disabled = false;
+                }
+            }
+        }
+
+        async function openLyricsAnimate(filename, style) {
+            const fallbackOpen = (extra = {}) => {
+                const params = new URLSearchParams({ file: filename, style });
+                Object.entries(extra).forEach(([key, value]) => {
+                    if (value) {
+                        params.set(key, value);
+                    }
+                });
+                window.open('/lyrics-animate?' + params.toString(), '_blank');
+            };
+
+            let openWithParams = fallbackOpen;
+
+            try {
+                // 1) 读取歌曲 JSON，拿到歌词路径
+                const res = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error('获取歌曲信息失败');
+
+                const meta = data.jsonData?.meta || {};
+
+                const resolveMediaForAnimate = (value) => {
+                    if (!value || value === '!') {
+                        return '';
+                    }
+                    try {
+                        const normalized = normalizeSongsUrl(value);
+                        if (normalized && normalized !== '!') {
+                            return normalized;
+                        }
+                    } catch (error) {
+                        console.warn('normalizeSongsUrl 解析失败，使用原值:', value, error);
+                    }
+                    return value;
+                };
+
+                const backgroundUrl = resolveMediaForAnimate(meta['Background-image']);
+                const coverCandidateSources = [
+                    meta.albumImgSrc,
+                    meta.cover,
+                    meta.coverUrl,
+                    data.jsonData?.cover,
+                    data.jsonData?.coverUrl
+                ];
+                let coverUrl = '';
+                for (const candidate of coverCandidateSources) {
+                    const resolved = resolveMediaForAnimate(candidate);
+                    if (resolved) {
+                        coverUrl = resolved;
+                        break;
+                    }
+                }
+
+                openWithParams = (extra = {}) => {
+                    const params = new URLSearchParams({ file: filename, style });
+                    if (backgroundUrl) {
+                        params.set('background', backgroundUrl);
+                    }
+                    if (coverUrl) {
+                        params.set('cover', coverUrl);
+                    }
+                    Object.entries(extra).forEach(([key, value]) => {
+                        if (value) {
+                            params.set(key, value);
+                        }
+                    });
+                    window.open('/lyrics-animate?' + params.toString(), '_blank');
+                };
+
+                // 兼容两种写法：单路径 或 "::歌词::翻译::罗马音::"
+                let rawLyricsPath = meta.lyrics || '';
+                let mainPath = '';
+                if (rawLyricsPath.includes('::')) {
+                    const parts = rawLyricsPath.split('::');
+                    mainPath = parts[1] || '';
+                } else {
+                    mainPath = rawLyricsPath;
+                }
+
+                // 兜底：没有主歌词路径，直接打开动画页（保持原行为）
+                if (!mainPath) {
+                    openWithParams();
+                    return;
+                }
+
+                // 2) 如果是 TTML，调用后端转换接口（不修改原 JSON，仅生成转换产物）
+                const isTTML = mainPath.toLowerCase().endsWith('.ttml');
+                if (isTTML) {
+                    // 取 /songs/ 下的相对路径传给后端：支持 http(s)://当前主机/songs/xxx 和 /songs/xxx 两种
+                    let relative = '';
+                    try {
+                        if (mainPath.startsWith('http://') || mainPath.startsWith('https://')) {
+                            const u = new URL(mainPath);
+                            relative = u.pathname.startsWith('/songs/') ? u.pathname.slice('/songs/'.length) : u.pathname.replace(/^\//, '');
+                        } else {
+                            relative = mainPath.replace(/^\/?songs\//i, '');
+                        }
+                        relative = decodeURIComponent(relative);
+                    } catch (e) {
+                        console.error('解析URL失败:', e);
+                        relative = mainPath.split('/').pop();
+                        relative = decodeURIComponent(relative);
+                    }
+
+                    console.log('TTML转换 - 文件名:', filename, '相对路径:', relative);
+
+                    const conv = await fetch('/convert_ttml_by_path', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ path: relative })
+                    }).then(r => r.json());
+
+                    if (conv.status === 'success' && conv.lyricPath) {
+                        const extraParams = { lys: conv.lyricPath };
+                        if (conv.transPath) {
+                            extraParams.lrc = conv.transPath;
+                        }
+                        openWithParams(extraParams);
+                        return;
+                    } else {
+                        console.error('TTML转换失败:', conv.message || '未知错误');
+                        alert('TTML 转换失败：' + (conv.message || '请检查文件格式'));
+                    }
+                } else {
+                    if (!mainPath.toLowerCase().endsWith('.lys')) {
+                        alert('警告：当前歌词文件不是 LYS 格式，可能无法正常显示动态效果！');
+                    }
+                }
+
+                // 4) 兜底：按老逻辑打开
+                openWithParams();
+
+            } catch (error) {
+                console.error('打开动画页失败：', error);
+                openWithParams();
+            }
+        }
+
+        function openAMLL() {
+            window.open('/lyrics-amll', '_blank');
+        }
+
+        // 端口切换相关
+        async function updatePortUI() {
+            try {
+                const res = await fetch('/get_port_status');
+                const data = await res.json();
+                console.log('[updatePortUI] 端口状态', data);
+                const backendPort = String(data.port);
+                const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && location.port === backendPort;
+                const portBtn = document.getElementById('portSwitchBtn');
+
+                // 检查是否为本地直连
+                let canSwitchPort = false;
+                try {
+                    const ipRes = await fetch('/get_my_ip');
+                    const ipData = await ipRes.json();
+                    if (ipData.remote_addr === '127.0.0.1' || ipData.remote_addr === '::1') {
+                        canSwitchPort = true;
+                    }
+                } catch (e) {}
+                if (!canSwitchPort) {
+                    portBtn.disabled = true;
+                    portBtn.style.background = '#e9ecef';
+                    portBtn.style.color = '#bbb';
+                    portBtn.style.cursor = 'not-allowed';
+                    portBtn.title = '仅本机可切换端口';
+                } else {
+                    portBtn.disabled = false;
+                    portBtn.style.background = '';
+                    portBtn.style.color = '';
+                    portBtn.style.cursor = '';
+                    portBtn.title = '';
+                }
+
+                // 歌词样式按钮
+                document.querySelectorAll('.am-style, .fs-style, .fslr-style').forEach(btn => {
+                    console.log('[updatePortUI] 处理按钮', btn, '当前mode:', data.mode, 'classList:', btn.classList.value);
+                    // 检查是否为 AMLL 规则编写按钮（通过 onclick 属性判断）
+                    const isAMLLButton = btn.getAttribute('onclick') && btn.getAttribute('onclick').includes("'amll'");
+
+                    if (data.mode === 'random') {
+                        // AMLL 规则编写按钮在随机端口下仍然可用
+                        if (isAMLLButton) {
+                            btn.disabled = false;
+                            btn.classList.remove('disabled-style');
+                            btn.title = '';
+                            //btn.textContent = 'AMLL规则编写';
+                        } else {
+                            btn.disabled = true;
+                            btn.classList.add('disabled-style');
+                            btn.title = '随机端口下不可用';
+                            btn.addEventListener('mouseenter', function() {
+                                btn.textContent = '不可用';
+                            });
+                            btn.addEventListener('mouseleave', function() {
+                                btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
+                            });
+                        }
+                    } else {
+                        btn.disabled = false;
+                        btn.classList.remove('disabled-style');
+                        btn.title = '';
+                        if (isAMLLButton) {
+                            //btn.textContent = 'AMLL规则编写';
+                        } else {
+                            btn.textContent = btn.classList.contains('am-style') ? 'AM歌词样式' : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式');
+                        }
+                    }
+                    // 变色后立即打印样式
+                    console.log('[updatePortUI] 变色后 style.background:', btn.style.background, 'computed:', getComputedStyle(btn).background);
+                });
+                if (data.mode === 'random') {
+                    portBtn.textContent = '恢复端口';
+                } else {
+                    portBtn.textContent = '随机端口';
+                }
+            } catch (e) {console.error('[updatePortUI] error', e);}
+        }
+        async function switchPortMode() {
+            const portBtn = document.getElementById('portSwitchBtn');
+            portBtn.disabled = true;
+            portBtn.textContent = '切换中...';
+            try {
+                const res = await fetch('/get_port_status');
+                const data = await res.json();
+                if (data.mode === 'random') {
+                    // 恢复
+                    const resp = await fetch('/restore_port', {method: 'POST'});
+                    const d = await resp.json();
+                    if (d.status === 'success') {
+                        setTimeout(() => {
+                            const target = `${window.location.protocol}//${window.location.hostname}:5000/`;
+                            window.location.href = target;
+                        }, 1200);
+                    }
+                } else {
+                    // 随机端口
+                    const resp = await fetch('/switch_port', {method: 'POST'});
+                    const d = await resp.json();
+                    if (d.status === 'success') {
+                        setTimeout(() => {
+                            const target = `${window.location.protocol}//${window.location.hostname}:${d.port}/`;
+                            window.location.href = target;
+                        }, 1200);
+                    }
+                }
+            } catch (e) {
+                alert('切换端口失败');
+            }
+        }
+        
+        // 页面加载时自动刷新端口UI和安全状态
+        window.addEventListener('DOMContentLoaded', function() {
+            updatePortUI();
+            updateSecurityUI();
+            updateAuthUI();
+        });
+
+        // 更新安全保护UI状态
+        async function updateSecurityUI() {
+            try {
+                const res = await fetch('/get_security_status');
+                const data = await res.json();
+                const securityBtn = document.getElementById('securityToggleBtn');
+                
+                if (data.security_enabled) {
+                    securityBtn.textContent = '🔒 安全保护';
+                    securityBtn.title = '安全保护已开启（点击关闭）';
+                    securityBtn.style.background = '#37b24d';
+                } else {
+                    securityBtn.textContent = '🔓 安全关闭';
+                    securityBtn.title = '安全保护已关闭（点击开启）';
+                    securityBtn.style.background = '#f03e3e';
+                }
+            } catch (e) {
+                console.error('获取安全状态失败:', e);
+            }
+        }
+
+        // 更新认证UI状态
+        async function updateAuthUI() {
+            try {
+                const res = await fetch('/auth/status');
+                const data = await res.json();
+                const authBtn = document.getElementById('authToggleBtn');
+                
+                if (data.status === 'success') {
+                    if (data.trusted) {
+                        authBtn.textContent = '🔓 已解锁';
+                        authBtn.title = '本设备已获得编辑权限';
+                        authBtn.style.background = '#37b24d';
+                    } else {
+                        authBtn.textContent = '🔑 解锁设备';
+                        authBtn.title = '点击解锁本设备编辑权限';
+                        authBtn.style.background = '';
+                    }
+                    
+                    // 更新安全保护按钮的提示信息
+                    const securityBtn = document.getElementById('securityToggleBtn');
+                    if (securityBtn.title) {
+                        if (data.trusted) {
+                            securityBtn.title += ' | 本设备已解锁';
+                        } else {
+                            securityBtn.title += ' | 本设备未解锁';
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('获取认证状态失败:', e);
+                const authBtn = document.getElementById('authToggleBtn');
+                authBtn.textContent = '🔑 解锁设备';
+                authBtn.title = '点击解锁本设备编辑权限';
+            }
+        }
+
+        // 打开认证模态框
+        async function toggleAuthModal() {
+            const modal = document.getElementById('authModal');
+            const authStatus = document.getElementById('authStatus');
+            const authForm = document.getElementById('authForm');
+            const authSuccess = document.getElementById('authSuccess');
+            const authLogoutBtn = document.getElementById('authLogoutBtn');
+            
+            // 重置模态框状态
+            authStatus.style.display = 'block';
+            authForm.style.display = 'none';
+            authSuccess.style.display = 'none';
+            authStatus.textContent = '正在检查设备状态...';
+            
+            modal.style.display = 'block';
+            
+            try {
+                const res = await fetch('/auth/status');
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    if (data.trusted) {
+                        // 设备已认证
+                        authStatus.style.display = 'none';
+                        authSuccess.style.display = 'block';
+                        authLogoutBtn.style.display = 'inline-block';
+                    } else {
+                        // 设备未认证
+                        authStatus.textContent = data.has_password ? 
+                            '请输入密码解锁本设备' : 
+                            '系统未设置密码，请联系管理员';
+                        authStatus.style.display = 'block';
+                        authForm.style.display = data.has_password ? 'block' : 'none';
+                        authLogoutBtn.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                authStatus.textContent = '检查状态失败，请重试';
+                console.error('检查认证状态失败:', e);
+            }
+        }
+
+        // 关闭认证模态框
+        function closeAuthModal() {
+            document.getElementById('authModal').style.display = 'none';
+        }
+
+        // 设备登录
+        async function authLogin() {
+            const password = document.getElementById('authPassword').value;
+            if (!password) {
+                alert('请输入密码');
+                return;
+            }
+            
+            const authStatus = document.getElementById('authStatus');
+            authStatus.textContent = '正在验证密码...';
+            
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: password })
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    // 认证成功
+                    document.getElementById('authStatus').style.display = 'none';
+                    document.getElementById('authForm').style.display = 'none';
+                    document.getElementById('authSuccess').style.display = 'block';
+                    document.getElementById('authLogoutBtn').style.display = 'inline-block';
+                    
+                    // 更新UI状态
+                    await updateAuthUI();
+                    await updateWriteButtons();
+                } else {
+                    authStatus.textContent = '密码错误，请重试';
+                    authStatus.style.color = '#f03e3e';
+                    setTimeout(() => {
+                        authStatus.style.color = '';
+                    }, 2000);
+                }
+            } catch (e) {
+                authStatus.textContent = '登录失败，请重试';
+                console.error('登录失败:', e);
+            }
+        }
+
+        // 设备登出
+        async function authLogout() {
+            try {
+                const res = await fetch('/auth/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    // 登出成功
+                    document.getElementById('authModal').style.display = 'none';
+                    
+                    // 更新UI状态
+                    await updateAuthUI();
+                    await updateWriteButtons();
+                    
+                    alert('设备已登出');
+                }
+            } catch (e) {
+                console.error('登出失败:', e);
+                alert('登出失败，请重试');
+            }
+        }
+
+        // 切换安全保护模式
+        async function toggleSecurityMode() {
+            if (!confirm('⚠️ 警告：关闭安全保护将允许外部网络访问！\n\n确定要切换安全保护模式吗？')) {
+                return;
+            }
+            
+            const securityBtn = document.getElementById('securityToggleBtn');
+            securityBtn.disabled = true;
+            securityBtn.textContent = '切换中...';
+            
+            try {
+                const response = await fetch('/toggle_security', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await response.json();
+                if (data.status === 'success') {
+                    await updateSecurityUI();
+                    alert(`安全保护已${data.security_enabled ? '开启' : '关闭'}`);
+                    location.reload(); // 重新加载页面以应用新的安全设置
+                } else {
+                    alert('切换失败: ' + data.message);
+                }
+            } catch (error) {
+                alert('切换安全模式失败: ' + error);
+            } finally {
+                securityBtn.disabled = false;
+                await updateSecurityUI();
+            }
+        }
+
+        async function updateWriteButtons() {
+            try {
+                const res = await fetch('/get_port_status');
+                const data = await res.json();
+                const backendPort = String(data.port);
+                const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && location.port === backendPort;
+                
+                // 检查安全配置和设备信任状态
+                const securityRes = await fetch('/get_security_status');
+                const securityData = await securityRes.json();
+                const securityEnabled = securityData.security_enabled;
+                
+                const authRes = await fetch('/auth/status');
+                const authData = await authRes.json();
+                const isTrusted = authData.status === 'success' && authData.trusted;
+                
+                // 如果安全保护启用且不是本地访问且设备不受信任，则禁用修改功能
+                if (securityEnabled && !isLocal && !isTrusted) {
+                    var selectors = [
+                        '.file-actions .action-button',
+                        '.style-buttons .style-button',
+                        '.save-btn',
+                        '.save-all-btn',
+                        '.path-update-btn',
+                        '.close-btn',
+                        '.lyrics-action-btn',
+                        '.editor-buttons button',
+                        '.copy-btn',
+                        '.modal-content button',
+                        '.modal-content input',
+                        '.modal-content textarea'
+                    ];
+                    selectors.forEach(function(sel){
+                        document.querySelectorAll(sel).forEach(function(btn){
+                            if(btn.textContent.match(/修改|保存|重命名|删除|上传|创建|关闭|合并|提取|AI|转换|恢复|导出|更新|路径|下载|翻译/)){
+                                btn.disabled = true;
+                                btn.style.pointerEvents = 'none';
+                                btn.style.opacity = 0.5;
+                            }
+                        });
+                    });
+                } else {
+                    // 恢复所有按钮状态
+                    var selectors = [
+                        '.file-actions .action-button',
+                        '.style-buttons .style-button',
+                        '.save-btn',
+                        '.save-all-btn',
+                        '.path-update-btn',
+                        '.close-btn',
+                        '.lyrics-action-btn',
+                        '.editor-buttons button',
+                        '.copy-btn',
+                        '.modal-content button',
+                        '.modal-content input',
+                        '.modal-content textarea'
+                    ];
+                    selectors.forEach(function(sel){
+                        document.querySelectorAll(sel).forEach(function(btn){
+                            btn.disabled = false;
+                            btn.style.pointerEvents = '';
+                            btn.style.opacity = '';
+                        });
+                    });
+                }
+            } catch (e) {}
+        }
+        
+        // 显示受信任设备列表
+        async function showTrustedDevices() {
+            try {
+                const res = await fetch('/auth/trusted');
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    if (data.devices.length === 0) {
+                        alert('暂无受信任设备');
+                        return;
+                    }
+                    
+                    let message = `受信任设备列表 (共 ${data.total} 个):\n\n`;
+                    data.devices.forEach(device => {
+                        message += `设备ID: ${device.device_id}\n`;
+                        message += `IP: ${device.ip}\n`;
+                        message += `创建时间: ${device.created_at}\n`;
+                        message += `最后访问: ${device.last_seen}\n`;
+                        message += `UA哈希: ${device.ua_hash}\n`;
+                        message += '─'.repeat(30) + '\n';
+                    });
+                    
+                    alert(message);
+                } else {
+                    alert('获取设备列表失败');
+                }
+            } catch (e) {
+                console.error('获取设备列表失败:', e);
+                alert('获取设备列表失败，请确保您有权限访问');
+            }
+        }
+        
+        // 清空所有设备
+        async function revokeAllDevices() {
+            if (!confirm('⚠️ 确定要清空所有受信任设备吗？\n\n此操作将强制所有设备重新认证！')) {
+                return;
+            }
+            
+            try {
+                const res = await fetch('/auth/revoke_all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    alert(`已成功清空 ${data.revoked_count} 个受信任设备`);
+                    // 更新UI状态
+                    await updateAuthUI();
+                    await updateWriteButtons();
+                } else {
+                    alert('清空设备失败');
+                }
+            } catch (e) {
+                console.error('清空设备失败:', e);
+                alert('清空设备失败，请确保您有权限访问');
+            }
+        }
+        
+        // 密码设置相关功能
+        function showSetPasswordModal() {
+            document.getElementById('setPasswordModal').style.display = 'block';
+            // 清空输入框
+            document.getElementById('currentPassword').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmPassword').value = '';
+            document.getElementById('setPasswordStatus').style.display = 'none';
+        }
+
+        function closeSetPasswordModal() {
+            document.getElementById('setPasswordModal').style.display = 'none';
+        }
+
+        async function setPassword() {
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const statusDiv = document.getElementById('setPasswordStatus');
+            
+            // 验证密码
+            if (newPassword.length < 8) {
+                statusDiv.textContent = '❌ 密码长度至少需要8个字符';
+                statusDiv.style.display = 'block';
+                statusDiv.style.background = '#ffeaea';
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                statusDiv.textContent = '❌ 两次输入的密码不一致';
+                statusDiv.style.display = 'block';
+                statusDiv.style.background = '#ffeaea';
+                return;
+            }
+            
+            try {
+                const res = await fetch('/auth/set_password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        password: newPassword,
+                        current_password: currentPassword || undefined
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    statusDiv.textContent = '✅ 密码设置成功！';
+                    statusDiv.style.display = 'block';
+                    statusDiv.style.background = '#eaffea';
+                    
+                    // 清空输入框
+                    document.getElementById('currentPassword').value = '';
+                    document.getElementById('newPassword').value = '';
+                    document.getElementById('confirmPassword').value = '';
+                    
+                    // 3秒后关闭模态框
+                    setTimeout(() => {
+                        closeSetPasswordModal();
+                    }, 3000);
+                } else {
+                    statusDiv.textContent = `❌ ${data.message || '密码设置失败'}`;
+                    statusDiv.style.display = 'block';
+                    statusDiv.style.background = '#ffeaea';
+                }
+            } catch (e) {
+                console.error('设置密码失败:', e);
+                statusDiv.textContent = '❌ 设置密码失败，请重试';
+                statusDiv.style.display = 'block';
+                statusDiv.style.background = '#ffeaea';
+            }
+        }
+
+        // 设备吊销相关功能
+        function showRevokeDeviceModal() {
+            document.getElementById('revokeDeviceModal').style.display = 'block';
+            loadDevicesForRevoke();
+        }
+
+        function closeRevokeDeviceModal() {
+            document.getElementById('revokeDeviceModal').style.display = 'none';
+        }
+
+        async function loadDevicesForRevoke() {
+            const statusDiv = document.getElementById('revokeDeviceStatus');
+            const listDiv = document.getElementById('revokeDeviceList');
+            
+            try {
+                const res = await fetch('/auth/trusted');
+                const data = await res.json();
+                
+                if (data.status === 'success' && data.devices.length > 0) {
+                    statusDiv.style.display = 'none';
+                    listDiv.style.display = 'block';
+                    listDiv.innerHTML = '';
+                    
+                    data.devices.forEach(device => {
+                        const deviceCard = document.createElement('div');
+                        deviceCard.style.padding = '10px';
+                        deviceCard.style.border = '1px solid var(--border-color)';
+                        deviceCard.style.borderRadius = '8px';
+                        deviceCard.style.marginBottom = '8px';
+                        deviceCard.innerHTML = `
+                            <div style="font-weight: bold;">设备ID: ${device.device_id}</div>
+                            <div>IP: ${device.ip}</div>
+                            <div>创建时间: ${device.created_at}</div>
+                            <div>最后访问: ${device.last_seen}</div>
+                            <button onclick="revokeDevice('${device.device_id.replace('...', '')}')" 
+                                    style="margin-top: 8px; padding: 5px 10px; background: #f03e3e; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🚫 吊销此设备
+                            </button>
+                        `;
+                        listDiv.appendChild(deviceCard);
+                    });
+                } else {
+                    statusDiv.textContent = '暂无受信任设备';
+                    statusDiv.style.background = '#f8f9fa';
+                }
+            } catch (e) {
+                console.error('加载设备列表失败:', e);
+                statusDiv.textContent = '加载设备列表失败';
+                statusDiv.style.background = '#ffeaea';
+            }
+        }
+
+        async function revokeDevice(deviceIdPrefix) {
+            if (!confirm(`确定要吊销设备 ${deviceIdPrefix}... 吗？此操作不可撤销！`)) {
+                return;
+            }
+            
+            try {
+                const res = await fetch('/auth/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceIdPrefix })
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    alert(`✅ 已成功吊销 ${data.revoked_count} 个设备`);
+                    // 重新加载设备列表
+                    loadDevicesForRevoke();
+                    // 更新UI状态
+                    await updateAuthUI();
+                    await updateWriteButtons();
+                } else {
+                    alert('❌ 吊销设备失败');
+                }
+            } catch (e) {
+                console.error('吊销设备失败:', e);
+                alert('❌ 吊销设备失败，请重试');
+            }
+        }
+
+        function searchDevices() {
+            const searchTerm = document.getElementById('deviceSearch').value.toLowerCase();
+            const deviceCards = document.getElementById('revokeDeviceList').querySelectorAll('div');
+            
+            deviceCards.forEach(card => {
+                const deviceText = card.textContent.toLowerCase();
+                if (deviceText.includes(searchTerm)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        // 添加设备管理下拉菜单的显示/隐藏逻辑
+        document.addEventListener('DOMContentLoaded', function() {
+            // 使用更可靠的选择器，基于文本内容而非CSS位置
+            const manageButtons = document.querySelectorAll('.action-button');
+            const manageButton = Array.from(manageButtons).find(btn => 
+                btn.textContent.includes('设备管理') || btn.textContent.includes('⚙️')
+            );
+            
+            if (manageButton) {
+                const dropdownMenu = manageButton.querySelector('.dropdown-menu');
+                if (dropdownMenu) {
+                    manageButton.addEventListener('click', function(e) {
+                        dropdownMenu.style.display = dropdownMenu.style.display === 'none' ? 'block' : 'none';
+                        e.stopPropagation();
+                    });
+                    
+                    // 点击其他地方关闭下拉菜单
+                    document.addEventListener('click', function() {
+                        dropdownMenu.style.display = 'none';
+                    });
+                }
+            }
+        });
+        
+        window.addEventListener('DOMContentLoaded', updateWriteButtons);
+    </script>
+</body>
+
+</html>
