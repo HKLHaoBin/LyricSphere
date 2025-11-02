@@ -66,7 +66,7 @@
         }
 
         /* 移动端适配 */
-        @media (max-width: 768px) {
+        @media screen and (max-width: 768px), screen and (orientation: portrait) {
             body {
                 padding-top: 80px;
             }
@@ -587,7 +587,7 @@
         }
 
         /* 移动端适配 */
-        @media (max-width: 768px) {
+        @media screen and (max-width: 768px), screen and (orientation: portrait) {
             /* 给固定的 .search-container 预留空间，按你实际高度微调 */
             body {
                 padding-top: 80px;   /* 你前面也用过 80px，这里沿用即可。 */
@@ -1386,9 +1386,20 @@
         </div>
     </div>
 
+    <script id="amllPlayerConfig" type="application/json">{{ amll_player_base_url|tojson }}</script>
     <script>
         const backendOrigin = window.location.origin;
         const backendRootUrl = new URL('/', backendOrigin).toString();
+        const amllPlayerConfigElement = document.getElementById('amllPlayerConfig');
+        let amllPlayerBaseUrl = null;
+        if (amllPlayerConfigElement && amllPlayerConfigElement.textContent) {
+            try {
+                amllPlayerBaseUrl = JSON.parse(amllPlayerConfigElement.textContent);
+            } catch (error) {
+                console.warn('Failed to parse AMLL player base URL from config, fallback to local path.', error);
+            }
+        }
+        amllPlayerBaseUrl = amllPlayerBaseUrl || new URL('/amll-web', backendOrigin).toString();
 
         function safeDecodeURIComponent(value) {
             try {
@@ -1563,7 +1574,17 @@
                             if (jsonData.meta.albumImgSrc) {
                                 const resolvedCoverUrl = normalizeSongsUrl(jsonData.meta.albumImgSrc);
                                 if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
-                                    coverPath = encodeURIComponent(resolvedCoverUrl);
+                                    const coverFileName = safeDecodeURIComponent((resolvedCoverUrl.split('/').pop() || '')).toLowerCase();
+                                    if (coverFileName && coverFileName !== '专辑图.jpg' && coverFileName !== 'album_cover.jpg') {
+                                        coverPath = encodeURIComponent(resolvedCoverUrl);
+                                    }
+                                }
+                            }
+
+                            if (!coverPath && jsonData.meta['Background-image']) {
+                                const resolvedBackgroundUrl = normalizeSongsUrl(jsonData.meta['Background-image']);
+                                if (resolvedBackgroundUrl && resolvedBackgroundUrl !== '!') {
+                                    coverPath = encodeURIComponent(resolvedBackgroundUrl);
                                 }
                             }
 
@@ -1580,7 +1601,8 @@
                                     if (convertData.status === 'success') {
                                         const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
                                         const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
-                                        const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}`;
+                                        const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+                                        const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
                                         window.open(amllUrl, '_blank');
                                     } else {
                                         alert('歌词转换失败: ' + convertData.message);
@@ -1592,7 +1614,8 @@
                                 });
                             } else {
                                 // 构建AMLL规则编写网址
-                                const amllUrl = `https://amllp.bikonoo.com/?music=${musicPath}&lyric=${lyricsPath}&title=${title}&artist=${artists}`;
+                                const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+                                const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${lyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
                                 // 打开网址
                                 window.open(amllUrl, '_blank');
                             }
@@ -1974,7 +1997,8 @@
                     if (data.status === 'success') {
                         const backgroundPath = data.jsonData.meta['Background-image'] || ''
                         backgroundPathInput.value = backgroundPath
-                        newBackgroundPathInput.value = backgroundPath
+                        const editableBackgroundPath = backgroundPath === '!' ? '' : stripSongsPrefix(backgroundPath)
+                        newBackgroundPathInput.value = editableBackgroundPath
                     }
                 })
 
@@ -2021,19 +2045,17 @@
         }
 
         function updateBackgroundPath() {
-            const newPath = document.getElementById('newBackgroundPath').value.trim()
+            const rawPath = document.getElementById('newBackgroundPath').value.trim()
+            const newPath = rawPath === '!' ? '' : stripSongsPrefix(rawPath)
 
-            if (!newPath) {
-                alert('请输入新的文件路径！')
-                return
-            }
-
-            // 检查文件扩展名
-            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-            const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
-            if (!hasValidExtension) {
-                alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
-                return
+            if (newPath) {
+                // 检查文件扩展名
+                const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+                const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
+                if (!hasValidExtension) {
+                    alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                    return
+                }
             }
 
             fetch('/update_file_path', {
@@ -2604,31 +2626,57 @@
         // 歌词路径输入变化时检查
         document.getElementById('lyricsPath').addEventListener('input', checkFileExtension);
 
+        function detectLyricsExtension(content = '') {
+            const text = (content || '').trim();
+            if (!text) {
+                return '';
+            }
+            if (/<tt\b|<\/tt>/i.test(text)) {
+                return '.ttml';
+            }
+            if (/\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/.test(text)) {
+                return '.lrc';
+            }
+            if (/\[\d+\s*,\s*\d+\]/.test(text)) {
+                return '.qrc';
+            }
+            if (/\[\d+\]/.test(text)) {
+                return '.lys';
+            }
+            return '';
+        }
+
         function setCurrentFileNameAsLyrics() {
             const currentFileName = document.getElementById('currentFileName').textContent;
             const lyricsPathInput = document.getElementById('lyricsPath');
             const lyricsContent = document.getElementById('lyricsEditor').value;
-            
-            // 检查内容并确定文件类型
-            let extension = '.'; // 默认扩展名
-            
-            if (/\[\d+\]/.test(lyricsContent)) {
-                extension = '.lys';
-            } else if (/\[\d{2}:\d{2}\.\d{2,3}\]\(/.test(lyricsContent)) {
-                extension = '.qrc';
-            } else if (/\[\d{2}:\d{2}\.\d{2,3}\]/.test(lyricsContent)) {
-                extension = '.lrc';
-            } else if (/<\/div>|<\/body>|<\/tt>/.test(lyricsContent)) {
-                extension = '.ttml';
+
+            const existingExtension = (lyricsPathInput.value.match(/\.[^.]+$/) || [])[0] || '';
+            let extension = detectLyricsExtension(lyricsContent) || existingExtension || '.lys';
+
+            if (!extension.startsWith('.')) {
+                extension = `.${extension}`;
             }
-            
+
             lyricsPathInput.value = currentFileName + extension;
+            checkFileExtension();
         }
 
         function setCurrentFileNameAsTranslation() {
             const currentFileName = document.getElementById('currentFileName').textContent;
             const translationPathInput = document.getElementById('translationPath');
-            translationPathInput.value = currentFileName + '.lrc';
+            const translationContent = document.getElementById('translationEditor').value;
+
+            let extension = detectLyricsExtension(translationContent) || '.lrc';
+            if (extension === '.lys') {
+                // 翻译默认使用逐行格式
+                extension = '.lrc';
+            }
+            if (!extension.startsWith('.')) {
+                extension = `.${extension}`;
+            }
+
+            translationPathInput.value = currentFileName + extension;
         }
 
         function copyFileName(button) {
@@ -2657,18 +2705,24 @@
         async function extractTimestamps() {
             const lyricsPath = document.getElementById('lyricsPath').value;
             const lyricsContent = document.getElementById('lyricsEditor').value;
-            
+
             console.log('开始提取时间戳...');
             console.log('歌词路径:', lyricsPath);
             console.log('歌词内容长度:', lyricsContent.length);
-            
-            // 检查文件是否为lys格式
-            if (!lyricsPath.toLowerCase().endsWith('.lys')) {
-                console.error('文件格式错误：不是LYS格式');
-                alert('请先选择LYS格式的歌词文件！');
+
+            const allowedExtensions = ['.lys', '.qrc', '.lrc'];
+            const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+            const detectedExtension = detectLyricsExtension(lyricsContent);
+            const resolvedExtension = allowedExtensions.includes(pathExtension)
+                ? pathExtension
+                : (allowedExtensions.includes(detectedExtension) ? detectedExtension : '');
+
+            if (!resolvedExtension) {
+                console.error('文件格式错误：不支持的歌词格式');
+                alert('请先选择 LYS/QRC/LRC 格式的歌词文件！');
                 return;
             }
-            
+
             try {
                 console.log('正在发送请求到服务器...');
                 const response = await fetch('/extract_timestamps', {
@@ -3708,26 +3762,87 @@
         }
 
         async function openLyricsAnimate(filename, style) {
+            const fallbackOpen = (extra = {}) => {
+                const params = new URLSearchParams({ file: filename, style });
+                Object.entries(extra).forEach(([key, value]) => {
+                    if (value) {
+                        params.set(key, value);
+                    }
+                });
+                window.open('/lyrics-animate?' + params.toString(), '_blank');
+            };
+
+            let openWithParams = fallbackOpen;
+
             try {
                 // 1) 读取歌曲 JSON，拿到歌词路径
                 const res = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error('获取歌曲信息失败');
 
+                const meta = data.jsonData?.meta || {};
+
+                const resolveMediaForAnimate = (value) => {
+                    if (!value || value === '!') {
+                        return '';
+                    }
+                    try {
+                        const normalized = normalizeSongsUrl(value);
+                        if (normalized && normalized !== '!') {
+                            return normalized;
+                        }
+                    } catch (error) {
+                        console.warn('normalizeSongsUrl 解析失败，使用原值:', value, error);
+                    }
+                    return value;
+                };
+
+                const backgroundUrl = resolveMediaForAnimate(meta['Background-image']);
+                const coverCandidateSources = [
+                    meta.albumImgSrc,
+                    meta.cover,
+                    meta.coverUrl,
+                    data.jsonData?.cover,
+                    data.jsonData?.coverUrl
+                ];
+                let coverUrl = '';
+                for (const candidate of coverCandidateSources) {
+                    const resolved = resolveMediaForAnimate(candidate);
+                    if (resolved) {
+                        coverUrl = resolved;
+                        break;
+                    }
+                }
+
+                openWithParams = (extra = {}) => {
+                    const params = new URLSearchParams({ file: filename, style });
+                    if (backgroundUrl) {
+                        params.set('background', backgroundUrl);
+                    }
+                    if (coverUrl) {
+                        params.set('cover', coverUrl);
+                    }
+                    Object.entries(extra).forEach(([key, value]) => {
+                        if (value) {
+                            params.set(key, value);
+                        }
+                    });
+                    window.open('/lyrics-animate?' + params.toString(), '_blank');
+                };
+
                 // 兼容两种写法：单路径 或 "::歌词::翻译::罗马音::"
-                let rawLyricsPath = data.jsonData?.meta?.lyrics || '';
+                let rawLyricsPath = meta.lyrics || '';
                 let mainPath = '';
                 if (rawLyricsPath.includes('::')) {
                     const parts = rawLyricsPath.split('::');
-                    mainPath = parts[1] || '';  // 主歌词
+                    mainPath = parts[1] || '';
                 } else {
                     mainPath = rawLyricsPath;
                 }
 
                 // 兜底：没有主歌词路径，直接打开动画页（保持原行为）
                 if (!mainPath) {
-                    window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
-                                '&style=' + encodeURIComponent(style), '_blank');
+                    openWithParams();
                     return;
                 }
 
@@ -3741,22 +3856,17 @@
                             const u = new URL(mainPath);
                             relative = u.pathname.startsWith('/songs/') ? u.pathname.slice('/songs/'.length) : u.pathname.replace(/^\//, '');
                         } else {
-                            // 形如 /songs/xxx 或 songs/xxx
                             relative = mainPath.replace(/^\/?songs\//i, '');
                         }
-                        // 确保正确解码URL编码的文件名
                         relative = decodeURIComponent(relative);
                     } catch (e) {
                         console.error('解析URL失败:', e);
-                        // 解析失败也尽量取 basename
                         relative = mainPath.split('/').pop();
-                        // 确保正确解码URL编码的文件名
                         relative = decodeURIComponent(relative);
                     }
 
                     console.log('TTML转换 - 文件名:', filename, '相对路径:', relative);
 
-                    // 调用后端：把相对路径交给 /convert_ttml_by_path
                     const conv = await fetch('/convert_ttml_by_path', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -3764,37 +3874,28 @@
                     }).then(r => r.json());
 
                     if (conv.status === 'success' && conv.lyricPath) {
-                        // 3) 成功：把转换好的 LYS/LRC 用查询参数传给动画页渲染（不改原文件/JSON）
-                        const params = new URLSearchParams({
-                            file: filename,
-                            style: style,
-                            lys: conv.lyricPath,          // e.g. http://<host>/songs/xxx.lys
-                        });
-                        if (conv.transPath) params.set('lrc', conv.transPath);
-
-                        // ✅ 打开动画页，并把"临时转换"的路径带过去
-                        window.open('/lyrics-animate?' + params.toString(), '_blank');
+                        const extraParams = { lys: conv.lyricPath };
+                        if (conv.transPath) {
+                            extraParams.lrc = conv.transPath;
+                        }
+                        openWithParams(extraParams);
                         return;
                     } else {
                         console.error('TTML转换失败:', conv.message || '未知错误');
                         alert('TTML 转换失败：' + (conv.message || '请检查文件格式'));
                     }
                 } else {
-                    // 非 TTML：若不是 LYS，给个提示（保持你原逻辑）
                     if (!mainPath.toLowerCase().endsWith('.lys')) {
                         alert('警告：当前歌词文件不是 LYS 格式，可能无法正常显示动态效果！');
                     }
                 }
 
                 // 4) 兜底：按老逻辑打开
-                window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
-                            '&style=' + encodeURIComponent(style), '_blank');
+                openWithParams();
 
             } catch (error) {
                 console.error('打开动画页失败：', error);
-                // 兜底：按老逻辑打开
-                window.open('/lyrics-animate?file=' + encodeURIComponent(filename) +
-                            '&style=' + encodeURIComponent(style), '_blank');
+                openWithParams();
             }
         }
 

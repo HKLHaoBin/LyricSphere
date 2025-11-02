@@ -15,7 +15,7 @@ import csv
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context
+from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context, send_from_directory
 from re import compile, Pattern, Match
 from typing import Iterator, TextIO, AnyStr, Optional, Union
 from xml.dom.minicompat import NodeList
@@ -156,6 +156,15 @@ def get_public_base_url() -> str:
 
     port = os.environ.get('PORT', '5000')
     return f"http://127.0.0.1:{port}".rstrip('/')
+
+
+def get_amll_web_player_base_url() -> str:
+    override = app.config.get('AMLL_WEB_BASE_URL') or os.environ.get('AMLL_WEB_BASE_URL')
+    if override:
+        return override.rstrip('/')
+
+    base = get_public_base_url()
+    return f"{base.rstrip('/')}/amll-web"
 
 
 def build_public_url(resource: str, relative_path: str) -> str:
@@ -419,7 +428,15 @@ def is_parenthetical_background_line(content: str) -> bool:
     if not content:
         return False
     stripped = strip_timing_tags(content).strip()
-    if not stripped.startswith('(') or not stripped.endswith(')'):
+    if not stripped:
+        return False
+    bracket_pairs = {
+        '(': ')',
+        '（': '）',
+    }
+    opening = stripped[0]
+    expected_closing = bracket_pairs.get(opening)
+    if not expected_closing or not stripped.endswith(expected_closing):
         return False
     inner = stripped[1:-1].strip()
     return bool(inner)
@@ -588,7 +605,45 @@ def index():
                 })
     # 按修改时间排序（最新在前）
     json_files.sort(key=lambda x: x['mtime'], reverse=True)
-    return render_template('LyricSphere.html', json_files=json_files)
+    return render_template(
+        'LyricSphere.html',
+        json_files=json_files,
+        amll_player_base_url=get_amll_web_player_base_url()
+    )
+
+@app.route('/favicon.ico')
+def favicon():
+    """Serve a fallback favicon so browsers avoid repeated 404 requests."""
+    fallback_ico = STATIC_DIR / 'favicon.ico'
+    if fallback_ico.exists():
+        return send_from_directory(STATIC_DIR, 'favicon.ico')
+    return send_from_directory(STATIC_DIR / 'assets', 'icon-128x128.png', mimetype='image/png')
+
+
+@app.route('/amll-web')
+@app.route('/amll-web/')
+@app.route('/amll-web/index.html')
+def amll_web_player():
+    """Serve the AMLL web player template migrated from the standalone Vite build."""
+    return render_template('amll_web_player.html')
+
+
+@app.route('/amll-web/assets/<path:filename>')
+def amll_web_assets(filename):
+    """Provide asset files under the /amll-web namespace for compatibility with relative requests."""
+    return send_from_directory(STATIC_DIR / 'assets', filename)
+
+
+@app.route('/amll-web/public/<path:filename>')
+def amll_web_public(filename):
+    """Provide public files (service worker, media tags) under the /amll-web namespace."""
+    return send_from_directory(STATIC_DIR / 'public', filename)
+
+
+@app.route('/index.html')
+def index_html_alias():
+    """Backward compatibility for clients requesting the original index.html entry."""
+    return amll_web_player()
 
 # 在Flask应用中添加自定义过滤器
 @app.template_filter('escape_js')
@@ -957,7 +1012,14 @@ def update_file_path():
         elif file_type == 'image':
             json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
         elif file_type == 'background':
-            json_data['meta']['Background-image'] = f"./songs/{new_path}"
+            meta = json_data.setdefault('meta', {})
+            if new_path:
+                normalized_background_path = normalized_new_path
+                if normalized_background_path.startswith('songs/'):
+                    normalized_background_path = normalized_background_path[len('songs/'):]
+                meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
+            else:
+                meta['Background-image'] = ''
         elif file_type == 'lyrics':
             current_lyrics = json_data['meta']['lyrics'].split('::')
             if len(current_lyrics) >= 4:
@@ -1759,11 +1821,14 @@ def ttml_time_to_ms(time_str):
 
 
 def text_tail_space(txt):
-    """返回 (清理后的文本, 是否末尾有空格)"""
+    """返回 (去除尾部空白后的文本, 尾随空白字符串)"""
     if txt is None:
-        return "", False
-    has_space = len(txt) > 0 and txt[-1].isspace()
-    return txt.rstrip(), has_space
+        return "", ""
+    match = re.search(r'(\s*)$', txt)
+    tail = match.group(1) if match else ""
+    if tail:
+        return txt[:-len(tail)], tail
+    return txt, ""
 
 
 def find_translation_file(lyrics_path):
@@ -1921,9 +1986,10 @@ def lys_to_ttml(input_path, output_path):
                         span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
                         span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
                         txt, tail = text_tail_space(text)
-                        span.appendChild(dom.createTextNode(txt))
+                        if txt:
+                            span.appendChild(dom.createTextNode(txt))
                         if tail:
-                            span.appendChild(dom.createTextNode(' '))
+                            span.appendChild(dom.createTextNode(tail))
                         p.appendChild(span)
 
                 # 有翻译就加翻译 span；没有就不加（精确匹配）
@@ -1960,9 +2026,10 @@ def lys_to_ttml(input_path, output_path):
                         span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
                         span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
                         txt, tail = text_tail_space(text)
-                        span.appendChild(dom.createTextNode(txt))
+                        if txt:
+                            span.appendChild(dom.createTextNode(txt))
                         if tail:
-                            span.appendChild(dom.createTextNode(' '))
+                            span.appendChild(dom.createTextNode(tail))
                         bg_span.appendChild(span)
 
                 # 背景行的翻译（如果这一行也刚好有对应时间翻译）
@@ -2224,8 +2291,8 @@ def lrc_to_ttml(input_path, output_path):
                     if txt:
                         text_node = dom.createTextNode(txt)
                         p.appendChild(text_node)
-                        if tail_space:
-                            p.appendChild(dom.createTextNode(' '))
+                    if tail_space:
+                        p.appendChild(dom.createTextNode(tail_space))
 
                     # 如果有翻译内容，添加翻译span（Apple风格）- 精确匹配
                     if translation_content:
@@ -2251,8 +2318,8 @@ def lrc_to_ttml(input_path, output_path):
                         if txt:
                             text_node = dom.createTextNode(txt)
                             bg_span.appendChild(text_node)
-                            if tail_space:
-                                bg_span.appendChild(dom.createTextNode(' '))
+                        if tail_space:
+                            bg_span.appendChild(dom.createTextNode(tail_space))
 
                         # 如果有翻译内容，添加到背景span中（精确匹配）
                         if translation_content:
@@ -2284,8 +2351,8 @@ def lrc_to_ttml(input_path, output_path):
                         if txt:
                             text_node = dom.createTextNode(txt)
                             bg_span.appendChild(text_node)
-                            if tail_space:
-                                bg_span.appendChild(dom.createTextNode(' '))
+                        if tail_space:
+                            bg_span.appendChild(dom.createTextNode(tail_space))
 
                         # 如果有翻译内容，添加到背景span中（精确匹配）
                         if translation_content:
@@ -2578,43 +2645,92 @@ def extract_timestamps():
         timestamps = []
         lines = lyrics_content.split('\n')
         app.logger.info(f"歌词总行数: {len(lines)}")
-        
+
         metadata_lines = 0
         empty_lines = 0
         processed_lines = 0
-        
-        for i, line in enumerate(lines, 1):
-            if not line.strip():
+
+        metadata_pattern = re.compile(r'^\s*\[(?:ar|ti|al|by|offset|id|from):', re.IGNORECASE)
+        qrc_pattern = re.compile(r'^\s*\[(\d+)\s*,\s*(\d+)\]')
+        lys_marker_pattern = re.compile(r'^\s*\[(\d*)\]')
+        lrc_pattern = re.compile(r'^\s*\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]')
+
+        def append_timestamp_from_ms(raw_ms: int, line_no: int, source: str):
+            nonlocal processed_lines
+            time_str = convert_milliseconds_to_time(raw_ms)
+            lrc_timestamp = f"[{time_str}]"
+            timestamps.append(lrc_timestamp)
+            processed_lines += 1
+            app.logger.debug(
+                f"第{line_no}行: {source} -> '{lrc_timestamp}' (原始值: {raw_ms}ms)"
+            )
+
+        for i, raw_line in enumerate(lines, 1):
+            line = raw_line.strip()
+            if not line:
                 empty_lines += 1
                 app.logger.debug(f"第{i}行: 空行，跳过")
                 continue
-                
-            # 跳过元数据行
-            if line.startswith('[by:') or line.startswith('[ti:') or line.startswith('[ar:'):
+
+            if metadata_pattern.match(line):
                 metadata_lines += 1
                 app.logger.debug(f"第{i}行: 元数据行 '{line[:50]}...'，跳过")
                 continue
-            
-            # 处理所有以 [] 或 [数字] 开头的歌词行
-            if re.match(r'^\[(\d*)\]', line):
-                # 只匹配第一个左括号后面的开始时间
+
+            # QRC: 行首为 [start,duration]
+            qrc_match = qrc_pattern.match(line)
+            if qrc_match:
+                try:
+                    start_ms = int(qrc_match.group(1))
+                    append_timestamp_from_ms(start_ms, i, 'QRC起始时间')
+                    app.logger.debug(
+                        f"第{i}行内容: '{raw_line[:100]}...'"
+                        if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
+                    )
+                    continue
+                except ValueError:
+                    app.logger.warning(f"第{i}行: QRC起始时间解析失败 '{qrc_match.group(1)}'")
+                    continue
+
+            # LRC: 行首为 [mm:ss.xxx]
+            lrc_match = lrc_pattern.match(line)
+            if lrc_match:
+                try:
+                    minutes = int(lrc_match.group(1))
+                    seconds = int(lrc_match.group(2))
+                    millis_str = lrc_match.group(3) or ''
+                    millis = int((millis_str + '000')[:3]) if millis_str else 0
+                    total_ms = (minutes * 60 + seconds) * 1000 + millis
+                    append_timestamp_from_ms(total_ms, i, 'LRC时间戳')
+                    app.logger.debug(
+                        f"第{i}行内容: '{raw_line[:100]}...'"
+                        if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
+                    )
+                    continue
+                except ValueError as e:
+                    app.logger.warning(f"第{i}行: LRC时间戳转换失败，错误: {str(e)}")
+                    continue
+
+            # LYS 逐字格式: 先检索行标记，再找 (start_ms, duration)
+            if lys_marker_pattern.match(line):
                 match = re.search(r'\((\d+),', line)
                 if match:
                     try:
                         timestamp = int(match.group(1))
-                        time_str = convert_milliseconds_to_time(timestamp)
-                        lrc_timestamp = f"[{time_str}]"
-                        timestamps.append(lrc_timestamp)
-                        processed_lines += 1
-                        app.logger.debug(f"第{i}行: 成功提取时间戳 '{lrc_timestamp}' (原始值: {match.group(1)}ms)")
-                        app.logger.debug(f"第{i}行内容: '{line[:100]}...'" if len(line) > 100 else f"第{i}行内容: '{line}'")
+                        append_timestamp_from_ms(timestamp, i, 'LYS起始时间')
+                        app.logger.debug(
+                            f"第{i}行内容: '{raw_line[:100]}...'"
+                            if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
+                        )
+                        continue
                     except ValueError as e:
                         app.logger.warning(f"第{i}行: 时间戳转换失败 '{match.group(1)}', 错误: {str(e)}")
                         continue
-                else:
-                    app.logger.debug(f"第{i}行: 符合歌词行格式但未找到时间戳，行内容: '{line[:100]}...'" if len(line) > 100 else f"第{i}行: 符合歌词行格式但未找到时间戳，行内容: '{line}'")
-            else:
-                app.logger.debug(f"第{i}行: 不符合歌词行格式，跳过。内容: '{line[:100]}...'" if len(line) > 100 else f"第{i}行: 不符合歌词行格式，跳过。内容: '{line}'")
+
+            app.logger.debug(
+                f"第{i}行: 未识别的时间戳格式，跳过。内容: '{raw_line[:100]}...'"
+                if len(raw_line) > 100 else f"第{i}行: 未识别的时间戳格式，跳过。内容: '{raw_line}'"
+            )
         
         # 记录详细统计信息
         app.logger.info(f"处理统计 - 总行数: {len(lines)}, 空行: {empty_lines}, 元数据行: {metadata_lines}, 处理行数: {processed_lines}")
@@ -2917,7 +3033,15 @@ def translate_lyrics():
             and not line.startswith('[ti:')
             and not line.startswith('[ar:')
         ]
-        timestamp_candidates = sum(1 for line in candidate_lines if re.search(r'\(\d+,\d+\)', line))
+        timestamp_candidates = sum(
+            1
+            for line in candidate_lines
+            if (
+                re.search(r'\(\d+,\d+\)', line)
+                or re.match(r'^\s*\[\d+\s*,\s*\d+\]', line)
+                or re.match(r'^\s*\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]', line)
+            )
+        )
         has_timestamp_candidates = timestamp_candidates > 0
         has_timestamps = len(timestamps) > 0
 
@@ -3267,6 +3391,17 @@ def lyrics_animate():
         session.pop('override_lys_url', None)
         session.pop('override_lrc_url', None)
 
+    cover_override = request.args.get('cover')
+    background_override = request.args.get('background')
+    if cover_override:
+        session['override_cover_url'] = cover_override
+    else:
+        session.pop('override_cover_url', None)
+    if background_override:
+        session['override_background_url'] = background_override
+    else:
+        session.pop('override_background_url', None)
+
     session['lyrics_json_file'] = file
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
@@ -3416,6 +3551,71 @@ def song_info():
         data_str = data_str.replace('/static/songs/', '/songs/')
 
         data = json.loads(data_str)
+        meta = data.setdefault('meta', {}) if isinstance(data, dict) else {}
+
+        override_background = session.get('override_background_url')
+        override_cover = session.get('override_cover_url')
+
+        def normalize_media_url(raw_value: Optional[str]) -> str:
+            if not raw_value or raw_value == '!':
+                return ''
+            cleaned = str(raw_value).strip().replace('\\', '/').replace('/static/songs/', '/songs/').replace('static/songs/', 'songs/')
+            if not cleaned:
+                return ''
+            parsed = urlparse(cleaned)
+            if parsed.scheme:
+                netloc = parsed.netloc
+                if parsed.hostname in {'127.0.0.1', 'localhost'}:
+                    netloc = host
+                path = parsed.path.replace('/static/songs/', '/songs/')
+                rebuilt = parsed._replace(netloc=netloc, path=path)
+                return rebuilt.geturl()
+            if cleaned.startswith('/'):
+                return cleaned
+            if cleaned.startswith('songs/'):
+                return '/' + cleaned
+            return '/songs/' + cleaned.lstrip('/')
+
+        # 先规范化现有的封面/背景路径
+        if isinstance(meta, dict):
+            existing_background = normalize_media_url(meta.get('Background-image'))
+            if existing_background:
+                meta['Background-image'] = existing_background
+
+            for key in ('albumImgSrc', 'cover', 'coverUrl'):
+                normalized = normalize_media_url(meta.get(key))
+                if normalized:
+                    meta[key] = normalized
+
+        # 应用前端传入的临时覆盖
+        normalized_override_background = normalize_media_url(override_background)
+        if normalized_override_background:
+            meta['Background-image'] = normalized_override_background
+
+        normalized_override_cover = normalize_media_url(override_cover)
+        if normalized_override_cover:
+            if not meta.get('albumImgSrc') or meta.get('albumImgSrc') == '!':
+                meta['albumImgSrc'] = normalized_override_cover
+            if not meta.get('cover') or meta.get('cover') == '!':
+                meta['cover'] = normalized_override_cover
+            if not meta.get('coverUrl') or meta.get('coverUrl') == '!':
+                meta['coverUrl'] = normalized_override_cover
+            data['cover'] = normalized_override_cover
+            data['coverUrl'] = normalized_override_cover
+
+        if 'cover' not in data or not data['cover'] or data['cover'] == '!':
+            cover_candidates = [
+                meta.get('albumImgSrc') if isinstance(meta, dict) else None,
+                meta.get('cover') if isinstance(meta, dict) else None,
+                meta.get('coverUrl') if isinstance(meta, dict) else None
+            ]
+            for candidate in cover_candidates:
+                normalized_candidate = normalize_media_url(candidate)
+                if normalized_candidate:
+                    data['cover'] = normalized_candidate
+                    data['coverUrl'] = normalized_candidate
+                    break
+
         return jsonify(data)
     except FileNotFoundError:
         return jsonify({'error': 'Song info file not found'}), 404

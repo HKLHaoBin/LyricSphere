@@ -41,11 +41,45 @@
             height: 100%;
             object-fit: cover; /* 等比缩放填充，无裁切 */
             opacity: 0.2; /* 20% 不透明度 */
+            display: block;
+        }
+
+        .background-container canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            opacity: 0.45;
         }
 
         .player-container {
             width: 90%;
             text-align: center;
+        }
+
+        :where(#albumSidePanel, #amll-stub-host, body) .song-info-container {
+            box-sizing: border-box;
+            width: min(100%, 520px);
+            max-width: min(100%, 520px);
+            margin: 0 auto;
+        }
+
+        :where(#albumSidePanel, #amll-stub-host, body) #albumCoverContainer {
+            width: min(320px, 60vw);
+            max-width: min(320px, 60vw);
+        }
+
+        :where(#albumSidePanel, #amll-stub-host, body) #albumInfo {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+
+        :where(#albumSidePanel, #amll-stub-host, body) #songTitle,
+        :where(#albumSidePanel, #amll-stub-host, body) #songArtist {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .player-container.paused-mode {
@@ -198,7 +232,7 @@
         }
         
         /* 仅在手机等小屏幕设备上显示滑块 */
-        @media (max-width: 768px) {
+        @media screen and (max-width: 768px), screen and (orientation: portrait) {
             .font-slider-container {
                 display: block;
             }
@@ -215,6 +249,10 @@
     </div>
 
     <script>
+        if (!window.__AMLL_DEFAULT_ALBUM__) {
+            window.__AMLL_DEFAULT_ALBUM__ = "{{ url_for('static', filename='icons/icon-512x512.png') }}";
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
             const audioPlayer = document.getElementById('audio-player');
             const lyricsContainer = document.getElementById('lyrics-container');
@@ -223,6 +261,393 @@
             let lyricsData = [];
             let forceCenterAlign = false; // 新增
             let translationData = [];
+            let backgroundCleanup = null;
+
+            const AMLL_MODULE_URL = "{{ url_for('static', filename='assets/amll-player.js') }}";
+            const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
+            const amllBackgroundState = { promise: null, host: null, element: null };
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryBackground = urlParams.get('background') || null;
+            const queryCover = urlParams.get('cover') || null;
+            const AMLL_SKELETON_IDS = new Set([
+                'player',
+                'lyricsPanel',
+                'albumSidePanel',
+                'songTitle',
+                'songArtist',
+                'albumInfo',
+                'albumCoverContainer',
+                'albumCoverLarge',
+                'progressBar',
+                'progressFill',
+                'waveformCanvas'
+            ]);
+
+            function clamp(value, min, max) {
+                return Math.min(Math.max(value, min), max);
+            }
+
+            function createAmllStubElement(id) {
+                if (!id) {
+                    return document.createElement('div');
+                }
+                const normalizedId = id.toLowerCase();
+                if (normalizedId === 'waveformcanvas') {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 0;
+                    canvas.height = 0;
+                    return canvas;
+                }
+                return document.createElement('div');
+            }
+
+            function selectById(root, id) {
+                if (!root) return null;
+                if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+                    return root.querySelector(`#${CSS.escape(id)}`);
+                }
+                return root.querySelector(`[id="${id.replace(/"/g, '\\"')}"]`);
+            }
+
+            function ensureAmllSkeleton(stubMap, host) {
+                if (amllStubState.skeleton && amllStubState.skeleton.isConnected) {
+                    return;
+                }
+                const skeleton = document.createElement('div');
+                skeleton.setAttribute('data-amll-skeleton', '1');
+                skeleton.style.display = 'none';
+                skeleton.innerHTML = `
+                    <div id="player" data-amll-stub="1">
+                        <div id="albumSidePanel" data-amll-stub="1">
+                            <div class="song-info-container" data-amll-stub="1">
+                                <div id="albumCoverContainer" data-amll-stub="1">
+                                    <img id="albumCoverLarge" data-amll-stub="1" alt="" />
+                                </div>
+                                <div id="albumInfo" data-amll-stub="1">
+                                    <div id="songTitle" data-amll-stub="1"></div>
+                                    <div id="songArtist" data-amll-stub="1"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="lyricsPanel" data-amll-stub="1"></div>
+                    </div>
+                    <div id="progressBar" data-amll-stub="1">
+                        <canvas id="waveformCanvas" data-amll-stub="1"></canvas>
+                        <div id="progressFill" data-amll-stub="1"></div>
+                    </div>
+                `;
+                host.appendChild(skeleton);
+                amllStubState.skeleton = skeleton;
+                AMLL_SKELETON_IDS.forEach((elementId) => {
+                    const el = selectById(skeleton, elementId);
+                    if (el) {
+                        if (elementId === 'waveformCanvas' && el instanceof HTMLCanvasElement) {
+                            el.width = 0;
+                            el.height = 0;
+                        }
+                        stubMap.set(elementId, el);
+                    }
+                });
+            }
+
+            function ensureAmllStubs() {
+                if (amllStubState.patched) {
+                    return;
+                }
+                const host = document.createElement('div');
+                host.id = 'amll-stub-host';
+                host.style.display = 'none';
+                document.documentElement.appendChild(host);
+
+                const stubMap = new Map();
+                const originalGetElementById = document.getElementById.bind(document);
+
+                document.getElementById = function (id) {
+                    const existing = originalGetElementById(id);
+                    if (existing) return existing;
+                    if (AMLL_SKELETON_IDS.has(id)) {
+                        ensureAmllSkeleton(stubMap, host);
+                    }
+                    if (stubMap.has(id)) return stubMap.get(id);
+                    if (amllStubState.skeleton) {
+                        const skeletonMatch = selectById(amllStubState.skeleton, id);
+                        if (skeletonMatch) {
+                            stubMap.set(id, skeletonMatch);
+                            return skeletonMatch;
+                        }
+                    }
+                    const stub = createAmllStubElement(id);
+                    stub.id = id;
+                    stub.setAttribute('data-amll-stub', '1');
+                    host.appendChild(stub);
+                    stubMap.set(id, stub);
+                    return stub;
+                };
+
+                amllStubState.patched = true;
+                amllStubState.host = host;
+                amllStubState.restore = () => {
+                    document.getElementById = originalGetElementById;
+                };
+            }
+
+            function ensureMediaCapabilitiesCompat() {
+                const mediaCapabilities = navigator.mediaCapabilities;
+                if (!mediaCapabilities) {
+                    return;
+                }
+                const originalEncodingInfo = mediaCapabilities.encodingInfo;
+                if (typeof originalEncodingInfo !== 'function' || originalEncodingInfo.__amllPatched) {
+                    return;
+                }
+                const wrapped = async (...args) => {
+                    try {
+                        return await originalEncodingInfo.apply(mediaCapabilities, args);
+                    } catch (error) {
+                        const message = String(error || '');
+                        const isEnumError = error instanceof TypeError && message.includes('encodingInfo');
+                        if (!isEnumError) {
+                            console.warn('[AMLL] MediaCapabilities encodingInfo fallback applied', error);
+                        }
+                        return { supported: false, smooth: false, powerEfficient: false };
+                    }
+                };
+                Object.defineProperty(wrapped, '__amllPatched', {
+                    value: true,
+                    writable: false
+                });
+                try {
+                    Object.defineProperty(mediaCapabilities, 'encodingInfo', {
+                        configurable: true,
+                        enumerable: true,
+                        value: wrapped
+                    });
+                } catch (error) {
+                    try {
+                        mediaCapabilities.encodingInfo = wrapped;
+                    } catch (assignError) {
+                        console.warn('[AMLL] Unable to patch MediaCapabilities.encodingInfo', assignError);
+                    }
+                }
+            }
+
+            function waitFor(predicate, timeout = 8000, interval = 50) {
+                return new Promise((resolve, reject) => {
+                    const start = Date.now();
+                    const step = () => {
+                        let value = null;
+                        try {
+                            value = predicate();
+                        } catch (error) {
+                            // 忽略 predicate 内部异常
+                        }
+                        if (value) {
+                            resolve(value);
+                            return;
+                        }
+                        if (Date.now() - start >= timeout) {
+                            reject(new Error('waitFor timeout'));
+                            return;
+                        }
+                        setTimeout(step, interval);
+                    };
+                    step();
+                });
+            }
+
+            function removeExistingBackground() {
+                if (backgroundCleanup) {
+                    try {
+                        backgroundCleanup();
+                    } catch (e) { /* 忽略清理异常 */ }
+                    backgroundCleanup = null;
+                }
+                document.querySelectorAll('.background-container').forEach((el) => el.remove());
+            }
+
+            function resolveMediaUrl(rawPath) {
+                if (!rawPath || typeof rawPath !== 'string') {
+                    return null;
+                }
+                const trimmed = rawPath.trim();
+                if (!trimmed) {
+                    return null;
+                }
+                const normalized = trimmed.replace(/^\.\//, '');
+                if (/^https?:\/\//i.test(normalized) || normalized.startsWith('data:') || normalized.startsWith('blob:')) {
+                    return normalized;
+                }
+                return normalized.startsWith('/') ? normalized : '/' + normalized;
+            }
+
+            async function prepareAmllBackground() {
+                if (amllBackgroundState.promise) {
+                    return amllBackgroundState.promise;
+                }
+
+                amllBackgroundState.promise = (async () => {
+                    try {
+                        ensureMediaCapabilitiesCompat();
+                        ensureAmllStubs();
+                        if (!window.globalBackground) {
+                            await import(AMLL_MODULE_URL);
+                        }
+                        const background = await waitFor(() => window.globalBackground, 10000);
+                        if (!background) {
+                            return null;
+                        }
+
+                        if (amllStubState.restore) {
+                            try {
+                                amllStubState.restore();
+                            } catch (error) {
+                                console.warn('[AMLL] 恢复 getElementById 失败', error);
+                            }
+                            amllStubState.restore = null;
+                        }
+
+                        amllBackgroundState.host = amllStubState.host;
+                        const element = background.getElement();
+                        element.setAttribute('data-amll-background-element', '1');
+                        element.style.position = 'absolute';
+                        element.style.top = '0';
+                        element.style.left = '0';
+                        element.style.width = '100%';
+                        element.style.height = '100%';
+                        element.style.pointerEvents = 'none';
+                        element.style.opacity = '1';
+                        amllBackgroundState.element = element;
+
+                        const audio = window.player?.getAudio?.();
+                        if (audio) {
+                            try {
+                                audio.pause();
+                            } catch (error) { /* 忽略 */ }
+                            audio.remove?.();
+                        }
+
+                        return background;
+                    } catch (error) {
+                        console.error('[AMLL] 加载 AMLL 背景失败', error);
+                        if (amllStubState.restore) {
+                            try {
+                                amllStubState.restore();
+                            } catch (restoreError) {
+                                console.warn('[AMLL] 回退 getElementById 时出错', restoreError);
+                            }
+                            amllStubState.restore = null;
+                        }
+                        return null;
+                    }
+                })();
+
+                return amllBackgroundState.promise;
+            }
+
+            async function initAmllBackgroundFromAlbum(coverPath) {
+                const url = resolveMediaUrl(coverPath);
+                if (!url) {
+                    return false;
+                }
+
+                const background = await prepareAmllBackground();
+                if (!background || !amllBackgroundState.element) {
+                    return false;
+                }
+
+                removeExistingBackground();
+
+                const container = document.createElement('div');
+                container.className = 'background-container';
+                container.appendChild(amllBackgroundState.element);
+                document.body.appendChild(container);
+
+                backgroundCleanup = () => {
+                    try {
+                        background.pause();
+                    } catch (error) { /* 忽略 */ }
+                    if (amllBackgroundState.element.parentElement) {
+                        amllBackgroundState.element.parentElement.removeChild(amllBackgroundState.element);
+                    }
+                    if (amllBackgroundState.host) {
+                        amllBackgroundState.host.appendChild(amllBackgroundState.element);
+                    }
+                    container.remove();
+                };
+
+                try {
+                    await background.setAlbum(url);
+                    background.setStaticMode(false);
+                    background.setFlowSpeed(4);
+                    const dpr = window.devicePixelRatio || 1;
+                    background.setRenderScale(dpr);
+                    background.resume();
+                    return true;
+                } catch (error) {
+                    console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
+                    if (backgroundCleanup) {
+                        backgroundCleanup();
+                        backgroundCleanup = null;
+                    }
+                    return false;
+                }
+            }
+
+            async function loadBackground(backgroundPath) {
+                const url = resolveMediaUrl(backgroundPath);
+                if (!url) {
+                    return false;
+                }
+
+                removeExistingBackground();
+
+                return new Promise((resolve) => {
+                    const container = document.createElement('div');
+                    container.className = 'background-container';
+                    document.body.appendChild(container);
+
+                    const handleFailure = () => {
+                        container.remove();
+                        backgroundCleanup = null;
+                        resolve(false);
+                    };
+
+                    const extension = (url.split('.').pop() || '').toLowerCase();
+                    const isVideo = ['mp4', 'webm', 'ogg'].includes(extension);
+
+                    if (isVideo) {
+                        const video = document.createElement('video');
+                        video.src = url;
+                        video.muted = true;
+                        video.loop = true;
+                        video.autoplay = true;
+                        video.playsInline = true;
+                        video.addEventListener('loadeddata', () => {
+                            backgroundCleanup = () => {
+                                video.pause();
+                                video.removeAttribute('src');
+                                video.load();
+                                container.remove();
+                            };
+                            resolve(true);
+                            video.play().catch(() => {});
+                        }, { once: true });
+                        video.addEventListener('error', handleFailure, { once: true });
+                        container.appendChild(video);
+                    } else {
+                        const img = document.createElement('img');
+                        img.src = url;
+                        img.addEventListener('load', () => {
+                            backgroundCleanup = () => {
+                                container.remove();
+                            };
+                            resolve(true);
+                        }, { once: true });
+                        img.addEventListener('error', handleFailure, { once: true });
+                        container.appendChild(img);
+                    }
+                });
+            }
 
             // 动画时长控制（前端硬编码，同时由后端解析保持一致）
             const enterDuration = 600;           // 歌词行进入动画时长（毫秒）
@@ -696,12 +1121,44 @@
                     const songInfoRes = await fetch('/song-info');
                     const songInfo = await songInfoRes.json();
                     audioPlayer.src = songInfo.song;
-                    
+
+                    if (!songInfo.meta || typeof songInfo.meta !== 'object') {
+                        songInfo.meta = {};
+                    }
+
+                    if (queryBackground) {
+                        songInfo.meta['Background-image'] = queryBackground;
+                    }
+
+                    if (queryCover && queryCover !== '!') {
+                        songInfo.meta.albumImgSrc = queryCover;
+                        songInfo.meta.cover = queryCover;
+                        songInfo.meta.coverUrl = queryCover;
+                        songInfo.cover = queryCover;
+                        songInfo.coverUrl = queryCover;
+                    }
+
+                    removeExistingBackground();
+
                     // 检查并加载背景图片/视频
+                    let backgroundApplied = false;
                     if (songInfo.meta && songInfo.meta["Background-image"]) {
-                        // 移除路径前的 "./"
-                        const backgroundPath = songInfo.meta["Background-image"].replace(/^\.\//, '');
-                        loadBackground(backgroundPath);
+                        backgroundApplied = await loadBackground(songInfo.meta["Background-image"]);
+                    }
+
+                    if (!backgroundApplied) {
+                        const coverCandidates = [
+                            queryCover,
+                            songInfo.meta?.albumImgSrc,
+                            songInfo.meta?.cover,
+                            songInfo.meta?.coverUrl,
+                            songInfo.cover,
+                            songInfo.coverUrl
+                        ];
+                        const coverSource = coverCandidates.find((candidate) => candidate && candidate !== '!');
+                        if (coverSource) {
+                            backgroundApplied = await initAmllBackgroundFromAlbum(coverSource);
+                        }
                     }
                     
                     // 进入页面自动播放
@@ -1334,38 +1791,6 @@
             }
 
             // 加载背景图片或视频
-            async function loadBackground(backgroundPath) {
-                // 统一成不带 "./" 的路径
-                let path = backgroundPath.replace(/^\.\//, ''); // "./songs/xxx.jpg" -> "songs/xxx.jpg"
-
-                // 如果已经是绝对 URL（含 http/https），直接用
-                const isAbsolute = /^https?:\/\//i.test(path);
-
-                // 如果是相对的 "songs/..."，在 Flask 配置下，直接加个前导斜杠即可
-                const url = isAbsolute ? path : (path.startsWith('/') ? path : '/' + path);
-
-                const container = document.createElement('div');
-                container.className = 'background-container';
-                document.body.appendChild(container);
-
-                const ext = path.split('.').pop().toLowerCase();
-                const isVideo = ['mp4','webm','ogg'].includes(ext);
-
-                if (isVideo) {
-                    const video = document.createElement('video');
-                    video.src = url;         // ✅ 不再拼 /static，也不整体 encode
-                    video.muted = true;
-                    video.loop = true;
-                    video.autoplay = true;
-                    video.onerror = () => container.remove();
-                    container.appendChild(video);
-                } else {
-                    const img = document.createElement('img');
-                    img.src = url;           // ✅ 同上
-                    img.onerror = () => container.remove();
-                    container.appendChild(img);
-                }
-            }
         });
     </script>
 </body>
