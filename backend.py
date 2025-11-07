@@ -2579,6 +2579,7 @@ def convert_to_ttml_temp():
         app.logger.error(f"处理临时转换请求时出错: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'处理请求时出错: {str(e)}'})
 
+
 @app.route('/merge_to_lqe', methods=['POST'])
 def merge_to_lqe():
     if not is_request_allowed():

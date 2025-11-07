@@ -1400,6 +1400,74 @@
             }
         }
         amllPlayerBaseUrl = amllPlayerBaseUrl || new URL('/amll-web', backendOrigin).toString();
+        const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
+        const STYLE_PARAM_EXCLUDE = new Set([
+            'musicUrl',
+            'lyricUrl',
+            'coverUrl',
+            'songTitle',
+            'songArtist',
+            'musicUrlInput',
+            'lyricUrlInput',
+            'coverUrlInput',
+            'songTitleInput',
+            'songArtistInput'
+        ]);
+        const STYLE_PARAM_ALIAS = {
+            lyricDelay: 'ms',
+            playbackRate: 'x',
+            volume: 'vol',
+            loopPlay: 'loop',
+            autoPlay: 'auto',
+            rangeStartTime: 't',
+            rangeEndTime: 'te'
+        };
+
+        function readCachedAmllSettings() {
+            try {
+                const raw = window.localStorage.getItem(AMLL_SETTINGS_STORAGE_KEY);
+                if (!raw) {
+                    return null;
+                }
+                const parsed = JSON.parse(raw);
+                return (parsed && typeof parsed === 'object') ? parsed : null;
+            } catch (error) {
+                console.warn('Failed to parse AMLL cached settings:', error);
+                return null;
+            }
+        }
+
+        function buildStyleQueryFromSettings(settings) {
+            if (!settings || typeof settings !== 'object') {
+                return '';
+            }
+            const queryParts = [];
+            for (const [key, value] of Object.entries(settings)) {
+                if (STYLE_PARAM_EXCLUDE.has(key)) {
+                    continue;
+                }
+                if (value === undefined || value === null) {
+                    continue;
+                }
+                if (typeof value === 'string' && value === '') {
+                    continue;
+                }
+                const alias = STYLE_PARAM_ALIAS[key] || key;
+                let serialized;
+                if (typeof value === 'boolean') {
+                    serialized = value ? '1' : '0';
+                } else {
+                    serialized = String(value);
+                }
+                queryParts.push(`${encodeURIComponent(alias)}=${encodeURIComponent(serialized)}`);
+            }
+            return queryParts.length ? `&${queryParts.join('&')}` : '';
+        }
+
+        function buildStyleQueryFromCache() {
+            const settings = readCachedAmllSettings();
+            return buildStyleQueryFromSettings(settings);
+        }
 
         function safeDecodeURIComponent(value) {
             try {
@@ -1535,105 +1603,108 @@
                 })
         }
 
-        function openFamyliamCloud(filename, preset) {
+        async function openFamyliamCloud(filename, preset) {
             // 如果是AMLL规则编写网址
             if (preset === 'amll') {
-                // 获取歌曲信息
-                fetch('/get_json_data?filename=' + encodeURIComponent(filename))
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === 'success') {
-                            const jsonData = data.jsonData;
+                try {
+                    const styleSettingsSnapshot = readCachedAmllSettings();
+                    const styleQuerySnapshot = buildStyleQueryFromSettings(styleSettingsSnapshot);
 
-                            const title = encodeURIComponent(jsonData.meta.title || '');
-                            const artists = encodeURIComponent((jsonData.meta.artists || []).join(' / '));
+                    const response = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
+                    const data = await response.json();
+                    if (data.status !== 'success') {
+                        alert('无法获取歌曲信息');
+                        return;
+                    }
 
-                            let musicPath = '';
-                            if (jsonData.song) {
-                                const resolvedSongUrl = normalizeSongsUrl(jsonData.song);
-                                if (resolvedSongUrl && resolvedSongUrl !== '!') {
-                                    musicPath = encodeURIComponent(resolvedSongUrl);
-                                }
-                            }
+                    const jsonData = data.jsonData;
+                    const meta = jsonData.meta || {};
 
-                            let lyricsPath = '';
-                            let originalLyricsRelative = '';
-                            const lyricsField = jsonData.meta.lyrics || '';
-                            const lyricCandidate = lyricsField.includes('::')
-                                ? (lyricsField.split('::')[1] || '')
-                                : lyricsField;
-                            if (lyricCandidate && lyricCandidate !== '!') {
-                                const resolvedLyricsUrl = normalizeSongsUrl(lyricCandidate);
-                                if (resolvedLyricsUrl && resolvedLyricsUrl !== '!') {
-                                    lyricsPath = encodeURIComponent(resolvedLyricsUrl);
-                                    originalLyricsRelative = stripSongsPrefix(resolvedLyricsUrl);
-                                }
-                            }
+                    const title = encodeURIComponent(meta.title || '');
+                    const artists = encodeURIComponent((meta.artists || []).join(' / '));
 
-                            let coverPath = '';
-                            if (jsonData.meta.albumImgSrc) {
-                                const resolvedCoverUrl = normalizeSongsUrl(jsonData.meta.albumImgSrc);
-                                if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
-                                    const coverFileName = safeDecodeURIComponent((resolvedCoverUrl.split('/').pop() || '')).toLowerCase();
-                                    if (coverFileName && coverFileName !== '专辑图.jpg' && coverFileName !== 'album_cover.jpg') {
-                                        coverPath = encodeURIComponent(resolvedCoverUrl);
-                                    }
-                                }
-                            }
-
-                            if (!coverPath && jsonData.meta['Background-image']) {
-                                const resolvedBackgroundUrl = normalizeSongsUrl(jsonData.meta['Background-image']);
-                                if (resolvedBackgroundUrl && resolvedBackgroundUrl !== '!') {
-                                    coverPath = encodeURIComponent(resolvedBackgroundUrl);
-                                }
-                            }
-
-                            // 检查歌词文件格式，如果不是TTML则临时转换
-                            if (originalLyricsRelative && !originalLyricsRelative.toLowerCase().endsWith('.ttml')) {
-                                // 请求后端将歌词临时转换为TTML格式
-                                fetch('/convert_to_ttml_temp', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ path: originalLyricsRelative })
-                                })
-                                .then(response => response.json())
-                                .then(convertData => {
-                                    if (convertData.status === 'success') {
-                                        const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
-                                        const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
-                                        const coverQuery = coverPath ? `&cover=${coverPath}` : '';
-                                        const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${convertedLyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
-                                        window.open(amllUrl, '_blank');
-                                    } else {
-                                        alert('歌词转换失败: ' + convertData.message);
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error('歌词转换请求失败:', error);
-                                    alert('歌词转换请求失败');
-                                });
-                            } else {
-                                // 构建AMLL规则编写网址
-                                const coverQuery = coverPath ? `&cover=${coverPath}` : '';
-                                const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${lyricsPath}&title=${title}&artist=${artists}${coverQuery}`;
-                                // 打开网址
-                                window.open(amllUrl, '_blank');
-                            }
-                        } else {
-                            alert('无法获取歌曲信息');
+                    let musicPath = '';
+                    if (jsonData.song) {
+                        const resolvedSongUrl = normalizeSongsUrl(jsonData.song);
+                        if (resolvedSongUrl && resolvedSongUrl !== '!') {
+                            musicPath = encodeURIComponent(resolvedSongUrl);
                         }
-                    })
-                    .catch(error => {
-                        console.error('获取歌曲信息失败:', error);
-                        alert('获取歌曲信息失败');
-                    });
-            } else {
-                // 原有的处理逻辑
-                const baseUrl = preset === 'am' ?
-                    `http://localhost:8081/app/?#${backendRootUrl}` :
-                    `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#${backendRootUrl}`;
-                window.open(baseUrl + filename);
+                    }
+
+                    let lyricsPath = '';
+                    let originalLyricsRelative = '';
+                    const lyricsField = meta.lyrics || '';
+                    const lyricCandidate = lyricsField.includes('::')
+                        ? (lyricsField.split('::')[1] || '')
+                        : lyricsField;
+                    if (lyricCandidate && lyricCandidate !== '!') {
+                        const resolvedLyricsUrl = normalizeSongsUrl(lyricCandidate);
+                        if (resolvedLyricsUrl && resolvedLyricsUrl !== '!') {
+                            lyricsPath = encodeURIComponent(resolvedLyricsUrl);
+                            originalLyricsRelative = stripSongsPrefix(resolvedLyricsUrl);
+                        }
+                    }
+
+                    let coverPath = '';
+                    if (meta.albumImgSrc) {
+                        const resolvedCoverUrl = normalizeSongsUrl(meta.albumImgSrc);
+                        if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
+                            const coverFileName = safeDecodeURIComponent((resolvedCoverUrl.split('/').pop() || '')).toLowerCase();
+                            if (coverFileName && coverFileName !== '专辑图.jpg' && coverFileName !== 'album_cover.jpg') {
+                                coverPath = encodeURIComponent(resolvedCoverUrl);
+                            }
+                        }
+                    }
+
+                    if (!coverPath && meta['Background-image']) {
+                        const resolvedBackgroundUrl = normalizeSongsUrl(meta['Background-image']);
+                        if (resolvedBackgroundUrl && resolvedBackgroundUrl !== '!') {
+                            coverPath = encodeURIComponent(resolvedBackgroundUrl);
+                        }
+                    }
+
+                    const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+
+                    const openAmllPlayer = (encodedLyricPath) => {
+                        const styleQuery = styleQuerySnapshot;
+                        const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${encodedLyricPath}&title=${title}&artist=${artists}${coverQuery}${styleQuery}`;
+                        window.open(amllUrl, '_blank');
+                    };
+
+                    if (originalLyricsRelative && !originalLyricsRelative.toLowerCase().endsWith('.ttml')) {
+                        try {
+                            const convertResponse = await fetch('/convert_to_ttml_temp', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path: originalLyricsRelative })
+                            });
+                            const convertData = await convertResponse.json();
+                            if (convertData.status === 'success') {
+                                const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
+                                const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
+                                openAmllPlayer(convertedLyricsPath);
+                            } else {
+                                alert('歌词转换失败: ' + convertData.message);
+                            }
+                        } catch (error) {
+                            console.error('歌词转换请求失败:', error);
+                            alert('歌词转换请求失败');
+                        }
+                    } else {
+                        openAmllPlayer(lyricsPath);
+                    }
+                } catch (error) {
+                    console.error('获取歌曲信息失败:', error);
+                    alert('获取歌曲信息失败');
+                }
+                return;
             }
+
+            // 原有的处理逻辑
+            const baseUrl = preset === 'am'
+                ? `http://localhost:8081/app/?#${backendRootUrl}`
+                : `https://famyliam.ft2.ltd/app?preset=${preset}&font-preset=misans&pulling=superweak#${backendRootUrl}`;
+            window.open(baseUrl + filename);
         }
 
         // 搜索功能

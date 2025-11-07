@@ -249,11 +249,101 @@
     </div>
 
     <script>
+        const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
+
+        function guardAmllSettingsStorage() {
+            try {
+                const storage = window.localStorage;
+                if (!storage) {
+                    return () => { };
+                }
+
+                const originalObject = {
+                    getItem: storage.getItem,
+                    setItem: storage.setItem,
+                    removeItem: storage.removeItem,
+                    clear: storage.clear
+                };
+
+                let mirror = originalObject.getItem
+                    ? originalObject.getItem.call(storage, AMLL_SETTINGS_STORAGE_KEY)
+                    : null;
+
+                const normalizeKey = (key) => (typeof key === 'string' ? key : String(key));
+
+                const guardedGet = function (key) {
+                    if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
+                        return mirror;
+                    }
+                    return originalObject.getItem
+                        ? originalObject.getItem.call(this, key)
+                        : null;
+                };
+
+                const guardedSet = function (key, value) {
+                    if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
+                        mirror = String(value);
+                        return undefined;
+                    }
+                    return originalObject.setItem
+                        ? originalObject.setItem.call(this, key, value)
+                        : undefined;
+                };
+
+                const guardedRemove = function (key) {
+                    if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
+                        mirror = null;
+                        return undefined;
+                    }
+                    return originalObject.removeItem
+                        ? originalObject.removeItem.call(this, key)
+                        : undefined;
+                };
+
+                const guardedClear = function () {
+                    if (originalObject.clear) {
+                        originalObject.clear.call(this);
+                    }
+                    if (mirror !== null && mirror !== undefined && originalObject.setItem) {
+                        try {
+                            originalObject.setItem.call(this, AMLL_SETTINGS_STORAGE_KEY, mirror);
+                        } catch (error) {
+                            console.warn('[AMLL] 恢复 AMLL 缓存失败', error);
+                        }
+                    }
+                };
+
+                storage.getItem = guardedGet;
+                storage.setItem = guardedSet;
+                storage.removeItem = guardedRemove;
+                storage.clear = guardedClear;
+
+                return () => {
+                    storage.getItem = originalObject.getItem;
+                    storage.setItem = originalObject.setItem;
+                    storage.removeItem = originalObject.removeItem;
+                    storage.clear = originalObject.clear;
+                };
+            } catch (error) {
+                console.warn('[AMLL] 设置缓存保护失败', error);
+                return () => { };
+            }
+        }
+
         if (!window.__AMLL_DEFAULT_ALBUM__) {
             window.__AMLL_DEFAULT_ALBUM__ = "{{ url_for('static', filename='icons/icon-512x512.png') }}";
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
+            const restoreAmllStorage = guardAmllSettingsStorage();
+            window.addEventListener('beforeunload', () => {
+                try {
+                    restoreAmllStorage();
+                } catch (error) {
+                    console.warn('[AMLL] 恢复 Storage 失败', error);
+                }
+            }, { once: true });
+
             const audioPlayer = document.getElementById('audio-player');
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
