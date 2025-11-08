@@ -828,6 +828,32 @@
         .search-row--focus .search-box {
             width: 100%;
         }
+
+        @media screen and (min-width: 769px) and (orientation: landscape) {
+            .search-tools {
+                max-width: 1200px;
+                gap: 12px;
+                justify-content: center;
+                align-items: center;
+                flex-wrap: nowrap;
+            }
+            .search-row {
+                flex-wrap: nowrap;
+                flex: 0 0 auto;
+                min-width: fit-content;
+            }
+            .search-row--focus {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+            .search-row--focus .search-box {
+                width: 100%;
+                min-width: 0;
+            }
+        }
+        .search-row--focus .search-box {
+            width: 100%;
+        }
         .device-manage-button {
             position: relative;
             display: inline-flex;
@@ -898,6 +924,8 @@
                 </div>
                 <div class="search-row search-row--main">
                     <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
+                    <button class="action-button" onclick="triggerStaticImport()" title="选择 static.zip 快速导入">快速导入</button>
+                    <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
                     <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
                     <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
                 </div>
@@ -980,6 +1008,7 @@
                         onclick="editMusicPath('{{ file.data.song|e }}', '{{ file.filename|e }}')">修改音乐路径</button>
                     <button class="action-button" 
                         onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
+                    <button class="action-button" onclick="exportStatic('{{ file.filename|e }}')">导出分享</button>
                     <button class="action-button" 
                         onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
                     <button class="action-button"
@@ -1149,6 +1178,7 @@
             </div>
             
             <div class="editor-buttons">
+                <button onclick="saveAllImagePaths()">保存全部</button>
                 <button onclick="updateImagePath()">保存专辑图</button>
                 <button onclick="updateBackgroundPath()">保存背景图</button>
                 <button onclick="closeImagePathModal()">取消</button>
@@ -2048,6 +2078,16 @@
             document.getElementById('musicPathModal').style.display = 'none'
         }
 
+        const VALID_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+
+        function hasValidImageExtension(path) {
+            if (!path) {
+                return false
+            }
+            const lower = path.toLowerCase()
+            return VALID_IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))
+        }
+
         function editImagePath(path, jsonFile) {
             currentImagePath = path
             currentImageJsonFile = jsonFile
@@ -2085,9 +2125,7 @@
             }
 
             // 检查文件扩展名
-            const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-            const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
-            if (!hasValidExtension) {
+            if (!hasValidImageExtension(newPath)) {
                 alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
                 return
             }
@@ -2121,9 +2159,7 @@
 
             if (newPath) {
                 // 检查文件扩展名
-                const validExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-                const hasValidExtension = validExtensions.some(ext => newPath.toLowerCase().endsWith(ext))
-                if (!hasValidExtension) {
+                if (!hasValidImageExtension(newPath)) {
                     alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
                     return
                 }
@@ -2150,6 +2186,77 @@
                 .catch(error => {
                     alert('更新失败：' + error)
                 })
+        }
+
+        async function saveAllImagePaths() {
+            const albumPathInput = document.getElementById('newImagePath')
+            const backgroundPathInput = document.getElementById('newBackgroundPath')
+            const albumPath = albumPathInput.value.trim()
+            const rawBackgroundPath = backgroundPathInput.value.trim()
+
+            if (!albumPath) {
+                alert('请输入新的专辑图路径！')
+                return
+            }
+
+            if (!hasValidImageExtension(albumPath)) {
+                alert('请输入有效的专辑图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                return
+            }
+
+            let normalizedBackgroundPath = ''
+            if (rawBackgroundPath && rawBackgroundPath !== '!') {
+                if (!hasValidImageExtension(rawBackgroundPath)) {
+                    alert('请输入有效的背景图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                    return
+                }
+                normalizedBackgroundPath = stripSongsPrefix(rawBackgroundPath)
+            }
+
+            try {
+                const [albumResponse, backgroundResponse] = await Promise.all([
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'image',
+                            newPath: albumPath
+                        })
+                    }),
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'background',
+                            newPath: normalizedBackgroundPath
+                        })
+                    })
+                ])
+
+                if (!albumResponse.ok) {
+                    throw new Error('专辑图保存失败')
+                }
+                if (!backgroundResponse.ok) {
+                    throw new Error('背景图保存失败')
+                }
+
+                const albumResult = await albumResponse.json()
+                if (albumResult.status !== 'success') {
+                    throw new Error(albumResult.message || '专辑图保存失败')
+                }
+
+                const backgroundResult = await backgroundResponse.json()
+                if (backgroundResult.status !== 'success') {
+                    throw new Error(backgroundResult.message || '背景图保存失败')
+                }
+
+                closeImagePathModal()
+                location.reload()
+            } catch (error) {
+                alert('保存失败：' + (error.message || error))
+            }
         }
 
         function closeImagePathModal() {
@@ -2326,6 +2433,109 @@
                 .catch(error => {
                     alert('创建失败：' + error)
                 })
+        }
+
+        function triggerStaticImport() {
+            const input = document.getElementById('staticZipInput')
+            if (!input) {
+                alert('未找到导入控件')
+                return
+            }
+            input.value = ''
+            input.click()
+        }
+
+        async function handleStaticImport(event) {
+            const input = event ? event.target : null
+            const file = input && input.files ? input.files[0] : null
+            if (!file) {
+                return
+            }
+
+            if (!file.name.toLowerCase().endsWith('.zip')) {
+                alert('请选择 static.zip 文件')
+                input.value = ''
+                return
+            }
+
+            const formData = new FormData()
+            formData.append('file', file)
+
+            try {
+                const response = await fetch('/import_static', {
+                    method: 'POST',
+                    body: formData
+                })
+                const contentType = response.headers.get('content-type') || ''
+
+                if (!contentType.includes('application/json')) {
+                    throw new Error('服务器返回未知格式')
+                }
+
+                const result = await response.json()
+                if (response.ok && result.status === 'success') {
+                    alert(result.message || '导入成功')
+                    location.reload()
+                } else {
+                    throw new Error(result.message || '导入失败')
+                }
+            } catch (error) {
+                alert(error.message || '导入失败')
+            } finally {
+                if (input) {
+                    input.value = ''
+                }
+            }
+        }
+
+        async function exportStatic(filename) {
+            if (!filename) {
+                alert('缺少文件名')
+                return
+            }
+
+            try {
+                const response = await fetch('/export_static', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename })
+                })
+
+                const contentType = response.headers.get('content-type') || ''
+
+                if (!response.ok) {
+                    if (contentType.includes('application/json')) {
+                        const errorPayload = await response.json()
+                        throw new Error(errorPayload.message || '导出失败')
+                    }
+                    throw new Error('导出失败')
+                }
+
+                if (contentType.includes('application/json')) {
+                    const payload = await response.json()
+                    if (payload.status === 'error') {
+                        throw new Error(payload.message || '导出失败')
+                    }
+                    throw new Error(payload.message || '服务器返回未知内容')
+                }
+
+                const blob = await response.blob()
+                const url = URL.createObjectURL(blob)
+                const link = document.createElement('a')
+                link.href = url
+                link.download = 'static.zip'
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+                URL.revokeObjectURL(url)
+
+                const missingCount = parseInt(response.headers.get('x-missing-assets-count') || '0', 10)
+                if (missingCount > 0) {
+                    alert(`导出完成，但有 ${missingCount} 个资源未能打包。详情请查看压缩包内的 warnings.txt。`)
+                }
+            } catch (error) {
+                alert(error.message || '导出失败')
+            }
         }
 
         function showRenameModal(filename, title, artists) {

@@ -12,12 +12,14 @@ import sys
 import xml
 import uuid
 import csv
+import zipfile
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context, send_from_directory
+from io import BytesIO
+from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context, send_from_directory, send_file
 from re import compile, Pattern, Match
-from typing import Iterator, TextIO, AnyStr, Optional, Union
+from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List
 from xml.dom.minicompat import NodeList
 from xml.dom.minidom import Document, Element
 from flask.ctx import F
@@ -144,6 +146,79 @@ def resource_relative_from_path(path_value: Union[str, Path], resource: str) -> 
         raise ValueError('路径不在受控目录内') from exc
 
     return _normalize_relative_path(str(relative))
+
+
+def _extract_single_song_relative(value: Optional[str]) -> Optional[str]:
+    """Return the relative path under songs/ referenced by the provided string."""
+    if not value:
+        return None
+
+    cleaned = str(value).strip()
+    if not cleaned or cleaned == '!':
+        return None
+
+    normalized = cleaned.replace('\\', '/').strip()
+    parsed = urlparse(normalized)
+    candidate = parsed.path if parsed.scheme else normalized
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+
+    # Trim leading ./ or / segments repeatedly
+    while candidate.startswith('./'):
+        candidate = candidate[2:]
+    candidate = candidate.lstrip('/')
+
+    lower_candidate = candidate.lower()
+    if lower_candidate.startswith('static/'):
+        candidate = candidate[len('static/'):]
+        lower_candidate = candidate.lower()
+
+    while candidate.startswith('./'):
+        candidate = candidate[2:]
+        lower_candidate = candidate.lower()
+
+    candidate = candidate.lstrip('/')
+    lower_candidate = candidate.lower()
+    if not lower_candidate.startswith('songs/'):
+        return None
+
+    relative = candidate[len('songs/'):].lstrip('/')
+    if not relative:
+        return None
+
+    relative = relative.split('?', 1)[0].split('#', 1)[0].strip()
+    if not relative:
+        return None
+
+    try:
+        return _normalize_relative_path(relative)
+    except ValueError:
+        return None
+
+
+def collect_song_resource_paths(payload: Union[dict, list, str]) -> Set[str]:
+    """Walk a JSON payload and gather every referenced songs/ asset."""
+    collected: Set[str] = set()
+
+    def _walk(value: Union[dict, list, str, None]):
+        if isinstance(value, dict):
+            for item in value.values():
+                _walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                _walk(item)
+        elif isinstance(value, str):
+            if '::' in value:
+                for chunk in value.split('::'):
+                    _walk(chunk)
+                return
+            relative = _extract_single_song_relative(value)
+            if relative:
+                collected.add(relative)
+
+    _walk(payload)
+    return collected
 
 
 def get_public_base_url() -> str:
@@ -669,6 +744,9 @@ def backup_file():
 def delete_json():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('删除歌曲')
+    if locked_response:
+        return locked_response
     data = request.json
     filename = data['filename']
     json_path = BASE_PATH / 'static' / filename
@@ -692,6 +770,142 @@ def delete_json():
         return jsonify({'status': 'success'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/export_static', methods=['POST'])
+def export_static_bundle():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('导出分享')
+    if locked_response:
+        return locked_response
+
+    payload = request.get_json(silent=True) or {}
+    filename = payload.get('filename')
+    if not filename:
+        return jsonify({'status': 'error', 'message': '缺少文件名参数'}), 400
+
+    json_path = STATIC_DIR / filename
+    if not json_path.exists():
+        return jsonify({'status': 'error', 'message': 'JSON 文件不存在'}), 404
+
+    try:
+        with open(json_path, 'r', encoding='utf-8') as json_file:
+            json_data = json.load(json_file)
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': f'读取 JSON 失败: {exc}'}), 500
+
+    referenced_assets = collect_song_resource_paths(json_data)
+    missing_assets = [asset for asset in referenced_assets if not (SONGS_DIR / asset).exists()]
+    referenced_assets = {asset for asset in referenced_assets if (SONGS_DIR / asset).exists()}
+
+    archive_buffer = BytesIO()
+    try:
+        with zipfile.ZipFile(archive_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(json_path, arcname=json_path.name)
+            archive.writestr('songs/', '')
+            for asset in sorted(referenced_assets):
+                asset_path = SONGS_DIR / asset
+                if asset_path.exists():
+                    archive.write(asset_path, arcname=f"songs/{asset}".replace('\\', '/'))
+            if missing_assets:
+                warning_content = "Missing resources during export:\n" + "\n".join(missing_assets)
+                archive.writestr('warnings.txt', warning_content)
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': f'创建压缩包失败: {exc}'}), 500
+
+    archive_buffer.seek(0)
+    response = send_file(
+        archive_buffer,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='static.zip'
+    )
+    if missing_assets:
+        response.headers['X-Missing-Assets-Count'] = str(len(missing_assets))
+    return response
+
+
+@app.route('/import_static', methods=['POST'])
+def import_static_bundle():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('导入歌曲')
+    if locked_response:
+        return locked_response
+
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'status': 'error', 'message': '请上传 static.zip 文件'}), 400
+
+    file_bytes = upload.read()
+    if not file_bytes:
+        return jsonify({'status': 'error', 'message': '上传文件为空'}), 400
+
+    buffer = BytesIO(file_bytes)
+    imported_jsons: List[str] = []
+    imported_assets = 0
+
+    try:
+        with zipfile.ZipFile(buffer) as archive:
+            for info in archive.infolist():
+                if info.is_dir():
+                    continue
+
+                name = info.filename.replace('\\', '/')
+                if not name or name.startswith('__MACOSX'):
+                    continue
+
+                normalized = name.lstrip('/')
+                while normalized.startswith('./'):
+                    normalized = normalized[2:]
+                if normalized.lower().startswith('static/'):
+                    normalized = normalized[len('static/'):]
+                normalized = normalized.lstrip('/')
+                if not normalized:
+                    continue
+
+                try:
+                    relative_path = _normalize_relative_path(normalized)
+                except ValueError:
+                    continue
+
+                lower_relative = relative_path.lower()
+                if lower_relative.endswith('.json'):
+                    target_path = STATIC_DIR / relative_path
+                elif lower_relative.startswith('songs/'):
+                    target_path = STATIC_DIR / relative_path
+                else:
+                    continue
+
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+
+                is_json_file = target_path.suffix.lower() == '.json'
+
+                if is_json_file and target_path.exists():
+                    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+                    backup_path = build_backup_path(target_path)
+                    shutil.copy2(target_path, backup_path)
+
+                with archive.open(info) as source, open(target_path, 'wb') as destination:
+                    shutil.copyfileobj(source, destination)
+
+                if is_json_file:
+                    imported_jsons.append(target_path.name)
+                else:
+                    imported_assets += 1
+
+    except zipfile.BadZipFile:
+        return jsonify({'status': 'error', 'message': '文件不是有效的 ZIP 压缩包'}), 400
+
+    if not imported_jsons:
+        return jsonify({'status': 'error', 'message': '压缩包中未发现 JSON 文件'}), 400
+
+    return jsonify({
+        'status': 'success',
+        'message': f'导入完成。JSON: {len(imported_jsons)} 个，资源文件: {imported_assets} 个',
+        'jsonFiles': imported_jsons
+    })
 
 
 @app.route('/restore_file', methods=['POST'])
@@ -795,6 +1009,9 @@ def get_related_files(json_path):
 def update_json():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('更新歌曲信息')
+    if locked_response:
+        return locked_response
     data = request.json
     file_path = BASE_PATH / 'static' / data["filename"]
 
@@ -820,6 +1037,9 @@ def update_json():
 def save_lyrics():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('保存歌词')
+    if locked_response:
+        return locked_response
     try:
         data = request.json
         if not data or 'path' not in data or 'content' not in data:
@@ -980,6 +1200,9 @@ def find_related_json(lyrics_path):
 def update_file_path():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('修改文件路径')
+    if locked_response:
+        return locked_response
     data = request.json
     json_path = BASE_PATH / 'static' / data['jsonFile']
     file_type = data['fileType']
@@ -1052,6 +1275,9 @@ def update_file_path():
 def create_json():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('创建新歌')
+    if locked_response:
+        return locked_response
     data = request.json
     filename = data['filename']
     file_path = BASE_PATH / 'static' / filename
@@ -1075,6 +1301,9 @@ def create_json():
 def rename_json():
     if not is_request_allowed():
         return abort(403)
+    locked_response = require_unlocked_device('重命名歌曲')
+    if locked_response:
+        return locked_response
     data = request.json
     old_filename = data['oldFilename']
     new_filename = data['newFilename']
@@ -1125,6 +1354,11 @@ def rename_json():
 
 @app.route('/check_lyrics', methods=['POST'])
 def check_lyrics():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('检测歌词内容')
+    if locked_response:
+        return locked_response
     lyrics_path = request.json.get('path')
     try:
         real_path = resolve_resource_path(lyrics_path, 'songs')
@@ -3474,6 +3708,11 @@ def get_lyrics():
 
 @app.route('/export_lyrics_csv', methods=['POST'])
 def export_lyrics_csv():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('导出歌词')
+    if locked_response:
+        return locked_response
     try:
         data = request.get_json()
         lyrics_data = data.get('lyrics', [])
@@ -3499,6 +3738,11 @@ def export_lyrics_csv():
 
 @app.route('/get_json_data')
 def get_json_data():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('查看歌曲数据')
+    if locked_response:
+        return locked_response
     filename = request.args.get('filename')
     if not filename:
         return jsonify({'status': 'error', 'message': '缺少文件名参数'}), 400
@@ -3516,6 +3760,11 @@ def get_json_data():
 
 @app.route('/get_lyrics', methods=['POST'])
 def get_lyrics_by_path():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('查看歌词')
+    if locked_response:
+        return locked_response
     try:
         data = request.get_json()
         lyrics_path = data.get('path', '')
@@ -3659,7 +3908,7 @@ def is_local_request():
     if not security_config.get('security_enabled', True):
         return True
         
-    return remote in ['127.0.0.1', '::1']
+    return is_local_remote(remote)
 
 PORT_STATUS_FILE = BASE_PATH / 'port_status.json'
 SECURITY_CONFIG_FILE = BASE_PATH / 'security_config.json'
@@ -3764,6 +4013,21 @@ def is_trusted_device(device_id):
     
     return True
 
+def is_local_remote(remote: Optional[str] = None) -> bool:
+    """检查请求是否来自本地回环地址"""
+    if remote is None:
+        remote = getattr(request, 'remote_addr', None)
+    if not remote:
+        host = getattr(request, 'host', '')
+        remote = host.split(':', 1)[0] if host else ''
+    normalized = (remote or '').strip().lower()
+    if normalized in ('127.0.0.1', '::1', 'localhost'):
+        return True
+    if normalized.startswith('::ffff:127.'):
+        return True
+    return False
+
+
 def is_request_allowed():
     """统一的请求权限检查函数"""
     # 获取安全配置
@@ -3775,7 +4039,7 @@ def is_request_allowed():
         
     # 本机回环地址完全放行
     remote = request.remote_addr
-    if remote in ['127.0.0.1', '::1']:
+    if is_local_remote(remote):
         return True
 
     # 根据允许的 CORS 来源放行指定前端（如 AMLL-Web）
@@ -3799,6 +4063,38 @@ def is_request_allowed():
         return True
         
     return False
+
+def is_device_unlocked() -> bool:
+    """检查安全防护状态，判断当前设备是否已解锁"""
+    security_config = get_security_config()
+    
+    # 安全防护关闭时放行
+    if not security_config.get('security_enabled', True):
+        return True
+    
+    # 本机访问视为超级管理员
+    if is_local_remote(request.remote_addr):
+        return True
+    
+    device_id = request.cookies.get('FEW_DEVICE_ID')
+    if device_id and is_trusted_device(device_id):
+        return True
+    
+    return False
+
+def require_unlocked_device(action: str):
+    """统一处理需要解锁设备的敏感操作"""
+    if is_device_unlocked():
+        return None
+    
+    message = f"{action}失败：设备未解锁或安全防护已开启"
+    app.logger.warning(
+        "Blocked locked-device operation: %s, path=%s, ip=%s",
+        action,
+        request.path,
+        request.remote_addr
+    )
+    return jsonify({'status': 'error', 'message': message}), 403
 
 # 认证相关API端点
 @app.route('/auth/login', methods=['POST'])
@@ -4044,6 +4340,9 @@ def api_toggle_security():
 def api_switch_port():
     if not is_local_request():
         return abort(403)
+    locked_response = require_unlocked_device('切换随机端口')
+    if locked_response:
+        return locked_response
     # 生成随机端口（1025-65535，避开常用端口）
     import random
     for _ in range(10):
@@ -4066,6 +4365,9 @@ def api_switch_port():
 def api_restore_port():
     if not is_local_request():
         return abort(403)
+    locked_response = require_unlocked_device('恢复端口')
+    if locked_response:
+        return locked_response
     set_port_status('normal', 5000)
     print(f'[端口恢复] 已写入 port_status.json: mode=normal, port=5000')
     # 记录端口恢复审计日志
