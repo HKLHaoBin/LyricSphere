@@ -61,6 +61,40 @@ app.secret_key = 'your_random_secret_key'
 # 添加Jinja2全局过滤器
 app.jinja_env.globals.update(tojson=json.dumps)
 
+def cleanup_missing_ssl_cert_env() -> List[str]:
+    """
+    Remove SSL-related environment variables that point to missing files/dirs.
+    This prevents ssl.create_default_context from crashing with FileNotFoundError.
+    """
+    removed: List[str] = []
+    file_envs = ('SSL_CERT_FILE', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE')
+    for env_key in file_envs:
+        candidate = os.environ.get(env_key)
+        if candidate and not os.path.isfile(candidate):
+            removed.append(f"{env_key}={candidate}")
+            os.environ.pop(env_key, None)
+
+    cert_dir = os.environ.get('SSL_CERT_DIR')
+    if cert_dir and not os.path.isdir(cert_dir):
+        removed.append(f"SSL_CERT_DIR={cert_dir}")
+        os.environ.pop('SSL_CERT_DIR', None)
+    return removed
+
+
+def build_openai_client(api_key: str, base_url: str) -> OpenAI:
+    """Create OpenAI client with a fallback when SSL cert env vars reference missing paths."""
+    try:
+        return OpenAI(api_key=api_key, base_url=base_url)
+    except FileNotFoundError:
+        cleared = cleanup_missing_ssl_cert_env()
+        if cleared:
+            app.logger.warning(
+                "OpenAI客户端初始化时检测到失效的SSL证书路径，已移除: %s",
+                ', '.join(cleared)
+            )
+            return OpenAI(api_key=api_key, base_url=base_url)
+        raise
+
 # 所有路径定义使用绝对路径
 STATIC_DIR = BASE_PATH / 'static'
 SONGS_DIR = STATIC_DIR / 'songs'
@@ -3135,8 +3169,7 @@ def probe_ai():
             target = '思考模型' if mode == 'thinking' else '翻译模型'
             return jsonify({'status': 'error', 'message': f'未提供{target}的Base URL'})
 
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=base_url)
+        client = build_openai_client(api_key=api_key, base_url=base_url)
         def _models_endpoint_missing(err: Exception) -> bool:
             status_code = getattr(err, 'status_code', None)
             if status_code == 404:
@@ -3389,7 +3422,7 @@ def translate_lyrics():
                                 thinking_messages.append({"role": "system", "content": thinking_system_prompt})
                             thinking_messages.append({"role": "user", "content": numbered_lyrics})
 
-                        thinking_client = OpenAI(api_key=thinking_api_key, base_url=thinking_base_url)
+                        thinking_client = build_openai_client(api_key=thinking_api_key, base_url=thinking_base_url)
                         thinking_response = thinking_client.chat.completions.create(
                             model=thinking_model,
                             messages=thinking_messages,
@@ -3464,7 +3497,7 @@ def translate_lyrics():
                 # 调用AI服务
                 api_start_time = time.time()
                 try:
-                    client = OpenAI(api_key=api_key, base_url=base_url)
+                    client = build_openai_client(api_key=api_key, base_url=base_url)
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
