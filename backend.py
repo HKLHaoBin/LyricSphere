@@ -1986,33 +1986,18 @@ def parse_syllable_info(content, marker='', offset=0):
     content = preprocess_brackets(content)
     syllables = []
 
-    if marker in ['6', '7', '8']:
-        pattern = r'\(([^()]+?)\)\((\d+),(\d+)\)'
-        matches = re.finditer(pattern, content)
-        for match in matches:
-            text_part = match.group(1)
-            start_ms = int(match.group(2))
-            duration_ms = int(match.group(3))
-            start_ms += offset  # 应用 offset
-            syllables.append({
-                'text': text_part,
-                'start_ms': start_ms,
-                'duration_ms': duration_ms
-            })
-
-    if not syllables:
-        pattern = r'([^()]*?)\((\d+),(\d+)\)'
-        matches = re.finditer(pattern, content)
-        for match in matches:
-            text_part = match.group(1)
-            start_ms = int(match.group(2))
-            duration_ms = int(match.group(3))
-            start_ms += offset  # 应用 offset
-            syllables.append({
-                'text': text_part,
-                'start_ms': start_ms,
-                'duration_ms': duration_ms
-            })
+    pattern = r'(.*?)\((\d+),(\d+)\)'
+    matches = re.finditer(pattern, content)
+    for match in matches:
+        text_part = match.group(1)
+        start_ms = int(match.group(2))
+        duration_ms = int(match.group(3))
+        start_ms += offset  # 应用 offset
+        syllables.append({
+            'text': text_part,
+            'start_ms': start_ms,
+            'duration_ms': duration_ms
+        })
 
     if not syllables:
         line_match = re.search(r'^(.*)\((\d+),(\d+)\)$', content)
@@ -2140,10 +2125,13 @@ def lys_to_ttml(input_path, output_path):
         trans_path = find_translation_file(input_path)
         translation_dict_ms = {}
         trans_offset = 0
+        translation_author = None
         if trans_path:
             try:
                 with open(trans_path, 'r', encoding='utf-8') as f:
                     trans_content = f.read()
+
+                translation_author = extract_tag_value(trans_content, 'by')
 
                 # 提取翻译文件自身的 offset（毫秒）
                 trans_offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', trans_content)
@@ -2204,7 +2192,7 @@ def lys_to_ttml(input_path, output_path):
 
         # ---- 统计时长范围 ----
         has_duet = any(line['is_duet'] for line in parsed_lines)
-        dom, div = create_ttml_document(has_duet, author_name)
+        dom, div = create_ttml_document(has_duet, author_name, translation_author)
 
         DEFAULT_LAST_LINE_TAIL_MS = 10000
         for idx, line_info in enumerate(parsed_lines):
@@ -2254,23 +2242,25 @@ def lys_to_ttml(input_path, output_path):
                 p = dom.createElement('p')
                 p.setAttribute('begin', begin)
                 p.setAttribute('end', end)
-                p.setAttribute('itunes:key', f'L{key_idx}')
                 p.setAttribute('ttm:agent', 'v1' if not line_info['is_duet'] else 'v2')
+                p.setAttribute('itunes:key', f'L{key_idx}')
                 key_idx += 1
 
                 # 逐音节 span（Apple 风格）
                 for syl in syllables:
                     text = syl['text']
-                    if text is not None:
-                        span = dom.createElement('span')
-                        span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
-                        span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
-                        txt, tail = text_tail_space(text)
-                        if txt:
-                            span.appendChild(dom.createTextNode(txt))
+                    if text is None:
+                        continue
+                    span = dom.createElement('span')
+                    span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
+                    span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
+                    txt, tail = text_tail_space(text)
+                    if txt:
+                        span.appendChild(dom.createTextNode(txt))
+                    if span.childNodes:
                         p.appendChild(span)
-                        if tail:
-                            p.appendChild(dom.createTextNode(tail))
+                    if tail:
+                        p.appendChild(dom.createTextNode(tail))
 
                 # 有翻译就加翻译 span；没有就不加（精确匹配）
                 if line_info.get('translation'):
@@ -2301,16 +2291,18 @@ def lys_to_ttml(input_path, output_path):
 
                 for syl in syllables:
                     text = syl['text']
-                    if text is not None:
-                        span = dom.createElement('span')
-                        span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
-                        span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
-                        txt, tail = text_tail_space(text)
-                        if txt:
-                            span.appendChild(dom.createTextNode(txt))
+                    if text is None:
+                        continue
+                    span = dom.createElement('span')
+                    span.setAttribute('begin', ms_to_ttml_time(syl['start_ms']))
+                    span.setAttribute('end',   ms_to_ttml_time(syl['start_ms'] + syl['duration_ms']))
+                    txt, tail = text_tail_space(text)
+                    if txt:
+                        span.appendChild(dom.createTextNode(txt))
+                    if span.childNodes:
                         bg_span.appendChild(span)
-                        if tail:
-                            bg_span.appendChild(dom.createTextNode(tail))
+                    if tail:
+                        bg_span.appendChild(dom.createTextNode(tail))
 
                 # 背景行的翻译（如果这一行也刚好有对应时间翻译）
                 if line_info.get('translation'):
@@ -2324,7 +2316,7 @@ def lys_to_ttml(input_path, output_path):
 
         # 单行输出
         with open(output_path, 'w', encoding='utf-8') as f:
-            dom.writexml(f, indent='', addindent='', newl='', encoding='utf-8')
+            f.write(dom.documentElement.toxml())
 
         return True, None
 
@@ -2332,7 +2324,9 @@ def lys_to_ttml(input_path, output_path):
         app.logger.error(f"无法转换LYS到TTML: {input_path}. 错误: {str(e)}")
         return False, str(e)
 
-def create_ttml_document(has_duet=False, author_name: Optional[str] = None):
+def create_ttml_document(has_duet=False,
+                         author_name: Optional[str] = None,
+                         translation_author: Optional[str] = None):
     """创建TTML文档基础结构（Apple风格）"""
     dom = xml.dom.minidom.Document()
 
@@ -2360,11 +2354,33 @@ def create_ttml_document(has_duet=False, author_name: Optional[str] = None):
         agent2.setAttribute('xml:id', 'v2')
         metadata.appendChild(agent2)
 
+    def _append_author_meta(value: str):
+        meta = dom.createElement('amll:meta')
+        meta.setAttribute('key', 'ttmlAuthorGithubLogin')
+        meta.setAttribute('value', value)
+        metadata.appendChild(meta)
+
+    added_meta_values: set[str] = set()
+
     if author_name:
-        author_meta = dom.createElement('amll:meta')
-        author_meta.setAttribute('key', 'ttmlAuthorGithubLogin')
-        author_meta.setAttribute('value', author_name)
-        metadata.appendChild(author_meta)
+        normalized = author_name.strip()
+        if normalized and normalized not in added_meta_values:
+            _append_author_meta(normalized)
+            added_meta_values.add(normalized)
+
+    if translation_author:
+        ta = translation_author.strip()
+        combined_author = ''
+        if author_name and ta.startswith(author_name):
+            combined_author = ta
+        elif author_name:
+            combined_author = f"{author_name}，{ta}"
+        else:
+            combined_author = ta
+        combined_author = combined_author.strip()
+        if combined_author and combined_author not in added_meta_values:
+            _append_author_meta(combined_author)
+            added_meta_values.add(combined_author)
 
     body = dom.createElement('body')
     tt.appendChild(body)
@@ -2451,10 +2467,12 @@ def lrc_to_ttml(input_path, output_path):
         # ---- 读取并解析翻译 LRC：转成 毫秒→文本 的字典，供"精确匹配" ----
         trans_path = find_translation_file(input_path)
         translation_dict_ms = {}
+        translation_author = None
         if trans_path:
             try:
                 with open(trans_path, 'r', encoding='utf-8') as f:
                     trans_content = f.read()
+                translation_author = extract_tag_value(trans_content, 'by')
                 trans_lines = [line for line in trans_content.splitlines() if line.strip()]
                 for line in trans_lines:
                     begin_time_str, content = parse_lrc_line(line)  # "mm:ss.mmm"
@@ -2519,7 +2537,7 @@ def lrc_to_ttml(input_path, output_path):
         has_duet = any(line['is_duet'] for line in valid_lines)
 
         # 创建TTML文档
-        dom, div = create_ttml_document(has_duet, author_name)
+        dom, div = create_ttml_document(has_duet, author_name, translation_author)
 
         # 设置body和div的时间范围
         body_elements = dom.getElementsByTagName('body')
@@ -2557,8 +2575,8 @@ def lrc_to_ttml(input_path, output_path):
                     p = dom.createElement('p')
                     p.setAttribute('begin', begin_str_fmt)
                     p.setAttribute('end', end_str_fmt)
-                    p.setAttribute('itunes:key', f'L{key_idx}')
                     p.setAttribute('ttm:agent', 'v1' if not is_duet else 'v2')
+                    p.setAttribute('itunes:key', f'L{key_idx}')
                     key_idx += 1
 
                     # 添加文本节点（Apple风格）
@@ -2611,8 +2629,8 @@ def lrc_to_ttml(input_path, output_path):
                         p = dom.createElement('p')
                         p.setAttribute('begin', begin_str_fmt)
                         p.setAttribute('end', end_str_fmt)
-                        p.setAttribute('itunes:key', f'L{key_idx}')
                         p.setAttribute('ttm:agent', 'v1')
+                        p.setAttribute('itunes:key', f'L{key_idx}')
                         key_idx += 1
 
                         # 背景作为span内嵌
@@ -2644,7 +2662,7 @@ def lrc_to_ttml(input_path, output_path):
 
         # 写入TTML文件（单行格式，无换行符和缩进）
         with open(output_path, 'w', encoding='utf-8') as f:
-            dom.writexml(f, indent='', addindent='', newl='', encoding='utf-8')
+            f.write(dom.documentElement.toxml())
 
         return True, None
     except Exception as e:
