@@ -1,4 +1,4 @@
-# LyricSphere
+# LyricSphere 
 
 LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示动态歌词，并支持实时同步播放。该应用支持多种歌词格式，包括 .lrc、.lys 和 .ttml，并提供了编辑、转换和显示歌词的功能。
 
