@@ -2214,37 +2214,37 @@
             }
 
             try {
-                const [albumResponse, backgroundResponse] = await Promise.all([
-                    fetch('/update_file_path', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            jsonFile: currentImageJsonFile,
-                            fileType: 'image',
-                            newPath: albumPath
-                        })
-                    }),
-                    fetch('/update_file_path', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            jsonFile: currentImageJsonFile,
-                            fileType: 'background',
-                            newPath: normalizedBackgroundPath
-                        })
+                const albumResponse = await fetch('/update_file_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonFile: currentImageJsonFile,
+                        fileType: 'image',
+                        newPath: albumPath
                     })
-                ])
+                })
 
                 if (!albumResponse.ok) {
                     throw new Error('专辑图保存失败')
-                }
-                if (!backgroundResponse.ok) {
-                    throw new Error('背景图保存失败')
                 }
 
                 const albumResult = await albumResponse.json()
                 if (albumResult.status !== 'success') {
                     throw new Error(albumResult.message || '专辑图保存失败')
+                }
+
+                const backgroundResponse = await fetch('/update_file_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonFile: currentImageJsonFile,
+                        fileType: 'background',
+                        newPath: normalizedBackgroundPath
+                    })
+                })
+
+                if (!backgroundResponse.ok) {
+                    throw new Error('背景图保存失败')
                 }
 
                 const backgroundResult = await backgroundResponse.json()

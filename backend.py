@@ -82,18 +82,43 @@ def cleanup_missing_ssl_cert_env() -> List[str]:
 
 
 def build_openai_client(api_key: str, base_url: str) -> OpenAI:
-    """Create OpenAI client with a fallback when SSL cert env vars reference missing paths."""
+    """Create OpenAI client with resilient SSL setup."""
+    def _create_openai_client(http_client=None) -> OpenAI:
+        return OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
+
     try:
-        return OpenAI(api_key=api_key, base_url=base_url)
-    except FileNotFoundError:
+        return _create_openai_client()
+    except FileNotFoundError as exc:
         cleared = cleanup_missing_ssl_cert_env()
         if cleared:
             app.logger.warning(
                 "OpenAI客户端初始化时检测到失效的SSL证书路径，已移除: %s",
                 ', '.join(cleared)
             )
-            return OpenAI(api_key=api_key, base_url=base_url)
-        raise
+            try:
+                return _create_openai_client()
+            except FileNotFoundError as retry_exc:
+                exc = retry_exc
+
+        try:
+            import certifi
+            import httpx
+            ca_path = certifi.where()
+            app.logger.warning(
+                "OpenAI客户端初始化时SSL默认证书加载失败，改用certifi CA文件: %s",
+                ca_path
+            )
+            http_client = httpx.Client(verify=ca_path, timeout=httpx.Timeout(30.0))
+            return _create_openai_client(http_client=http_client)
+        except Exception as fallback_error:
+            app.logger.error("使用certifi CA回退仍失败: %s", fallback_error)
+            try:
+                app.logger.warning("将禁用SSL验证以继续运行AI翻译（仅用于临时兼容）")
+                http_client = httpx.Client(verify=False, timeout=httpx.Timeout(30.0))
+                return _create_openai_client(http_client=http_client)
+            except Exception as insecure_error:
+                app.logger.error("禁用SSL验证的回退也失败: %s", insecure_error)
+        raise exc
 
 # 所有路径定义使用绝对路径
 STATIC_DIR = BASE_PATH / 'static'
@@ -2176,9 +2201,7 @@ def lys_to_ttml(input_path, output_path):
 
             if syllables:
                 begin_time_ms = syllables[0]['start_ms']
-                # 给翻译时间也叠加 LYS 的 offset（与歌词同步）
-                # 使用容差匹配（±300ms）找最接近的翻译
-                translation_content = _nearest_translation(begin_time_ms, translation_dict_ms, 300)
+                last_end_ms = syllables[-1]['start_ms'] + syllables[-1]['duration_ms']
 
                 parsed_lines.append({
                     'marker': marker,
@@ -2187,8 +2210,19 @@ def lys_to_ttml(input_path, output_path):
                     'is_duet': marker in ['2', '5'],
                     'is_background': marker in ['6', '7', '8'] or parenthetical_background,
                     'is_parenthetical_background': parenthetical_background,
-                    'translation': translation_content
+                    'translation': None,
+                    'begin_ms': begin_time_ms,
+                    'last_end_ms': last_end_ms,
                 })
+
+        # 统一按开始时间排序，保证 key 顺序与时间线一致
+        parsed_lines.sort(key=lambda x: x['begin_ms'])
+
+        # 按时间顺序匹配翻译，避免乱序导致错行
+        translation_map = dict(translation_dict_ms)
+        for line_info in parsed_lines:
+            begin_ms = line_info['begin_ms']
+            line_info['translation'] = _nearest_translation(begin_ms, translation_map, 300)
 
         # ---- 统计时长范围 ----
         has_duet = any(line['is_duet'] for line in parsed_lines)
@@ -2201,15 +2235,13 @@ def lys_to_ttml(input_path, output_path):
                 line_info['begin_ms'] = 0
                 line_info['end_ms'] = 0
                 continue
-            begin_ms = syllables[0]['start_ms']
-            last_syl = syllables[-1]
-            last_end_ms = last_syl['start_ms'] + last_syl['duration_ms']
+            begin_ms = line_info['begin_ms']
+            last_end_ms = line_info['last_end_ms']
             if idx + 1 < len(parsed_lines):
-                next_begin = parsed_lines[idx + 1]['syllables'][0]['start_ms']
+                next_begin = parsed_lines[idx + 1]['begin_ms']
                 end_ms = max(last_end_ms, next_begin)
             else:
                 end_ms = max(last_end_ms, begin_ms + DEFAULT_LAST_LINE_TAIL_MS)
-            line_info['begin_ms'] = begin_ms
             line_info['end_ms'] = end_ms
 
         first_begin = parsed_lines[0]['begin_ms'] if parsed_lines else 0
@@ -2233,6 +2265,7 @@ def lys_to_ttml(input_path, output_path):
             if not syllables:
                 continue
 
+            translation_text = (line_info.get('translation') or '').strip()
             begin_ms = line_info['begin_ms']
             end_ms   = line_info['end_ms']
             begin = ms_to_ttml_time(begin_ms)
@@ -2262,12 +2295,12 @@ def lys_to_ttml(input_path, output_path):
                     if tail:
                         p.appendChild(dom.createTextNode(tail))
 
-                # 有翻译就加翻译 span；没有就不加（精确匹配）
-                if line_info.get('translation'):
+                # 有翻译就加翻译 span；空白翻译不写入
+                if translation_text:
                     trans_span = dom.createElement('span')
                     trans_span.setAttribute('ttm:role', 'x-translation')
                     trans_span.setAttribute('xml:lang', 'zh-CN')
-                    trans_span.appendChild(dom.createTextNode(line_info['translation']))
+                    trans_span.appendChild(dom.createTextNode(translation_text))
                     p.appendChild(trans_span)
 
                 div.appendChild(p)
@@ -2305,11 +2338,11 @@ def lys_to_ttml(input_path, output_path):
                         bg_span.appendChild(dom.createTextNode(tail))
 
                 # 背景行的翻译（如果这一行也刚好有对应时间翻译）
-                if line_info.get('translation'):
+                if translation_text:
                     trans_span = dom.createElement('span')
                     trans_span.setAttribute('ttm:role', 'x-translation')
                     trans_span.setAttribute('xml:lang', 'zh-CN')
-                    trans_span.appendChild(dom.createTextNode(line_info['translation']))
+                    trans_span.appendChild(dom.createTextNode(translation_text))
                     bg_span.appendChild(trans_span)
 
                 prev_main_p.appendChild(bg_span)
