@@ -1,4 +1,6 @@
 #最终发布版本
+import base64
+import struct
 import hashlib
 import json
 import bcrypt
@@ -21,6 +23,7 @@ from flask import Flask, jsonify, render_template, request, Response, session, g
 from re import compile, Pattern, Match
 from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List
 from xml.dom.minicompat import NodeList
+from xml.dom import Node
 from xml.dom.minidom import Document, Element
 from flask.ctx import F
 from openai import OpenAI
@@ -430,7 +433,7 @@ useu = ""
 # ==== AMLL -> 前端 的实时总线（SSE） ====
 # 全局状态（给前端快照用）
 AMLL_STATE = {
-    "song": {"musicName": "", "artists": [], "duration": 0},
+    "song": {"musicName": "", "artists": [], "duration": 0, "album": "", "cover": "", "cover_data_url": ""},
     "progress_ms": 0,
     "lines": [],
     "last_update": 0
@@ -1117,6 +1120,13 @@ def save_lyrics():
             return jsonify({'status': 'error', 'message': '无效的路径格式'})
 
         content = data['content']
+        content_to_write = content
+        if file_path.suffix.lower() == '.ttml':
+            try:
+                content_to_write = sanitize_ttml_content(content)
+            except Exception as exc:
+                app.logger.error(f"TTML 白名单净化失败: {exc}")
+                return jsonify({'status': 'error', 'message': f'TTML 解析失败，未保存: {exc}'})
 
         # 验证文件名
         if not file_path.name or file_path.name in ('.', '..'):
@@ -1211,7 +1221,7 @@ def save_lyrics():
 
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+                f.write(content_to_write)
             app.logger.info(f"保存文件成功: {file_path}")
             return jsonify({'status': 'success'})
         except Exception as e:
@@ -1883,8 +1893,21 @@ def ttml_to_lys(input_path, songs_dir):
     lyric_path = ''
     trans_path = ''
     try:
-        # 解析XML文件
-        dom: Document = xml.dom.minidom.parse(input_path)
+        try:
+            with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
+                raw_ttml = f.read()
+        except Exception as exc:
+            app.logger.error(f"读取TTML文件失败: {input_path}. 错误: {exc}")
+            return False, None, None
+
+        try:
+            sanitized_ttml = sanitize_ttml_content(raw_ttml)
+        except Exception as exc:
+            app.logger.error(f"TTML 白名单过滤失败: {input_path}. 错误: {exc}")
+            return False, None, None
+
+        # 解析净化后的 XML
+        dom: Document = xml.dom.minidom.parseString(sanitized_ttml)
         tt: Document = dom.documentElement  # 获取根元素
 
         # 获取tt中的body/head元素
@@ -2422,6 +2445,288 @@ def create_ttml_document(has_duet=False,
     body.appendChild(div)
 
     return dom, div
+
+
+def sanitize_ttml_content(ttml_text: str) -> str:
+    """
+    Rebuild TTML with a strict whitelist to strip complex/unknown metadata.
+    Only preserves Apple-style lyric timing, amll:meta entries, agents, and
+    translation/romanization/background spans.
+    """
+    try:
+        src_dom = xml.dom.minidom.parseString(ttml_text)
+    except Exception as exc:
+        raise ValueError(f"TTML 解析失败: {exc}") from exc
+
+    p_elements = src_dom.getElementsByTagName('p')
+    if not p_elements:
+        raise ValueError("TTML 中缺少 <p> 节点，无法净化保存")
+
+    def _node_text(node) -> str:
+        parts: List[str] = []
+        for child in node.childNodes:
+            if child.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE):
+                if child.nodeValue:
+                    parts.append(child.nodeValue)
+            elif child.nodeType == Node.ELEMENT_NODE:
+                parts.append(_node_text(child))
+        return ''.join(parts)
+
+    def _clean_bg_text(value: str) -> str:
+        cleaned = (value or '').strip()
+        cleaned = re.sub(r'^[（(]', '', cleaned)
+        cleaned = re.sub(r'[)）]$', '', cleaned)
+        return cleaned.strip()
+
+    def _is_translation_text(node) -> bool:
+        parent = getattr(node, 'parentNode', None)
+        if not parent or getattr(parent, 'tagName', None) != 'translation':
+            return False
+        grand_parent = getattr(parent, 'parentNode', None)
+        if not grand_parent or getattr(grand_parent, 'tagName', None) != 'translations':
+            return False
+        root = getattr(grand_parent, 'parentNode', None)
+        return bool(root and getattr(root, 'tagName', None) == 'iTunesMetadata')
+
+    def _is_transliteration_text(node) -> bool:
+        parent = getattr(node, 'parentNode', None)
+        if not parent or getattr(parent, 'tagName', None) != 'transliteration':
+            return False
+        grand_parent = getattr(parent, 'parentNode', None)
+        if not grand_parent or getattr(grand_parent, 'tagName', None) != 'transliterations':
+            return False
+        root = getattr(grand_parent, 'parentNode', None)
+        return bool(root and getattr(root, 'tagName', None) == 'iTunesMetadata')
+
+    translations: dict[str, dict[str, str]] = {}
+    timed_translations: dict[str, dict[str, str]] = {}
+    for text_el in src_dom.getElementsByTagName('text'):
+        if not text_el.hasAttribute('for') or not _is_translation_text(text_el):
+            continue
+        key = text_el.getAttribute('for')
+        main_parts: List[str] = []
+        bg_parts: List[str] = []
+        has_span_child = False
+        for child in text_el.childNodes:
+            if child.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE):
+                if child.nodeValue:
+                    main_parts.append(child.nodeValue)
+            elif child.nodeType == Node.ELEMENT_NODE:
+                if child.tagName == 'span':
+                    has_span_child = True
+                role = child.getAttribute('ttm:role') if child.hasAttribute('ttm:role') else ''
+                if role == 'x-bg':
+                    bg_parts.append(_node_text(child))
+        main = ''.join(main_parts).strip()
+        bg = _clean_bg_text(''.join(bg_parts))
+        if main or bg:
+            target = timed_translations if has_span_child else translations
+            target[key] = {'main': main, 'bg': bg}
+            if has_span_child:
+                translations.pop(key, None)
+
+    line_romanizations: dict[str, dict[str, str]] = {}
+    for text_el in src_dom.getElementsByTagName('text'):
+        if not text_el.hasAttribute('for') or not _is_transliteration_text(text_el):
+            continue
+        key = text_el.getAttribute('for')
+        line_roman_main: List[str] = []
+        line_roman_bg: List[str] = []
+        for child in text_el.childNodes:
+            if child.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE):
+                if child.nodeValue:
+                    line_roman_main.append(child.nodeValue)
+            elif child.nodeType == Node.ELEMENT_NODE:
+                role = child.getAttribute('ttm:role') if child.hasAttribute('ttm:role') else ''
+                if role == 'x-bg':
+                    line_roman_bg.append(_node_text(child))
+                elif child.getAttribute('begin') and child.getAttribute('end'):
+                    line_roman_main.append(_node_text(child))
+        roman_main = ''.join(line_roman_main).strip()
+        roman_bg = _clean_bg_text(''.join(line_roman_bg))
+        if roman_main or roman_bg:
+            line_romanizations[key] = {'main': roman_main, 'bg': roman_bg}
+
+    main_agent_id = 'v1'
+    for agent in src_dom.getElementsByTagName('ttm:agent'):
+        if agent.getAttribute('type') == 'person':
+            xml_id = agent.getAttribute('xml:id')
+            if xml_id:
+                main_agent_id = xml_id
+                break
+
+    has_duet = any(
+        p.getAttribute('ttm:agent')
+        and p.getAttribute('ttm:agent') != main_agent_id
+        for p in p_elements
+    )
+
+    dom, div = create_ttml_document(has_duet)
+
+    metadata_nodes = dom.getElementsByTagName('metadata')
+    if metadata_nodes:
+        metadata_el = metadata_nodes[0]
+        for meta in src_dom.getElementsByTagName('amll:meta'):
+            key = meta.getAttribute('key')
+            value = meta.getAttribute('value')
+            if key and value:
+                clone = dom.createElement('amll:meta')
+                clone.setAttribute('key', key)
+                clone.setAttribute('value', value)
+                metadata_el.appendChild(clone)
+
+    src_body_nodes = src_dom.getElementsByTagName('body')
+    if src_body_nodes:
+        dur_value = src_body_nodes[0].getAttribute('dur')
+        dst_body_nodes = dom.getElementsByTagName('body')
+        if dur_value and dst_body_nodes:
+            dst_body_nodes[0].setAttribute('dur', dur_value)
+        src_div_nodes = src_body_nodes[0].getElementsByTagName('div')
+        if src_div_nodes:
+            begin = src_div_nodes[0].getAttribute('begin')
+            end = src_div_nodes[0].getAttribute('end')
+            if begin:
+                div.setAttribute('begin', begin)
+            if end:
+                div.setAttribute('end', end)
+
+    def normalize_agent(agent_value: str) -> str:
+        if not agent_value:
+            return 'v1'
+        return 'v1' if agent_value == main_agent_id else 'v2'
+
+    def copy_lyric_children(src_parent, dst_parent):
+        for child in src_parent.childNodes:
+            if child.nodeType in (Node.TEXT_NODE, Node.CDATA_SECTION_NODE):
+                if child.nodeValue:
+                    dst_parent.appendChild(dom.createTextNode(child.nodeValue))
+                continue
+            if child.nodeType != Node.ELEMENT_NODE:
+                continue
+            if child.tagName != 'span':
+                continue
+
+            role = child.getAttribute('ttm:role') if child.hasAttribute('ttm:role') else ''
+            if role == 'x-bg':
+                bg_span = dom.createElement('span')
+                bg_span.setAttribute('ttm:role', 'x-bg')
+                begin = child.getAttribute('begin')
+                end = child.getAttribute('end')
+                if begin:
+                    bg_span.setAttribute('begin', begin)
+                if end:
+                    bg_span.setAttribute('end', end)
+                copy_lyric_children(child, bg_span)
+                if bg_span.childNodes:
+                    dst_parent.appendChild(bg_span)
+                continue
+
+            if role in {'x-translation', 'x-roman'}:
+                meta_span = dom.createElement('span')
+                meta_span.setAttribute('ttm:role', role)
+                if role == 'x-translation' and child.getAttribute('xml:lang'):
+                    meta_span.setAttribute('xml:lang', child.getAttribute('xml:lang'))
+                copy_lyric_children(child, meta_span)
+                if meta_span.childNodes:
+                    dst_parent.appendChild(meta_span)
+                continue
+
+            begin = child.getAttribute('begin')
+            end = child.getAttribute('end')
+            if not (begin and end):
+                continue
+
+            span = dom.createElement('span')
+            span.setAttribute('begin', begin)
+            span.setAttribute('end', end)
+            if child.hasAttribute('amll:empty-beat'):
+                span.setAttribute('amll:empty-beat', child.getAttribute('amll:empty-beat'))
+            if child.getAttribute('amll:obscene') == 'true':
+                span.setAttribute('amll:obscene', 'true')
+            copy_lyric_children(child, span)
+            if span.childNodes:
+                dst_parent.appendChild(span)
+
+    for p in p_elements:
+        begin = p.getAttribute('begin')
+        end = p.getAttribute('end')
+        if not (begin and end):
+            continue
+
+        new_p = dom.createElement('p')
+        new_p.setAttribute('begin', begin)
+        new_p.setAttribute('end', end)
+        itunes_key = ''
+        if p.hasAttribute('itunes:key'):
+            itunes_key = p.getAttribute('itunes:key')
+            new_p.setAttribute('itunes:key', itunes_key)
+        new_p.setAttribute('ttm:agent', normalize_agent(p.getAttribute('ttm:agent')))
+
+        copy_lyric_children(p, new_p)
+
+        def has_role_child(parent, role: str) -> bool:
+            for child in parent.childNodes:
+                if (
+                    child.nodeType == Node.ELEMENT_NODE
+                    and child.tagName == 'span'
+                    and child.getAttribute('ttm:role') == role
+                ):
+                    return True
+            return False
+
+        def bg_spans(parent) -> List[Element]:
+            spans: List[Element] = []
+            for child in parent.childNodes:
+                if (
+                    child.nodeType == Node.ELEMENT_NODE
+                    and child.tagName == 'span'
+                    and child.getAttribute('ttm:role') == 'x-bg'
+                ):
+                    spans.append(child)
+            return spans
+
+        translation_data = None
+        roman_data = None
+        if itunes_key:
+            translation_data = timed_translations.get(itunes_key) or translations.get(itunes_key)
+            roman_data = line_romanizations.get(itunes_key)
+
+        if translation_data and translation_data.get('main') and not has_role_child(new_p, 'x-translation'):
+            trans_span = dom.createElement('span')
+            trans_span.setAttribute('ttm:role', 'x-translation')
+            trans_span.setAttribute('xml:lang', 'zh-CN')
+            trans_span.appendChild(dom.createTextNode(translation_data['main']))
+            new_p.appendChild(trans_span)
+
+        if translation_data and translation_data.get('bg'):
+            for span in bg_spans(new_p):
+                if not has_role_child(span, 'x-translation'):
+                    trans_span = dom.createElement('span')
+                    trans_span.setAttribute('ttm:role', 'x-translation')
+                    trans_span.setAttribute('xml:lang', 'zh-CN')
+                    trans_span.appendChild(dom.createTextNode(translation_data['bg']))
+                    span.appendChild(trans_span)
+                    break
+
+        if roman_data and roman_data.get('main') and not has_role_child(new_p, 'x-roman'):
+            roman_span = dom.createElement('span')
+            roman_span.setAttribute('ttm:role', 'x-roman')
+            roman_span.appendChild(dom.createTextNode(roman_data['main']))
+            new_p.appendChild(roman_span)
+
+        if roman_data and roman_data.get('bg'):
+            for span in bg_spans(new_p):
+                if not has_role_child(span, 'x-roman'):
+                    roman_span = dom.createElement('span')
+                    roman_span.setAttribute('ttm:role', 'x-roman')
+                    roman_span.appendChild(dom.createTextNode(roman_data['bg']))
+                    span.appendChild(roman_span)
+                    break
+
+        if new_p.childNodes:
+            div.appendChild(new_p)
+
+    return dom.documentElement.toxml()
 
 
 def parse_lrc_line(line):
@@ -4515,6 +4820,97 @@ def lyrics_amll_page():
     """AMLL 歌词展示页面"""
     return render_template("Lyrics-style.HTML-AMLL.HTML")
 
+@app.route('/amll/create_song', methods=['POST'])
+def amll_create_song():
+    """基于当前 AMLL 流生成歌词/封面并创建歌曲 JSON。"""
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('从AMLL创建歌曲')
+    if locked_response:
+        return locked_response
+
+    payload = request.get_json(silent=True) or {}
+    use_translation = bool(payload.get("useTranslation", True))
+    snapshot_song = AMLL_STATE.get("song", {}) or {}
+    lines = AMLL_STATE.get("lines", []) or []
+
+    if not lines:
+        return jsonify({'status': 'error', 'message': 'AMLL源暂无歌词数据，无法创建。'})
+
+    title = (snapshot_song.get("musicName") or "AMLL 未命名").strip()
+    artists = snapshot_song.get("artists") or []
+    album = snapshot_song.get("album", "")
+    duration_ms = int(snapshot_song.get("duration") or 0)
+
+    # 生成基础文件名
+    artists_part = " _ ".join([sanitize_filename(a) for a in artists if sanitize_filename(a)]) or "AMLL"
+    base_stem_raw = sanitize_filename(f"{title} - {artists_part}") or "AMLL_Song"
+    json_filename = _ensure_unique_filename(STATIC_DIR, f"{base_stem_raw}.json")
+    base_stem = os.path.splitext(json_filename)[0]
+
+    try:
+        # 写入 LYS
+        lys_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}.lys")
+        lys_path = SONGS_DIR / lys_filename
+        lys_path.write_text(_amll_lines_to_lys(lines), encoding="utf-8-sig")
+
+        # 写入翻译 LRC（可选）
+        translation_filename = None
+        translation_url = "!"
+        if use_translation and any(str(line.get("translatedLyric") or "").strip() for line in lines):
+            translation_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}_trans.lrc")
+            translation_path = SONGS_DIR / translation_filename
+            translation_path.write_text(_amll_lines_to_lrc(lines), encoding="utf-8-sig")
+            translation_url = build_public_url('songs', translation_filename)
+
+        # 处理封面（优先 data:URL）
+        cover_source = snapshot_song.get("cover_data_url") or snapshot_song.get("cover") or ""
+        cover_url = ""
+        cover_filename = None
+        data_bytes, data_ext = _decode_data_url(cover_source)
+        if data_bytes:
+            cover_ext = data_ext or ".jpg"
+            cover_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}{cover_ext}")
+            (SONGS_DIR / cover_filename).write_bytes(data_bytes)
+            cover_url = build_public_url('songs', cover_filename)
+        elif cover_source:
+            cover_url = cover_source
+
+        lyrics_url = build_public_url('songs', lys_filename)
+        lyrics_field = f"::{lyrics_url}::{translation_url}::!::"
+
+        json_content = {
+            "serial": 123456,
+            "meta": {
+                "title": title,
+                "artists": artists,
+                "albumImgSrc": cover_url or '!',
+                "duration_ms": duration_ms,
+                "lyrics": lyrics_field
+            },
+            # 默认不填音乐路径，避免指向不存在的文件导致播放问题
+            "song": ""
+        }
+        if album:
+            json_content["meta"]["album"] = album
+
+        json_path = STATIC_DIR / json_filename
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(json_content, f, ensure_ascii=False, indent=2)
+
+        return jsonify({
+            'status': 'success',
+            'jsonFile': json_filename,
+            'lyricsFile': lys_filename,
+            'translationFile': translation_filename,
+            'coverFile': cover_filename,
+            'coverUrl': cover_url,
+            'message': '已从 AMLL 源创建新歌曲'
+        })
+    except Exception as exc:
+        app.logger.error(f"AMLL 创建歌曲失败: {exc}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'创建失败: {exc}'})
+
 # ===== AMLL CSV 导出功能 =====
 def norm_type(t):
     if not isinstance(t, str):
@@ -4662,6 +5058,97 @@ def _ms_to_sec(ms: int) -> float:
     """毫秒转秒，保留3位小数"""
     return round((ms or 0) / 1000.0, 3)
 
+def _merge_song_state(current: dict, incoming: dict) -> dict:
+    """轻量合并歌曲快照，保留已有有效字段。"""
+    merged = (current or {}).copy()
+    for key, value in (incoming or {}).items():
+        if key == "artists":
+            if isinstance(value, list) and value:
+                merged[key] = value
+            continue
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+def _guess_ext_from_mime(mime: str) -> str:
+    mime = (mime or "").lower()
+    if "png" in mime:
+        return ".png"
+    if "webp" in mime:
+        return ".webp"
+    if "gif" in mime:
+        return ".gif"
+    return ".jpg"
+
+def _build_data_url(raw_base64: str, mime: Optional[str] = None) -> str:
+    mime_type = mime or "image/jpeg"
+    return f"data:{mime_type};base64,{raw_base64}"
+
+def _decode_data_url(data_url: str) -> tuple[Optional[bytes], Optional[str]]:
+    """解码 data:URL，返回 (bytes, 扩展名)。失败返回 (None, None)。"""
+    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:"):
+        return None, None
+    try:
+        header, payload = data_url.split(",", 1)
+        mime = header.split(";")[0].split(":", 1)[-1]
+        return base64.b64decode(payload), _guess_ext_from_mime(mime)
+    except Exception:
+        return None, None
+
+def _extract_cover_from_info(info: dict) -> str:
+    """从歌曲元信息中提取封面地址。"""
+    if not isinstance(info, dict):
+        return ""
+    for key in (
+        "albumImgSrc", "cover", "coverUrl", "coverURL",
+        "artworkUrl", "artworkUrl100", "artwork",
+        "picUrl", "image", "img", "albumArt", "albumArtUrl", "albumCover"
+    ):
+        candidate = info.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return ""
+
+def _normalize_song_info(info: dict) -> dict:
+    """提取并规范化 AMLL 传来的歌曲信息。"""
+    music_name = str(info.get("musicName") or info.get("title") or "").strip()
+    artists_raw = info.get("artists") or []
+    if isinstance(artists_raw, list):
+        artists = [str(a.get("name") if isinstance(a, dict) else a).strip() for a in artists_raw if str(a).strip()]
+    else:
+        artists = [str(artists_raw).strip()] if str(artists_raw).strip() else []
+    album_name = str(info.get("album") or info.get("albumName") or "").strip()
+    cover_url = _extract_cover_from_info(info)
+    cover_data_url = info.get("coverDataUrl") or info.get("cover_data_url") or info.get("coverDataURL") or ""
+    if not cover_data_url:
+        raw_cover_data = (
+            info.get("coverData")
+            or info.get("coverBase64")
+            or info.get("albumImgData")
+            or info.get("imageData")
+            or info.get("artworkData")
+        )
+        if isinstance(raw_cover_data, str):
+            cover_data_url = _build_data_url(raw_cover_data, info.get("coverMime") or info.get("mime") or info.get("contentType"))
+        elif isinstance(raw_cover_data, (bytes, bytearray)):
+            cover_data_url = _build_data_url(base64.b64encode(raw_cover_data).decode("utf-8"), info.get("coverMime") or info.get("mime") or info.get("contentType"))
+    duration = int(info.get("duration") or 0)
+    song = {
+        "musicName": music_name,
+        "artists": artists,
+        "duration": duration,
+    }
+    if album_name:
+        song["album"] = album_name
+    if cover_url:
+        song["cover"] = cover_url
+        # 帮前端兜底相同字段
+        song["albumImgSrc"] = cover_url
+    if cover_data_url:
+        song["cover_data_url"] = cover_data_url
+    return song
+
 def _amll_publish(evt_type: str, data: dict):
     """发布事件到AMLL前端"""
     # 更新全局快照
@@ -4670,7 +5157,7 @@ def _amll_publish(evt_type: str, data: dict):
     elif evt_type == "progress":
         AMLL_STATE["progress_ms"] = int(data.get("progress_ms", 0))
     elif evt_type == "song":
-        AMLL_STATE["song"] = data.get("song", {})
+        AMLL_STATE["song"] = _merge_song_state(AMLL_STATE.get("song", {}), data.get("song", {}))
     AMLL_STATE["last_update"] = time.time()
 
     # 推送到队列
@@ -4711,6 +5198,101 @@ def _amll_lines_to_front(payload_lines: list[dict]) -> list[dict]:
         })
     return out_lines
 
+def _amll_lines_to_lys(lines: list[dict]) -> str:
+    """将 AMLL lines 转为 .lys 格式文本。"""
+    buf = ["[from: AMLL]", "[offset:0]"]
+    for line in lines:
+        syllables = line.get("syllables") or []
+        if not syllables:
+            continue
+        marker = "6" if line.get("isBG") else "1"
+        parts = []
+        for syl in syllables:
+            text = str(syl.get("text", "") or "")
+            if not text:
+                continue
+            start_ms = int(round(float(syl.get("startTime", 0)) * 1000))
+            duration_ms = int(round(float(syl.get("duration", 0)) * 1000))
+            parts.append(f"{text}({start_ms},{duration_ms})")
+        if parts:
+            buf.append(f"[{marker}]{''.join(parts)}")
+    return "\n".join(buf)
+
+def _amll_lines_to_lrc(lines: list[dict]) -> str:
+    """把 translatedLyric 转成简单 LRC。"""
+    def _format_tag(ms: int) -> str:
+        minutes, remainder = divmod(int(ms), 60000)
+        seconds = remainder / 1000
+        return f"[{minutes:02d}:{seconds:05.2f}]"
+
+    rows = ["[by: AMLL]"]
+    for line in lines:
+        text = str(line.get("translatedLyric") or "").strip()
+        if not text:
+            continue
+        syllables = line.get("syllables") or []
+        start_ms = 0
+        if syllables:
+            start_ms = int(round(float(syllables[0].get("startTime", 0)) * 1000))
+        rows.append(f"{_format_tag(start_ms)}{text}")
+    return "\n".join(rows)
+
+def _ensure_unique_filename(base_dir: Path, filename: str) -> str:
+    """在目录下确保文件名唯一，自动追加序号。"""
+    candidate = filename
+    base, ext = os.path.splitext(filename)
+    counter = 1
+    while (base_dir / candidate).exists():
+        candidate = f"{base}_{counter}{ext}"
+        counter += 1
+    return candidate
+
+def _store_cover_bytes(payload: bytes, mime: Optional[str] = None) -> tuple[str, str]:
+    """保存封面到 songs 目录，返回 (public_url, filename)。"""
+    if not payload:
+        return "", ""
+    mime_type = (mime or "").lower()
+    ext = _guess_ext_from_mime(mime_type)
+    fname = _ensure_unique_filename(SONGS_DIR, f"amll_cover_{int(time.time())}{ext}")
+    (SONGS_DIR / fname).write_bytes(payload)
+    return build_public_url('songs', fname), fname
+
+def _detect_image_mime(data: bytes) -> Optional[str]:
+    if not data or len(data) < 4:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xFF\xD8\xFF"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+def _try_parse_amll_binary_frame(buf: bytes) -> tuple[Optional[str], Optional[bytes]]:
+    """
+    尝试解析 AMLL V2 二进制帧：
+      magic u16 (little-endian)
+      size  u32
+      data  [size]
+    magic=0 -> OnAudioData（忽略）
+    magic=1 -> SetCoverData（返回封面原始字节）
+    """
+    if not buf or len(buf) < 6:
+        return None, None
+    try:
+        magic, size = struct.unpack("<HI", buf[:6])
+    except struct.error:
+        return None, None
+    if size > len(buf) - 6 or size < 0:
+        return None, None
+    payload = buf[6:6 + size]
+    if magic == 1:
+        return "cover", payload
+    # 非 0/1 魔数：仍返回 payload 给兜底图片解析
+    return None, payload
+
 def is_port_in_use(port):
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -4730,6 +5312,43 @@ async def ws_handle(ws):
             # 二进制帧：可能是 TTML
             if isinstance(raw, (bytes, bytearray)):
                 b = bytes(raw)
+                kind, payload = _try_parse_amll_binary_frame(b)
+                def _handle_cover(candidate: bytes, label: str) -> bool:
+                    if not candidate:
+                        return False
+                    mime_guess = _detect_image_mime(candidate)
+                    if not mime_guess:
+                        return False
+                    b64 = base64.b64encode(candidate).decode("ascii")
+                    data_url = _build_data_url(b64, mime_guess)
+                    file_url, _ = _store_cover_bytes(candidate, mime_guess)
+                    print(f"[WS] {label}作为封面处理（{len(candidate)} bytes，mime={mime_guess}，file={file_url}）")
+                    song_patch = {
+                        "cover_data_url": data_url,
+                        "cover": data_url,
+                        "albumImgSrc": data_url,
+                    }
+                    if file_url:
+                        song_patch["cover_file_url"] = file_url
+                        song_patch["cover"] = file_url
+                        song_patch["albumImgSrc"] = file_url
+                    _amll_publish("song", {"song": song_patch})
+                    return True
+
+                if _handle_cover(payload, "按payload "):
+                    continue
+                if _handle_cover(b, "按整帧 "):
+                    continue
+                try:
+                    magic_val, _ = struct.unpack("<HI", b[:6])
+                except Exception:
+                    magic_val = None
+                if magic_val == 4 and payload:
+                    if _handle_cover(payload, "按magic=4 payload "):
+                        continue
+                if kind == "cover" and payload:
+                    continue  # 已处理
+
                 try:
                     txt = b.decode("utf-8")
                 except UnicodeDecodeError:
@@ -4758,14 +5377,148 @@ async def ws_handle(ws):
                 print("[WS] 初始化"); await ws.send(json.dumps({"type": "connected"})); continue
             if mtype == "setmusicinfo":
                 info = msg.get("value") or {}
-                song = {
-                    "musicName": info.get("musicName", ""),
-                    "artists": [a.get("name", "") for a in info.get("artists", [])],
-                    "duration": int(info.get("duration") or 0)
-                }
+                song = _normalize_song_info(info)
                 print("[WS] 歌曲元数据：", song)
                 _amll_publish("song", {"song": song})
                 continue
+            if mtype in ("setmusicalbumcoverimagedata", "setalbumcover", "setcover"):
+                payload = msg.get("value") or {}
+                cover_url = ""
+                cover_data_url = ""
+                cover_file_url = ""
+                if isinstance(payload, str):
+                    if payload.startswith("data:"):
+                        cover_data_url = payload
+                    else:
+                        cover_url = payload
+                elif isinstance(payload, dict):
+                    cover_data_url = payload.get("dataUrl") or payload.get("dataURL") or ""
+                    cover_url = payload.get("url") or payload.get("cover") or payload.get("coverUrl") or ""
+                    if not cover_data_url:
+                        raw_data = payload.get("imageData") or payload.get("data") or payload.get("buffer") or payload.get("blob")
+                        if isinstance(raw_data, str):
+                            cover_data_url = _build_data_url(raw_data, payload.get("mime") or payload.get("contentType"))
+                        elif isinstance(raw_data, (bytes, bytearray)):
+                            b64 = base64.b64encode(raw_data).decode("utf-8")
+                            cover_data_url = _build_data_url(b64, payload.get("mime") or payload.get("contentType"))
+                        elif isinstance(raw_data, list):
+                            try:
+                                b = bytes(raw_data)
+                                b64 = base64.b64encode(b).decode("utf-8")
+                                cover_data_url = _build_data_url(b64, payload.get("mime") or payload.get("contentType"))
+                            except Exception:
+                                pass
+                        # 保存为文件，便于前端用 http 访问
+                        if isinstance(raw_data, (bytes, bytearray)):
+                            cover_file_url, _ = _store_cover_bytes(raw_data, payload.get("mime") or payload.get("contentType"))
+                        elif isinstance(raw_data, list):
+                            try:
+                                b = bytes(raw_data)
+                                cover_file_url, _ = _store_cover_bytes(b, payload.get("mime") or payload.get("contentType"))
+                            except Exception:
+                                pass
+                song_patch = {}
+                if cover_url:
+                    song_patch["cover"] = cover_url
+                    song_patch["albumImgSrc"] = cover_url
+                if cover_data_url:
+                    song_patch["cover_data_url"] = cover_data_url
+                if cover_file_url:
+                    song_patch["cover_file_url"] = cover_file_url
+                    song_patch["cover"] = cover_file_url
+                    song_patch["albumImgSrc"] = cover_file_url
+                if song_patch:
+                    _amll_publish("song", {"song": song_patch})
+                continue
+            if mtype == "state":
+                val = msg.get("value") or {}
+                update = norm_type(val.get("update") or val.get("type"))
+                content = val.get("value") or {}
+                if update == "setmusic":
+                    song = _normalize_song_info(content)
+                    print("[WS] 歌曲元数据(state)：", song)
+                    _amll_publish("song", {"song": song})
+                    continue
+                if update == "setcover":
+                    song_patch = {}
+                    source = content.get("source")
+                    if str(source).lower() == "uri":
+                        url = content.get("url") or content.get("uri") or ""
+                        if url:
+                            song_patch["cover"] = url
+                            song_patch["albumImgSrc"] = url
+                    elif str(source).lower() == "data":
+                        img = content.get("image") or {}
+                        mime = img.get("mimeType") or "image/jpeg"
+                        data_b64 = img.get("data")
+                        if isinstance(data_b64, str):
+                            song_patch["cover_data_url"] = _build_data_url(data_b64, mime)
+                            song_patch["cover"] = song_patch["cover_data_url"]
+                            song_patch["albumImgSrc"] = song_patch["cover_data_url"]
+                            try:
+                                payload = base64.b64decode(data_b64)
+                                file_url, _ = _store_cover_bytes(payload, mime)
+                                if file_url:
+                                    song_patch["cover_file_url"] = file_url
+                                    song_patch["cover"] = file_url
+                                    song_patch["albumImgSrc"] = file_url
+                            except Exception:
+                                pass
+                        elif isinstance(data_b64, list):
+                            try:
+                                b = bytes(data_b64)
+                                b64 = base64.b64encode(b).decode("ascii")
+                                song_patch["cover_data_url"] = _build_data_url(b64, mime)
+                                song_patch["cover"] = song_patch["cover_data_url"]
+                                song_patch["albumImgSrc"] = song_patch["cover_data_url"]
+                                file_url, _ = _store_cover_bytes(b, mime)
+                                if file_url:
+                                    song_patch["cover_file_url"] = file_url
+                                    song_patch["cover"] = file_url
+                                    song_patch["albumImgSrc"] = file_url
+                            except Exception:
+                                pass
+                    if song_patch:
+                        _amll_publish("song", {"song": song_patch})
+                    continue
+                if update == "setlyric":
+                    payload = content
+                    if isinstance(payload, dict) and "lines" in payload:
+                        payload = payload.get("lines")
+                    payload = payload or []
+                    print(f"[WS] 收到歌词(state) {len(payload)} 行（逐字导出）")
+                    rows = []
+                    for i, line in enumerate(payload, 1):
+                        words = line.get("words", [])
+                        line_text = join_line_text(words)
+                        s_ms = int(line.get("startTime") or 0); e_ms = int(line.get("endTime") or 0)
+                        print(f"{i:04d} [{ms_to_ts(s_ms)} → {ms_to_ts(e_ms)}] {line_text}")
+                        is_bg = bool(line.get("isBG", False)); is_duet = bool(line.get("isDuet", False))
+                        for j, wobj in enumerate(words, 1):
+                            for k, ev in enumerate(split_word_to_chars(wobj), 1):
+                                rows.append({
+                                    "line_index": i, "word_index": j, "char_index": k,
+                                    "char": ev["char"], "roman_char": ev["roman_char"],
+                                    "start_ms": ev["start_ms"], "end_ms": ev["end_ms"],
+                                    "start_ts": ms_to_ts(ev["start_ms"]), "end_ts": ms_to_ts(ev["end_ms"]),
+                                    "is_bg": is_bg, "is_duet": is_duet
+                                })
+                    if rows:
+                        import csv
+                        name = f"lyrics_chars_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+                        with open(EXPORTS_DIR / name, "w", encoding="utf-8-sig", newline="") as f:
+                            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys())); writer.writeheader(); writer.writerows(rows)
+                        print(f"[WS] 逐字 CSV 已导出：exports/{name}（{len(rows)} 条）")
+
+                    lines_front = _amll_lines_to_front(payload)
+                    try:
+                        compute_disappear_times(lines_front, delta1=500, delta2=0)
+                    except Exception as e:
+                        app.logger.warning(f"[WS] 计算消失时机失败，降级继续: {e}")
+                    total_syllables = sum(len(l.get('syllables', [])) for l in lines_front)
+                    print(f"[WS] 收到歌词(state) {len(payload)} 行，已转换为 {total_syllables} 个逐字单元（含 disappearTime）")
+                    _amll_publish("lyrics", {"lines": lines_front})
+                    continue
             if mtype == "onplayprogress":
                 prog = int((msg.get("value") or {}).get("progress") or 0)
                 # 不打印每秒进度到控制台，避免刷屏

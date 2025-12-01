@@ -347,6 +347,131 @@
             font-size: 1.1em;
         }
 
+        .create-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .create-card {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px;
+            background: var(--input-bg);
+            cursor: pointer;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+        }
+
+        .create-card:hover {
+            border-color: #4dabf7;
+            box-shadow: 0 6px 18px rgba(77, 171, 247, 0.15);
+        }
+
+        .create-card.selected {
+            border-color: #4dabf7;
+            box-shadow: 0 8px 24px rgba(77, 171, 247, 0.22);
+        }
+
+        .create-card.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .create-card .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .create-card .card-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+
+        .create-card .pill {
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: var(--tag-bg);
+            font-size: 0.85rem;
+            color: var(--text-color);
+        }
+
+        .create-card .link-btn {
+            border: none;
+            background: transparent;
+            color: #4dabf7;
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 4px 8px;
+        }
+
+        .create-card .link-btn:hover {
+            text-decoration: underline;
+        }
+
+        .amll-row {
+            display: flex;
+            gap: 12px;
+            align-items: stretch;
+            flex-wrap: wrap;
+        }
+
+        .amll-cover {
+            width: 160px;
+            height: 160px;
+            max-width: 40%;
+            background: var(--tag-bg);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex: 0 0 auto;
+        }
+
+        .amll-cover img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .amll-info {
+            flex: 1;
+            min-width: 240px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .amll-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.95rem;
+            color: var(--text-color);
+        }
+
+        .amll-lyrics-preview {
+            border: 1px dashed var(--border-color);
+            border-radius: 10px;
+            padding: 10px;
+            background: var(--modal-bg);
+            white-space: pre-wrap;
+            font-family: 'Fira Code', monospace;
+            min-height: 64px;
+        }
+
+        .create-hint {
+            font-size: 0.88rem;
+            color: #666;
+        }
+
         .sort-button {
             background-color: #2196F3;
             color: white;
@@ -1087,6 +1212,9 @@
                             <button class="lyrics-action-btn path-update-btn" onclick="translateLyrics()">
                                 🤖 AI翻译
                             </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="copyTranslationPrompt()">
+                                📋 复制提示词
+                            </button>
                             <button class="lyrics-action-btn path-update-btn" onclick="showAISettings()">
                                 ⚙️ AI设置
                             </button>
@@ -1189,19 +1317,50 @@
     <div id="createJsonModal" class="modal">
         <div class="modal-content">
             <h2>创建新歌曲</h2>
-            <div style="display: flex; flex-direction: column; gap: 10px;">
-                <div>
-                    <label>歌曲名：</label>
-                    <input type="text" id="songTitle" class="file-path-input">
+            <div class="create-grid">
+                <div class="create-card" id="amllSourceCard" onclick="selectCreateMode('amll')">
+                    <div class="card-header">
+                        <div class="card-title">AMLL源</div>
+                        <div class="pill" id="amllCardStatus">未连接</div>
+                        <button class="link-btn" onclick="event.stopPropagation(); refreshAmllSnapshot(true);">刷新</button>
+                    </div>
+                    <div class="amll-row">
+                        <div class="amll-cover">
+                            <img id="amllCoverPreview" alt="AMLL cover" src="{{ url_for('static', filename='icons/icon-512x512.png') }}">
+                        </div>
+                        <div class="amll-info">
+                            <div class="amll-meta">
+                                <div id="amllSongTitleDisplay">歌曲名：--</div>
+                                <div id="amllSongArtistsDisplay">歌手：--</div>
+                                <div id="amllSongAlbumDisplay">专辑：--</div>
+                                <div id="amllLyricsSummary">歌词：--</div>
+                            </div>
+                            <div class="amll-lyrics-preview" id="amllLyricsPreview">等待 AMLL 数据...</div>
+                            <div class="create-hint">选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手、封面和歌词生成新条目。</div>
+                        </div>
+                    </div>
                 </div>
-                <div>
-                    <label>歌手名（多个歌手用逗号分隔）：</label>
-                    <input type="text" id="songArtists" class="file-path-input" placeholder="歌手1,歌手2">
+
+                <div class="create-card selected" id="manualCreateCard" onclick="selectCreateMode('manual')">
+                    <div class="card-header">
+                        <div class="card-title">手动输入</div>
+                        <div class="pill">自定义</div>
+                    </div>
+                    <div>
+                        <label>歌曲名：</label>
+                        <input type="text" id="songTitle" class="file-path-input" onfocus="selectCreateMode('manual')">
+                    </div>
+                    <div>
+                        <label>歌手名（多个歌手用逗号分隔）：</label>
+                        <input type="text" id="songArtists" class="file-path-input" placeholder="歌手1,歌手2" onfocus="selectCreateMode('manual')">
+                    </div>
+                    <div class="create-hint">不使用 AMLL 源时，手动填写信息后创建。</div>
                 </div>
-                <div class="editor-buttons">
-                    <button onclick="createJsonFile()">创建</button>
-                    <button onclick="closeCreateModal()">取消</button>
-                </div>
+            </div>
+
+            <div class="editor-buttons">
+                <button id="createJsonConfirm" onclick="createJsonFile()">创建</button>
+                <button onclick="closeCreateModal()">取消</button>
             </div>
         </div>
     </div>
@@ -1519,6 +1678,10 @@
             backups: createResourceConfig('backups')
         };
 
+        const DEFAULT_AMLL_COVER = "{{ url_for('static', filename='icons/icon-512x512.png') }}";
+        let createMode = 'manual';
+        let amllSnapshot = null;
+
         function normalizeResourceUrl(value, resourceKey) {
             if (!value || typeof value !== 'string') {
                 return value;
@@ -1763,6 +1926,7 @@
         let currentRenameFile = ''
         let currentSort = { type: 'time', asc: false } // 初始为时间倒序
         let currentRestoreFile = ''
+        let lastThinkingSummary = ''
 
         function toggleSort(type) {
             if (type === currentSort.type) {
@@ -2367,10 +2531,105 @@
             });
         }
 
+        let amllCardReady = false;
+
+        function selectCreateMode(mode) {
+            if (mode === 'amll' && !amllCardReady) {
+                return;
+            }
+            createMode = mode;
+            const amllCard = document.getElementById('amllSourceCard');
+            const manualCard = document.getElementById('manualCreateCard');
+            if (amllCard) {
+                amllCard.classList.toggle('selected', mode === 'amll');
+            }
+            if (manualCard) {
+                manualCard.classList.toggle('selected', mode === 'manual');
+            }
+        }
+
+        function renderAmllPreview(lines) {
+            if (!Array.isArray(lines) || lines.length === 0) {
+                return '暂无歌词数据';
+            }
+            const previewLines = [];
+            lines.slice(0, 4).forEach((line, idx) => {
+                const syllables = Array.isArray(line.syllables) ? line.syllables : [];
+                const text = syllables.map(s => s.text || '').join('') || line.translatedLyric || '';
+                previewLines.push(`${idx + 1}. ${text || '（空行）'}`);
+            });
+            if (lines.length > 4) {
+                previewLines.push(`... 还有 ${lines.length - 4} 行`);
+            }
+            return previewLines.join('\n');
+        }
+
+        function resolveCoverUrl(raw) {
+            if (!raw || raw === '!') return DEFAULT_AMLL_COVER;
+            if (raw.startsWith('data:')) return raw;
+            if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+            if (raw.startsWith('//')) return window.location.protocol + raw;
+            if (raw.startsWith('/')) return window.location.origin + raw;
+            return raw;
+        }
+
+        async function refreshAmllSnapshot(force = false) {
+            const statusEl = document.getElementById('amllCardStatus');
+            const previewEl = document.getElementById('amllLyricsPreview');
+            const cardEl = document.getElementById('amllSourceCard');
+            const coverEl = document.getElementById('amllCoverPreview');
+            if (statusEl) statusEl.textContent = '刷新中...';
+            amllCardReady = false;
+            try {
+                const resp = await fetch('/amll/state' + (force ? `?_t=${Date.now()}` : ''));
+                if (!resp.ok) {
+                    throw new Error('请求失败');
+                }
+                const data = await resp.json();
+                amllSnapshot = data;
+                const song = data.song || {};
+                const lines = data.lines || [];
+                const coverUrl = resolveCoverUrl(
+                    song.cover_data_url ||
+                    song.cover_file_url ||
+                    song.cover ||
+                    song.albumImgSrc ||
+                    song.coverUrl ||
+                    DEFAULT_AMLL_COVER
+                );
+                if (coverEl) {
+                    coverEl.src = coverUrl || DEFAULT_AMLL_COVER;
+                }
+                const titleEl = document.getElementById('amllSongTitleDisplay');
+                const artistsEl = document.getElementById('amllSongArtistsDisplay');
+                const albumEl = document.getElementById('amllSongAlbumDisplay');
+                const summaryEl = document.getElementById('amllLyricsSummary');
+                if (titleEl) titleEl.textContent = `歌曲名：${song.musicName || '未提供'}`;
+                if (artistsEl) artistsEl.textContent = `歌手：${(song.artists || []).join(' / ') || '未提供'}`;
+                if (albumEl) albumEl.textContent = `专辑：${song.album || '未提供'}`;
+                if (summaryEl) summaryEl.textContent = `歌词：${lines.length ? `${lines.length} 行` : '暂无数据'}`;
+                if (previewEl) previewEl.textContent = renderAmllPreview(lines);
+                amllCardReady = Boolean(song.musicName) && Array.isArray(lines) && lines.length > 0;
+                if (statusEl) statusEl.textContent = amllCardReady ? '可用' : '等待数据';
+                if (cardEl) cardEl.classList.toggle('disabled', !amllCardReady);
+                if (!amllCardReady && createMode === 'amll') {
+                    selectCreateMode('manual');
+                }
+            } catch (error) {
+                if (statusEl) statusEl.textContent = '获取失败';
+                if (previewEl) previewEl.textContent = '无法获取 AMLL 源数据，请稍后重试。';
+                if (cardEl) cardEl.classList.add('disabled');
+                amllSnapshot = null;
+                amllCardReady = false;
+            }
+        }
+
         function showCreateModal() {
             document.getElementById('createJsonModal').style.display = 'block'
             document.getElementById('songTitle').value = ''
             document.getElementById('songArtists').value = ''
+            selectCreateMode('manual')
+            refreshAmllSnapshot()
         }
 
         function closeCreateModal() {
@@ -2378,6 +2637,10 @@
         }
 
         function createJsonFile() {
+            if (createMode === 'amll') {
+                createFromAmllSource()
+                return
+            }
             const title = document.getElementById('songTitle').value.trim()
             const artistsInput = document.getElementById('songArtists').value.trim()
 
@@ -2433,6 +2696,43 @@
                 .catch(error => {
                     alert('创建失败：' + error)
                 })
+        }
+
+        async function createFromAmllSource() {
+            if (!amllCardReady || !amllSnapshot || !Array.isArray(amllSnapshot.lines) || amllSnapshot.lines.length === 0) {
+                alert('AMLL源暂无可用数据，请先播放并刷新。')
+                return
+            }
+            const btn = document.getElementById('createJsonConfirm')
+            if (btn) {
+                btn.disabled = true
+                btn.textContent = '创建中...'
+            }
+            try {
+                const resp = await fetch('/amll/create_song', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ useTranslation: true })
+                })
+                if (!resp.ok) {
+                    throw new Error(`HTTP ${resp.status}`)
+                }
+                const data = await resp.json()
+                if (data.status === 'success') {
+                    alert(`创建成功：${data.jsonFile}`)
+                    closeCreateModal()
+                    location.reload()
+                } else {
+                    alert(`创建失败：${data.message}`)
+                }
+            } catch (error) {
+                alert(`创建失败：${error}`)
+            } finally {
+                if (btn) {
+                    btn.disabled = false
+                    btn.textContent = '创建'
+                }
+            }
         }
 
         function triggerStaticImport() {
@@ -2927,6 +3227,94 @@
             return '';
         }
 
+        async function ensureLysContentForProcessing(actionLabel = '处理') {
+            const lyricsEditor = document.getElementById('lyricsEditor');
+            const lyricsPathInput = document.getElementById('lyricsPath');
+
+            const lyricsContent = lyricsEditor ? lyricsEditor.value : '';
+            const lyricsPath = lyricsPathInput ? lyricsPathInput.value : '';
+
+            const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+            const contentExtension = detectLyricsExtension(lyricsContent);
+            const shouldConvert = pathExtension === '.ttml' && contentExtension === '.ttml';
+
+            if (!shouldConvert) {
+                return { content: lyricsContent, path: lyricsPath, converted: false };
+            }
+
+            const relativePath = stripSongsPrefix(lyricsPath).trim();
+            if (!relativePath) {
+                throw new Error('检测到TTML歌词，但文件路径为空，无法转换');
+            }
+
+            try {
+                const convertResp = await fetch('/convert_ttml_by_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: relativePath })
+                });
+                const convertData = await convertResp.json();
+                if (convertData.status !== 'success' || !convertData.lyricPath) {
+                    throw new Error(convertData.message || 'TTML转换失败');
+                }
+
+                const lysResp = await fetch('/get_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: convertData.lyricPath })
+                });
+                const lysData = await lysResp.json();
+                if (lysData.status !== 'success' || !lysData.content) {
+                    throw new Error(lysData.message || '无法读取转换后的歌词');
+                }
+
+                console.log(`[TTML] ${actionLabel}前已临时转换为LYS`, {
+                    path: convertData.lyricPath
+                });
+
+                return {
+                    content: lysData.content,
+                    path: stripSongsPrefix(convertData.lyricPath),
+                    rawPath: convertData.lyricPath,
+                    converted: true
+                };
+            } catch (error) {
+                console.error('TTML临时转换失败：', error);
+                const message = error && error.message ? error.message : 'TTML临时转换失败';
+                throw new Error(`检测到TTML歌词，${actionLabel}前转换失败：${message}`);
+            }
+        }
+
+        function stripBracketCharacters(text = '') {
+            if (!text) {
+                return '';
+            }
+            return text
+                .replace(/[()（）\[\]【】]/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+        }
+
+        function preprocessLyricsLinesForPrompt(rawContent = '', stripBracketsEnabled = false) {
+            const lines = (rawContent || '').split('\n');
+            const cleaned = [];
+            for (const line of lines) {
+                let text = line.replace(/\[.*?\]/g, '');
+                text = text.replace(/\([0-9,]+\)/g, '');
+                text = text.trim();
+                if (!text) {
+                    continue;
+                }
+                if (stripBracketsEnabled) {
+                    text = stripBracketCharacters(text);
+                }
+                if (text) {
+                    cleaned.push(text);
+                }
+            }
+            return cleaned;
+        }
+
         function setCurrentFileNameAsLyrics() {
             const currentFileName = document.getElementById('currentFileName').textContent;
             const lyricsPathInput = document.getElementById('lyricsPath');
@@ -2994,11 +3382,24 @@
             const allowedExtensions = ['.lys', '.qrc', '.lrc'];
             const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
             const detectedExtension = detectLyricsExtension(lyricsContent);
-            const resolvedExtension = allowedExtensions.includes(pathExtension)
+            let resolvedExtension = allowedExtensions.includes(pathExtension)
                 ? pathExtension
                 : (allowedExtensions.includes(detectedExtension) ? detectedExtension : '');
+            let contentForExtraction = lyricsContent;
 
-            if (!resolvedExtension) {
+            const isTtml = pathExtension === '.ttml' && detectedExtension === '.ttml';
+            if (isTtml) {
+                try {
+                    const conversion = await ensureLysContentForProcessing('提取时间戳');
+                    contentForExtraction = conversion.content;
+                    resolvedExtension = '.lys';
+                    console.log('检测到TTML歌词，已临时转换为LYS用于时间戳提取');
+                } catch (error) {
+                    console.error('TTML转换失败，无法提取时间戳：', error);
+                    alert(error.message || 'TTML转换失败，无法提取时间戳');
+                    return;
+                }
+            } else if (!resolvedExtension) {
                 console.error('文件格式错误：不支持的歌词格式');
                 alert('请先选择 LYS/QRC/LRC 格式的歌词文件！');
                 return;
@@ -3012,7 +3413,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        content: lyricsContent
+                        content: contentForExtraction
                     })
                 });
                 
@@ -3236,6 +3637,7 @@
             const originalBtnText = translateBtn.textContent;
             highlightSuspectLinesInEditor([]);
             updateTranslationStatus('');
+            lastThinkingSummary = '';
 
             const translationStages = [
                 { key: 'lyricsPrep', label: '歌词预处理阶段', state: 'active', description: '检查歌词内容...' },
@@ -3381,6 +3783,7 @@
             renderStages('正在准备翻译 · 歌词预处理阶段');
 
             try {
+                const lyricsPath = document.getElementById('lyricsPath').value;
                 const lyricsContent = document.getElementById('lyricsEditor').value;
                 if (!lyricsContent) {
                     markDirty(failStage('lyricsPrep', '歌词内容为空，无法继续'));
@@ -3397,9 +3800,21 @@
                     return;
                 }
 
+                const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+                const detectedExtension = detectLyricsExtension(lyricsContent);
+                let processedLyricsContent = lyricsContent;
+
+                if (pathExtension === '.ttml' && detectedExtension === '.ttml') {
+                    markDirty(updateStageDescription('lyricsPrep', '检测到TTML歌词，正在临时转换为LYS...'));
+                    flushStages();
+                    const conversion = await ensureLysContentForProcessing('翻译');
+                    processedLyricsContent = conversion.content;
+                    markDirty(updateStageDescription('lyricsPrep', 'TTML已临时转为LYS，继续处理'));
+                }
+
                 console.log('开始翻译过程...');
-                console.log('歌词内容长度:', lyricsContent.length);
-                const lyricLines = lyricsContent.split('\n').length;
+                console.log('歌词内容长度:', processedLyricsContent.length);
+                const lyricLines = processedLyricsContent.split('\n').length;
                 console.log('歌词行数:', lyricLines);
 
                 translateBtn.textContent = '翻译中...';
@@ -3456,7 +3871,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        content: lyricsContent,
+                        content: processedLyricsContent,
                         api_key: apiKey,
                         system_prompt: systemPrompt,
                         provider: provider,
@@ -3544,13 +3959,14 @@
 
                         try {
                             const content = JSON.parse(line.slice(9));
-                            if (content.summary) {
-                                thinkingContent = content.summary;
-                                translationEditorUpdater();
-                                if (!thinkingOutputCompleted) {
-                                    markDirty(completeStage('thinkingOutput', '思考内容已生成'));
-                                    markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
-                                    thinkingOutputCompleted = true;
+                        if (content.summary) {
+                            thinkingContent = content.summary;
+                            lastThinkingSummary = thinkingContent;
+                            translationEditorUpdater();
+                            if (!thinkingOutputCompleted) {
+                                markDirty(completeStage('thinkingOutput', '思考内容已生成'));
+                                markDirty(activateStage('translationRequest', `准备请求翻译模型（${provider}/${model}）...`));
+                                thinkingOutputCompleted = true;
                                     translationRequestActivated = true;
                                 }
                             } else if (content.error) {
@@ -3587,6 +4003,7 @@
                                 if (!thinkingOutputCompleted) {
                                     markDirty(updateStageDescription('thinkingOutput', '正在整理思考过程...'));
                                 }
+                                lastThinkingSummary = thinkingContent || reasoningContent || lastThinkingSummary;
                             }
                         } catch (e) {
                             console.error('解析思维链内容时出错:', e);
@@ -3697,6 +4114,92 @@
             } finally {
                 translateBtn.textContent = originalBtnText;
                 translateBtn.disabled = false;
+            }
+        }
+
+        async function copyTranslationPrompt() {
+            const copyBtn = document.querySelector('button[onclick="copyTranslationPrompt()"]');
+            const originalText = copyBtn ? copyBtn.textContent : '';
+            if (copyBtn) {
+                copyBtn.textContent = '复制中...';
+                copyBtn.disabled = true;
+            }
+
+            const resetButton = () => {
+                if (copyBtn) {
+                    copyBtn.textContent = originalText || '📋 复制提示词';
+                    copyBtn.disabled = false;
+                }
+            };
+
+            try {
+                const lyricsEditor = document.getElementById('lyricsEditor');
+                if (!lyricsEditor || !lyricsEditor.value.trim()) {
+                    alert('请先输入歌词内容！');
+                    resetButton();
+                    return;
+                }
+
+                const lyricsPathInput = document.getElementById('lyricsPath');
+                const lyricsPath = lyricsPathInput ? lyricsPathInput.value : '';
+                const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+                const detectedExtension = detectLyricsExtension(lyricsEditor.value);
+
+                let processedLyricsContent = lyricsEditor.value;
+                if (pathExtension === '.ttml' && detectedExtension === '.ttml') {
+                    const conversion = await ensureLysContentForProcessing('复制提示词');
+                    processedLyricsContent = conversion.content;
+                }
+
+                const stripBracketsStored = localStorage.getItem('aiStripBrackets');
+                const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
+                const processedLines = preprocessLyricsLinesForPrompt(processedLyricsContent, stripBrackets);
+                if (!processedLines.length) {
+                    alert('未提取到可用歌词内容，请检查歌词格式');
+                    resetButton();
+                    return;
+                }
+
+                const numberedLyrics = processedLines.map((line, idx) => `${idx + 1}.${line}`).join('\n');
+                const thinkingBlock = lastThinkingSummary ? `歌曲理解：\n${lastThinkingSummary}` : '';
+
+                let systemPrompt = localStorage.getItem('aiSystemPrompt') || '';
+                const compatModeStorage = localStorage.getItem('aiCompatMode');
+                const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
+
+                let finalPrompt = '';
+                const promptSections = [];
+                if (compatMode) {
+                    if (systemPrompt && systemPrompt.trim()) {
+                        promptSections.push(systemPrompt.trim());
+                    }
+                    if (thinkingBlock) {
+                        promptSections.push(thinkingBlock);
+                    }
+                    promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
+                    finalPrompt = promptSections.filter(Boolean).join('\n\n');
+                } else {
+                    if (systemPrompt && systemPrompt.trim()) {
+                        promptSections.push(systemPrompt.trim());
+                    }
+                    if (thinkingBlock) {
+                        promptSections.push(thinkingBlock);
+                    }
+                    promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
+                    finalPrompt = promptSections.filter(Boolean).join('\n\n');
+                }
+
+                await navigator.clipboard.writeText(finalPrompt);
+                if (copyBtn) {
+                    copyBtn.textContent = '已复制';
+                    setTimeout(resetButton, 1000);
+                } else {
+                    alert('提示词已复制到剪贴板');
+                }
+            } catch (error) {
+                console.error('复制提示词失败：', error);
+                alert(error.message || '复制提示词失败，请查看控制台获取详细信息。');
+                resetButton();
             }
         }
 
