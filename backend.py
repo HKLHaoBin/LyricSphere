@@ -4879,6 +4879,7 @@ def amll_create_song():
         lyrics_url = build_public_url('songs', lys_filename)
         lyrics_field = f"::{lyrics_url}::{translation_url}::!::"
 
+        placeholder_song = build_public_url('songs', "音乐.mp3")
         json_content = {
             "serial": 123456,
             "meta": {
@@ -4888,8 +4889,8 @@ def amll_create_song():
                 "duration_ms": duration_ms,
                 "lyrics": lyrics_field
             },
-            # 默认不填音乐路径，避免指向不存在的文件导致播放问题
-            "song": ""
+            # 默认填占位空音乐，避免播放出错
+            "song": placeholder_song
         }
         if album:
             json_content["meta"]["album"] = album
@@ -5096,14 +5097,119 @@ def _decode_data_url(data_url: str) -> tuple[Optional[bytes], Optional[str]]:
     except Exception:
         return None, None
 
+def _extract_song_payload_from_state(state_val: dict) -> dict:
+    """兼容新版 AMLL state 消息里的歌曲元数据载荷。"""
+    if not isinstance(state_val, dict):
+        return {}
+    candidates = [state_val]  # 顶层也可能直接携带字段
+    for key in (
+        "value", "data", "song", "music", "meta", "metadata", "info",
+        "payload", "musicInfo", "songInfo", "track", "trackInfo"
+    ):
+        cand = state_val.get(key)
+        if isinstance(cand, dict):
+            candidates.append(cand)
+    # 展开一层嵌套，处理 {value:{meta:{...}}} 之类的结构
+    for cand in list(candidates):
+        if not isinstance(cand, dict):
+            continue
+        for nested_key in ("song", "music", "meta", "metadata", "info", "payload"):
+            nested = cand.get(nested_key)
+            if isinstance(nested, dict):
+                candidates.append(nested)
+    important_keys = (
+        "musicName", "music", "title", "name", "songName", "trackName",
+        "artist", "artistName", "artists", "singer", "singers", "performer",
+        "artist_name", "artist_names", "singer_name", "singer_names",
+        "album", "albumName", "albumTitle", "album_name",
+        "duration", "durationMs", "duration_ms", "durationMS", "durationSeconds", "durationSec", "length", "lengthMs", "length_ms", "duration_ms",
+        "cover", "coverUrl", "coverURL", "albumImgSrc"
+    )
+    for cand in candidates:
+        if any(k in cand for k in important_keys):
+            return cand
+    return candidates[0] if candidates else {}
+
+def _extract_cover_payload_from_state(state_val: dict) -> dict:
+    """提取 state 消息里的封面载荷，兼容 url/data 两种写法。"""
+    if not isinstance(state_val, dict):
+        return {}
+    for candidate in (state_val.get("value"), state_val.get("data"), state_val.get("cover"), state_val.get("image"), state_val.get("payload")):
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+        if isinstance(candidate, str) and candidate.strip():
+            return {"url": candidate}
+        if isinstance(candidate, (bytes, bytearray, list)):
+            return {"data": candidate, "mime": state_val.get("mime") or state_val.get("contentType")}
+    return {}
+
+def _extract_lines_from_state_update(state_val: dict) -> list[dict]:
+    """尽量从 state 消息里抓取歌词行，支持多层嵌套字段。"""
+    if not isinstance(state_val, dict):
+        return []
+
+    def dig_lines(candidate):
+        if isinstance(candidate, list):
+            return candidate
+        if isinstance(candidate, dict):
+            for key in ("lines", "data", "lyrics", "lyric"):
+                nested = dig_lines(candidate.get(key))
+                if nested is not None:
+                    return nested
+        return None
+
+    for cand in (
+        state_val.get("value"),
+        state_val.get("data"),
+        state_val.get("lyrics"),
+        state_val.get("lyric"),
+        state_val.get("lines"),
+        state_val.get("payload")
+    ):
+        lines = dig_lines(cand)
+        if lines is not None:
+            return lines
+    return []
+
+def _extract_progress_ms_from_state(state_val: dict) -> Optional[int]:
+    """解析 state 消息中的播放进度（毫秒）。"""
+    if not isinstance(state_val, dict):
+        return None
+
+    def dig_progress(candidate):
+        if candidate is None:
+            return None
+        if isinstance(candidate, bool):
+            return None
+        if isinstance(candidate, (int, float)):
+            return int(candidate)
+        if isinstance(candidate, str):
+            try:
+                return int(float(candidate))
+            except Exception:
+                return None
+        if isinstance(candidate, dict):
+            for key in ("progress_ms", "progressMs", "progress", "position", "positionMs", "position_ms", "time_ms", "timeMs", "time", "ms"):
+                found = dig_progress(candidate.get(key))
+                if found is not None:
+                    return found
+        return None
+
+    for cand in (state_val.get("value"), state_val.get("data"), state_val.get("payload"), state_val):
+        found = dig_progress(cand)
+        if found is not None:
+            return found
+    return None
+
 def _extract_cover_from_info(info: dict) -> str:
     """从歌曲元信息中提取封面地址。"""
     if not isinstance(info, dict):
         return ""
     for key in (
         "albumImgSrc", "cover", "coverUrl", "coverURL",
-        "artworkUrl", "artworkUrl100", "artwork",
-        "picUrl", "image", "img", "albumArt", "albumArtUrl", "albumCover"
+        "artworkUrl", "artworkUrl100", "artwork", "artworkURL",
+        "picUrl", "image", "img", "albumArt", "albumArtUrl", "albumCover", "coverUri", "coverURI",
+        "artUri", "artworkUri", "imageUrl", "imageURL", "artUri100"
     ):
         candidate = info.get(key)
         if isinstance(candidate, str) and candidate.strip():
@@ -5112,15 +5218,80 @@ def _extract_cover_from_info(info: dict) -> str:
 
 def _normalize_song_info(info: dict) -> dict:
     """提取并规范化 AMLL 传来的歌曲信息。"""
-    music_name = str(info.get("musicName") or info.get("title") or "").strip()
-    artists_raw = info.get("artists") or []
+    music_name = str(
+        info.get("musicName")
+        or info.get("music")
+        or info.get("title")
+        or info.get("name")
+        or info.get("songName")
+        or info.get("trackName")
+        or info.get("song")
+        or info.get("musicTitle")
+        or info.get("songTitle")
+        or info.get("trackTitle")
+        or info.get("titleName")
+        or info.get("musicTitleName")
+        or info.get("music_name")
+        or info.get("song_title")
+        or info.get("track_title")
+        or info.get("music_name")
+        or info.get("song_name")
+        or ""
+    ).strip()
+    artists_raw = (
+        info.get("artists")
+        or info.get("artist")
+        or info.get("artistName")
+        or info.get("singer")
+        or info.get("singers")
+        or info.get("performer")
+        or info.get("artistNames")
+        or info.get("artist_names")
+        or info.get("singerName")
+        or info.get("singerNames")
+        or info.get("singer_name")
+        or info.get("singer_names")
+        or []
+    )
+    artists: list[str] = []
     if isinstance(artists_raw, list):
-        artists = [str(a.get("name") if isinstance(a, dict) else a).strip() for a in artists_raw if str(a).strip()]
+        for a in artists_raw:
+            if isinstance(a, dict):
+                name_candidate = a.get("name") or a.get("artistName") or a.get("singerName") or a.get("singer")
+                if name_candidate and str(name_candidate).strip():
+                    artists.append(str(name_candidate).strip())
+            elif str(a).strip():
+                artists.append(str(a).strip())
     else:
-        artists = [str(artists_raw).strip()] if str(artists_raw).strip() else []
-    album_name = str(info.get("album") or info.get("albumName") or "").strip()
-    cover_url = _extract_cover_from_info(info)
-    cover_data_url = info.get("coverDataUrl") or info.get("cover_data_url") or info.get("coverDataURL") or ""
+        if isinstance(artists_raw, dict):
+            name_candidate = artists_raw.get("name") or artists_raw.get("artistName") or artists_raw.get("singerName") or artists_raw.get("singer")
+            if name_candidate and str(name_candidate).strip():
+                artists.append(str(name_candidate).strip())
+        elif str(artists_raw).strip():
+            artists.append(str(artists_raw).strip())
+
+    album_name = str(
+        info.get("album")
+        or info.get("albumName")
+        or info.get("albumTitle")
+        or info.get("record")
+        or info.get("collection")
+        or info.get("disc")
+        or info.get("discName")
+        or info.get("discTitle")
+        or info.get("album_name")
+        or info.get("album_title")
+        or ""
+    ).strip()
+    cover_url = _extract_cover_from_info(info) or info.get("url") or info.get("coverUri") or info.get("coverURI") or ""
+    cover_data_url = (
+        info.get("coverDataUrl")
+        or info.get("cover_data_url")
+        or info.get("coverDataURL")
+        or info.get("coverDataURI")
+        or info.get("coverData")
+        or info.get("cover_data")
+    ) or ""
     if not cover_data_url:
         raw_cover_data = (
             info.get("coverData")
@@ -5133,7 +5304,25 @@ def _normalize_song_info(info: dict) -> dict:
             cover_data_url = _build_data_url(raw_cover_data, info.get("coverMime") or info.get("mime") or info.get("contentType"))
         elif isinstance(raw_cover_data, (bytes, bytearray)):
             cover_data_url = _build_data_url(base64.b64encode(raw_cover_data).decode("utf-8"), info.get("coverMime") or info.get("mime") or info.get("contentType"))
-    duration = int(info.get("duration") or 0)
+    try:
+        duration = int(float(
+            info.get("duration")
+            or info.get("durationMs")
+            or info.get("duration_ms")
+            or info.get("durationMS")
+            or info.get("durationSeconds")
+            or info.get("durationSec")
+            or info.get("length")
+            or info.get("lengthMs")
+            or info.get("length_ms")
+            or info.get("duration_ms")
+            or info.get("songDuration")
+            or info.get("songDurationMs")
+            or info.get("musicDuration")
+            or 0
+        ))
+    except Exception:
+        duration = 0
     song = {
         "musicName": music_name,
         "artists": artists,
@@ -5432,23 +5621,50 @@ async def ws_handle(ws):
                 continue
             if mtype == "state":
                 val = msg.get("value") or {}
+                if not isinstance(val, dict):
+                    val = {"value": val}
                 update = norm_type(val.get("update") or val.get("type"))
-                content = val.get("value") or {}
-                if update == "setmusic":
-                    song = _normalize_song_info(content)
+                content = val.get("value")
+                if content is None:
+                    content = val.get("data") or {}
+                if update in ("setmusic", "music", "musicinfo", "song", "songinfo", "track", "trackinfo"):
+                    song_payload = _extract_song_payload_from_state(val)
+                    if not song_payload and isinstance(content, dict):
+                        song_payload = content
+                    song = _normalize_song_info(song_payload)
+                    if not (song.get("musicName") or song.get("artists") or song.get("album") or song.get("cover") or song.get("cover_data_url")):
+                        try:
+                            preview_payload = json.dumps(song_payload, ensure_ascii=False) if song_payload else str(song_payload)
+                        except Exception:
+                            preview_payload = repr(song_payload)
+                        try:
+                            preview_content = json.dumps(content, ensure_ascii=False) if isinstance(content, (dict, list)) else str(content)
+                        except Exception:
+                            preview_content = repr(content)
+                        try:
+                            preview_full_msg = json.dumps(msg, ensure_ascii=False)
+                        except Exception:
+                            preview_full_msg = repr(msg)
+                        print(f"[WS] setmusic 原始载荷调试 payload={preview_payload} content={preview_content} full={preview_full_msg}")
                     print("[WS] 歌曲元数据(state)：", song)
                     _amll_publish("song", {"song": song})
                     continue
-                if update == "setcover":
+                if update in ("setcover", "cover", "albumcover", "artwork"):
                     song_patch = {}
-                    source = content.get("source")
+                    cover_payload = _extract_cover_payload_from_state(val)
+                    if not cover_payload:
+                        if isinstance(content, dict):
+                            cover_payload = content
+                        elif isinstance(content, str) and content.strip():
+                            cover_payload = {"url": content}
+                    source = cover_payload.get("source") if isinstance(cover_payload, dict) else None
                     if str(source).lower() == "uri":
-                        url = content.get("url") or content.get("uri") or ""
+                        url = cover_payload.get("url") or cover_payload.get("uri") or ""
                         if url:
                             song_patch["cover"] = url
                             song_patch["albumImgSrc"] = url
                     elif str(source).lower() == "data":
-                        img = content.get("image") or {}
+                        img = cover_payload.get("image") or {}
                         mime = img.get("mimeType") or "image/jpeg"
                         data_b64 = img.get("data")
                         if isinstance(data_b64, str):
@@ -5478,14 +5694,31 @@ async def ws_handle(ws):
                                     song_patch["albumImgSrc"] = file_url
                             except Exception:
                                 pass
+                    elif isinstance(cover_payload, dict):
+                        url = cover_payload.get("url") or cover_payload.get("cover") or cover_payload.get("coverUrl")
+                        if url:
+                            song_patch["cover"] = url
+                            song_patch["albumImgSrc"] = url
+                        raw_data = cover_payload.get("data") or cover_payload.get("imageData") or cover_payload.get("buffer")
+                        if isinstance(raw_data, (bytes, bytearray)):
+                            b64 = base64.b64encode(raw_data).decode("ascii")
+                            mime = cover_payload.get("mime") or cover_payload.get("contentType")
+                            song_patch["cover_data_url"] = _build_data_url(b64, mime)
+                            file_url, _ = _store_cover_bytes(raw_data, mime)
+                            if file_url:
+                                song_patch["cover_file_url"] = file_url
+                                song_patch["cover"] = file_url
+                                song_patch["albumImgSrc"] = file_url
                     if song_patch:
                         _amll_publish("song", {"song": song_patch})
                     continue
-                if update == "setlyric":
-                    payload = content
-                    if isinstance(payload, dict) and "lines" in payload:
-                        payload = payload.get("lines")
-                    payload = payload or []
+                if update in ("setlyric", "lyrics", "lyric"):
+                    payload = _extract_lines_from_state_update(val)
+                    if not payload:
+                        if isinstance(content, dict) and "lines" in content:
+                            payload = content.get("lines") or []
+                        elif isinstance(content, list):
+                            payload = content
                     print(f"[WS] 收到歌词(state) {len(payload)} 行（逐字导出）")
                     rows = []
                     for i, line in enumerate(payload, 1):
@@ -5518,6 +5751,15 @@ async def ws_handle(ws):
                     total_syllables = sum(len(l.get('syllables', [])) for l in lines_front)
                     print(f"[WS] 收到歌词(state) {len(payload)} 行，已转换为 {total_syllables} 个逐字单元（含 disappearTime）")
                     _amll_publish("lyrics", {"lines": lines_front})
+                    continue
+                if update in ("progress", "playprogress", "onplayprogress", "setprogress", "position", "time"):
+                    prog = _extract_progress_ms_from_state(val)
+                    if prog is not None:
+                        app.logger.debug(f"[WS] 进度(state)：{prog}")
+                        _amll_publish("progress", {"progress_ms": prog})
+                    continue
+                if update in ("resumed", "resume", "playing", "paused", "pause", "stopped", "stop"):
+                    app.logger.debug(f"[WS] 播放状态(state)：{update}")
                     continue
             if mtype == "onplayprogress":
                 prog = int((msg.get("value") or {}).get("progress") or 0)
