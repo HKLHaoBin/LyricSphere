@@ -3,6 +3,7 @@ import base64
 import struct
 import hashlib
 import json
+import copy
 import bcrypt
 import logging
 import os
@@ -21,7 +22,7 @@ from pathlib import Path
 from io import BytesIO
 from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context, send_from_directory, send_file
 from re import compile, Pattern, Match
-from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List
+from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any
 from xml.dom.minicompat import NodeList
 from xml.dom import Node
 from xml.dom.minidom import Document, Element
@@ -578,6 +579,315 @@ def is_parenthetical_background_line(content: str) -> bool:
     inner = stripped[1:-1].strip()
     return bool(inner)
 
+# ===== 快速歌词顺序编辑器：LYS文档解析与状态 =====
+QUICK_EDITOR_DOCS: Dict[str, Dict[str, Any]] = {}
+QUICK_EDITOR_UNDO: Dict[str, List[Dict[str, Any]]] = {}
+QUICK_EDITOR_REDO: Dict[str, List[Dict[str, Any]]] = {}
+QUICK_EDITOR_META: Dict[str, Dict[str, Any]] = {}
+
+
+def qe_new_id() -> str:
+    return uuid.uuid4().hex
+
+
+def qe_clone(obj: Any) -> Any:
+    return copy.deepcopy(obj)
+
+
+def parse_meta_lyrics(meta_value: Optional[str]) -> Tuple[str, str, str, List[str]]:
+    """拆分 meta.lyrics 字段，返回 (歌词路径, 翻译路径, 音译路径, parts)。"""
+    raw = str(meta_value or '')
+    parts = raw.split('::')
+    if len(parts) >= 4:
+        while len(parts) < 5:
+            parts.append('')
+        lyrics = parts[1] or ''
+        translation = parts[2] or ''
+        roman = parts[3] or ''
+        return lyrics, translation, roman, parts
+    return raw, '', '', parts
+
+
+def build_meta_lyrics_value(existing_parts: List[str],
+                            lyrics_url: str,
+                            translation_url: Optional[str] = None,
+                            roman_url: Optional[str] = None) -> str:
+    """
+    根据已有 parts 更新并重建 meta.lyrics。
+    若已有格式为 ::lyrics::translation::roman::，则沿用该结构，否则写回单一路径。
+    """
+    if len(existing_parts) >= 4:
+        parts = list(existing_parts)
+        while len(parts) < 5:
+            parts.append('')
+        parts[1] = lyrics_url or '!'
+        if translation_url is not None:
+            parts[2] = translation_url or '!'
+        if roman_url is not None:
+            parts[3] = roman_url or '!'
+        return '::'.join(parts)
+    return lyrics_url or ''
+
+
+def qe_parse_lys(raw_text: str) -> Dict[str, Any]:
+    """
+    将 .lys 文本解析为结构化文档：
+    doc = { id, version, lines: [ {id, prefix, is_meta, tokens:[{id, ts, text}]} ] }
+    """
+    lines: List[Dict[str, Any]] = []
+    for raw_line in raw_text.splitlines():
+        s = raw_line.rstrip("\r\n")
+        if not s:
+            lines.append({"id": qe_new_id(), "prefix": "", "is_meta": False, "tokens": []})
+            continue
+
+        if re.match(r'^\[(ti|ar|al):', s, re.IGNORECASE):
+            lines.append({
+                "id": qe_new_id(),
+                "prefix": "",
+                "is_meta": True,
+                "tokens": [{"id": qe_new_id(), "ts": "", "text": s}]
+            })
+            continue
+
+        prefix = ""
+        rest = s
+        m = re.match(r'^\[(\d+)\]', s)
+        if m:
+            prefix = m.group(0)
+            rest = s[m.end():]
+        elif s.startswith("[]"):
+            prefix = "[]"
+            rest = s[2:]
+
+        tokens: List[Dict[str, str]] = []
+        for tok in re.finditer(r'(.*?)[(（](\d+),(\d+)[)）]', rest):
+            text = tok.group(1)
+            start = tok.group(2)
+            dur = tok.group(3)
+            tokens.append({"id": qe_new_id(), "ts": f"{start},{dur}", "text": text})
+
+        if tokens:
+            lines.append({"id": qe_new_id(), "prefix": prefix, "is_meta": False, "tokens": tokens})
+        else:
+            lines.append({
+                "id": qe_new_id(),
+                "prefix": "",
+                "is_meta": True,
+                "tokens": [{"id": qe_new_id(), "ts": "", "text": s}]
+            })
+
+    return {"id": qe_new_id(), "version": 0, "lines": lines}
+
+
+def qe_dump_lys(doc: Dict[str, Any]) -> str:
+    """结构化文档还原为 .lys 文本。meta 行原样输出；歌词行输出 prefix + text(ts) 串联。"""
+    out_lines: List[str] = []
+    for line in doc.get("lines", []):
+        if line.get("is_meta"):
+            out_lines.append("".join(tok.get("text", "") for tok in line.get("tokens", [])))
+            continue
+
+        buf = [line["prefix"]] if line.get("prefix") else []
+        for tok in line.get("tokens", []):
+            ts = tok.get("ts", "")
+            text = tok.get("text", "")
+            buf.append(f"{text}({ts})" if ts else text)
+        out_lines.append("".join(buf))
+    return "\n".join(out_lines)
+
+
+class MoveError(Exception):
+    pass
+
+
+def qe_find_line(doc: Dict[str, Any], line_id: str) -> Tuple[int, Dict[str, Any]]:
+    for i, ln in enumerate(doc.get("lines", [])):
+        if ln.get("id") == line_id:
+            return i, ln
+    raise MoveError(f"line not found: {line_id}")
+
+
+def qe_find_token_index(line: Dict[str, Any], token_id: str) -> int:
+    for i, tok in enumerate(line.get("tokens", [])):
+        if tok.get("id") == token_id:
+            return i
+    raise MoveError(f"token not found in line {line.get('id')}: {token_id}")
+
+
+def qe_normalize_selection(doc: Dict[str, Any], selection: List[Dict[str, str]]):
+    """selection -> (li, ti, token) 列表（文档顺序）"""
+    collected: List[Tuple[int, int, Dict[str, str]]] = []
+    for rng in selection:
+        li, line = qe_find_line(doc, rng["line_id"])
+        a = qe_find_token_index(line, rng["start_token_id"])
+        b = qe_find_token_index(line, rng["end_token_id"])
+        if a > b:
+            a, b = b, a
+        for ti in range(a, b + 1):
+            collected.append((li, ti, line["tokens"][ti]))
+    collected.sort(key=lambda t: (t[0], t[1]))
+    return collected
+
+
+def qe_apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: Dict[str, Any],
+                  delete_empty_lines: bool = True) -> None:
+    """将 selection 的 tokens 按 target 位置移动。"""
+    if not selection:
+        return
+    collected = qe_normalize_selection(doc, selection)
+    if not collected:
+        return
+
+    selected_ids = {tok["id"] for _, _, tok in collected}
+
+    by_line: Dict[int, List[int]] = {}
+    for li, ti, _ in collected:
+        by_line.setdefault(li, []).append(ti)
+    for li, idxs in sorted(by_line.items(), key=lambda kv: kv[0], reverse=True):
+        line = doc["lines"][li]
+        for ti in sorted(idxs, reverse=True):
+            del line["tokens"][ti]
+
+    if target.get("type") == "anchor":
+        t_li, t_line = qe_find_line(doc, target["line_id"])
+        anchor_idx = qe_find_token_index(t_line, target["anchor_token_id"])
+        if t_line["tokens"][anchor_idx]["id"] in selected_ids:
+            raise MoveError("anchor token is within the selection")
+        insert_at = anchor_idx if target.get("position") == "before" else anchor_idx + 1
+    elif target.get("type") == "newline":
+        new_line = {"id": qe_new_id(), "prefix": "", "is_meta": False, "tokens": []}
+        after_id = target.get("insert_after_line_id")
+        if after_id:
+            idx, _ = qe_find_line(doc, after_id)
+            doc["lines"].insert(idx + 1, new_line)
+            t_line = new_line
+            insert_at = 0
+        else:
+            doc["lines"].insert(0, new_line)
+            t_line = new_line
+            insert_at = 0
+    elif target.get("type") == "line":
+        t_li, t_line = qe_find_line(doc, target["line_id"])
+        pos = target.get("position", "end")
+        if pos not in ("start", "end"):
+            raise MoveError("invalid line position")
+        insert_at = 0 if pos == "start" else len(t_line["tokens"])
+    else:
+        raise MoveError("invalid target type")
+
+    moving_tokens = [tok for _, _, tok in collected]
+    for offset, tok in enumerate(moving_tokens):
+        t_line["tokens"].insert(insert_at + offset, tok)
+
+    if delete_empty_lines:
+        doc["lines"] = [ln for ln in doc["lines"] if (ln.get("is_meta") or len(ln.get("tokens", [])) > 0)]
+
+
+def qe_error_response(message: str, status: int = 400) -> Response:
+    return Response(message, status=status, mimetype='text/plain')
+
+
+def qe_register_doc(doc: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """缓存文档及其元信息，初始化撤销/重做栈。"""
+    doc_id = doc.get("id") or qe_new_id()
+    doc["id"] = doc_id
+    QUICK_EDITOR_DOCS[doc_id] = doc
+    QUICK_EDITOR_UNDO[doc_id] = []
+    QUICK_EDITOR_REDO[doc_id] = []
+    if meta is not None:
+        QUICK_EDITOR_META[doc_id] = meta
+    return doc
+
+
+def ensure_lys_file_for_editor(source_path: Path, base_name: str) -> Tuple[Path, Optional[Path], bool]:
+    """
+    确保提供的歌词文件最终转为标准 LYS 文件并返回其路径。
+    若源为 LRC/TTML 会自动转换，若缺失则创建空文件。
+    返回 (lyrics_path, translation_path_or_none, 是否发生变更)。
+    """
+    changed = False
+    translation_path: Optional[Path] = None
+
+    if not source_path.suffix:
+        source_path = source_path.with_suffix('.lys')
+
+    if not source_path.exists():
+        if source_path.suffix.lower() == '.lys':
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.touch()
+            changed = True
+        else:
+            source_path = SONGS_DIR / f"{base_name}.lys"
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            if not source_path.exists():
+                source_path.touch()
+            changed = True
+
+    ext = source_path.suffix.lower()
+    if ext == '.lys':
+        lyrics_path = source_path
+    elif ext == '.ttml':
+        success, lyric_path, trans_path = ttml_to_lys(str(source_path), str(SONGS_DIR))
+        if not success or not lyric_path:
+            raise ValueError('TTML 转换失败，无法生成 LYS')
+        lyrics_path = Path(lyric_path)
+        translation_path = Path(trans_path) if trans_path else None
+        changed = True
+    elif ext == '.lrc':
+        ttml_temp = SONGS_DIR / f"{base_name}.ttml"
+        ttml_temp.parent.mkdir(parents=True, exist_ok=True)
+        success, error_msg = lrc_to_ttml(str(source_path), str(ttml_temp))
+        if not success:
+            raise ValueError(f"LRC 转换失败: {error_msg or '未知错误'}")
+        success, lyric_path, trans_path = ttml_to_lys(str(ttml_temp), str(SONGS_DIR))
+        if not success or not lyric_path:
+            raise ValueError('LRC 转换后的 TTML 转 LYS 失败')
+        lyrics_path = Path(lyric_path)
+        translation_path = Path(trans_path) if trans_path else None
+        changed = True
+        if ttml_temp.exists():
+            try:
+                ttml_temp.unlink()
+            except Exception:
+                pass
+    else:
+        lyrics_path = SONGS_DIR / f"{base_name}.lys"
+        lyrics_path.parent.mkdir(parents=True, exist_ok=True)
+        if not lyrics_path.exists():
+            lyrics_path.touch()
+            changed = True
+
+    target_path = SONGS_DIR / f"{base_name}.lys"
+    if lyrics_path.resolve() != target_path.resolve():
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            backup_path = build_backup_path(target_path)
+            shutil.copy2(target_path, backup_path)
+        try:
+            shutil.move(str(lyrics_path), str(target_path))
+        except Exception:
+            shutil.copy2(lyrics_path, target_path)
+        lyrics_path = target_path
+        changed = True
+
+    if translation_path:
+        trans_target = SONGS_DIR / f"{base_name}_trans.lrc"
+        if trans_target.resolve() != translation_path.resolve():
+            trans_target.parent.mkdir(parents=True, exist_ok=True)
+            if trans_target.exists():
+                backup_path = build_backup_path(trans_target)
+                shutil.copy2(trans_target, backup_path)
+            try:
+                shutil.move(str(translation_path), str(trans_target))
+            except Exception:
+                shutil.copy2(translation_path, trans_target)
+            translation_path = trans_target
+        else:
+            translation_path = trans_target
+
+    return lyrics_path, translation_path, changed
+
 # ===== 解析.lys格式歌词的工具函数 =====
 def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=None):
     """
@@ -781,6 +1091,549 @@ def amll_web_public(filename):
 def index_html_alias():
     """Backward compatibility for clients requesting the original index.html entry."""
     return amll_web_player()
+
+
+@app.route('/quick-editor')
+def quick_editor_page():
+    """LYS 顺序快速编辑器入口。"""
+    json_file = request.args.get('json', '')
+    display_name = Path(json_file).stem if json_file else ''
+    preload_data = {}
+    if json_file:
+        payload, error = quick_editor_load_payload(json_file)
+        if payload:
+            preload_data = payload
+        elif error:
+            preload_data = {'status': 'error', 'message': error[0], 'code': error[1]}
+
+    return render_template(
+        'lyrics_quick_editor.html',
+        json_file=json_file,
+        display_name=display_name,
+        preload_data=preload_data
+    )
+
+
+# ===== 快速歌词顺序编辑器 API =====
+def _qe_get_doc(doc_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Response]]:
+    doc = QUICK_EDITOR_DOCS.get(doc_id)
+    if not doc:
+        return None, qe_error_response('document not found', 404)
+    return doc, None
+
+
+def _qe_prepare_mutation(doc_id: str, base_version: Optional[int]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Response]]:
+    doc = QUICK_EDITOR_DOCS.get(doc_id)
+    if not doc:
+        return None, None, qe_error_response('document not found', 404)
+    if doc.get('version') != base_version:
+        return None, None, qe_error_response('version conflict', 409)
+    before = qe_clone(doc)
+    return doc, before, None
+
+
+def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, int]]]:
+    """加载并准备快速编辑所需数据，返回 (payload, error)。error: (message, status)."""
+    json_path = BASE_PATH / 'static' / json_file
+    if not json_path.exists():
+        return None, ('找不到对应的歌曲 JSON 文件', 404)
+
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+    except Exception as exc:
+        return None, (f'读取 JSON 失败: {exc}', 500)
+
+    meta = json_data.setdefault('meta', {})
+    lyrics_value = meta.get('lyrics', '')
+    lyrics_url, translation_url, roman_url, lyrics_parts = parse_meta_lyrics(lyrics_value)
+
+    base_name = sanitize_filename(Path(json_file).stem or meta.get('title', ''))
+    if not base_name:
+        base_name = sanitize_filename(meta.get('title', '')) or Path(json_file).stem
+    if not base_name:
+        base_name = f"lyrics_{int(time.time())}"
+
+    try:
+        lyrics_relative = extract_resource_relative(lyrics_url, 'songs') if lyrics_url else ''
+    except ValueError:
+        lyrics_relative = ''
+
+    if not lyrics_relative:
+        lyrics_relative = f"{base_name}.lys"
+
+    lyrics_path = SONGS_DIR / lyrics_relative
+    translation_relative = None
+    json_changed = False
+
+    lyrics_path, trans_path, converted = ensure_lys_file_for_editor(lyrics_path, base_name)
+    translation_relative = resource_relative_from_path(trans_path, 'songs') if trans_path else None
+    json_changed = json_changed or converted
+
+    try:
+        lyrics_relative = resource_relative_from_path(lyrics_path, 'songs')
+    except ValueError:
+        lyrics_relative = _normalize_relative_path(lyrics_path.name)
+
+    lyrics_url = build_public_url('songs', lyrics_relative)
+    translation_url_to_use = translation_url
+    if translation_relative:
+        translation_url_to_use = build_public_url('songs', translation_relative)
+    elif not translation_url_to_use:
+        translation_url_to_use = '!'
+
+    new_meta_lyrics = build_meta_lyrics_value(lyrics_parts, lyrics_url, translation_url_to_use, roman_url or None)
+    if meta.get('lyrics') != new_meta_lyrics:
+        meta['lyrics'] = new_meta_lyrics
+        json_changed = True
+
+    song_url = json_data.get('song', '')
+    try:
+        song_relative = extract_resource_relative(song_url, 'songs')
+        song_url = build_public_url('songs', song_relative)
+    except Exception:
+        song_url = song_url or ''
+
+    if json_changed:
+        if not BACKUP_DIR.exists():
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        backup_path = build_backup_path(json_path, int(time.time()))
+        if json_path.exists():
+            shutil.copy2(json_path, backup_path)
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=2)
+
+    try:
+        with open(lyrics_path, 'r', encoding='utf-8') as f:
+            raw_lyrics = f.read()
+    except Exception:
+        raw_lyrics = ''
+
+    doc = qe_parse_lys(raw_lyrics)
+    qe_register_doc(doc, {
+        'lyrics_path': lyrics_path,
+        'json_path': json_path,
+        'lyrics_url': lyrics_url,
+        'translation_url': translation_url_to_use if translation_url_to_use and translation_url_to_use != '!' else '',
+        'song_url': song_url,
+        'display_name': Path(json_file).stem
+    })
+
+    payload = {
+        'status': 'success',
+        'doc': doc,
+        'jsonFile': json_file,
+        'lyricsPath': lyrics_url,
+        'translationPath': translation_url_to_use if translation_url_to_use and translation_url_to_use != '!' else '',
+        'songUrl': song_url,
+        'title': meta.get('title', ''),
+        'artists': meta.get('artists', []),
+        'updatedJson': json_changed
+    }
+    return payload, None
+
+
+@app.route('/quick-editor/api/load', methods=['POST'])
+def quick_editor_load():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('快速编辑歌词')
+    if locked_response:
+        return locked_response
+
+    data = request.get_json(silent=True) or {}
+    json_file = data.get('jsonFile') or data.get('json_file')
+    if not json_file:
+        return jsonify({'status': 'error', 'message': '缺少 jsonFile 参数'}), 400
+    payload, error = quick_editor_load_payload(json_file)
+    if error:
+        message, status_code = error
+        return jsonify({'status': 'error', 'message': message}), status_code
+    return jsonify(payload)
+
+
+@app.route('/quick-editor/api/import', methods=['POST'])
+def quick_editor_import():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('快速编辑歌词')
+    if locked_response:
+        return locked_response
+
+    if 'file' not in request.files:
+        return qe_error_response('missing file', 400)
+    file = request.files['file']
+    raw_bytes = file.read()
+    try:
+        raw_text = raw_bytes.decode('utf-8')
+    except Exception:
+        raw_text = raw_bytes.decode('utf-8', errors='ignore')
+
+    doc = qe_parse_lys(raw_text)
+    qe_register_doc(doc)
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/lyrics')
+def quick_editor_get():
+    if not is_request_allowed():
+        return abort(403)
+    doc_id = request.args.get('doc_id')
+    doc, err = _qe_get_doc(doc_id)
+    if err:
+        return err
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/export')
+def quick_editor_export():
+    if not is_request_allowed():
+        return abort(403)
+    doc_id = request.args.get('doc_id')
+    doc, err = _qe_get_doc(doc_id)
+    if err:
+        return err
+    return Response(qe_dump_lys(doc), mimetype='text/plain; charset=utf-8')
+
+
+@app.route('/quick-editor/api/move', methods=['POST'])
+def quick_editor_move():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get('document_id')
+    base_version = payload.get('base_version')
+    selection = payload.get('selection') or []
+    target = payload.get('target') or {}
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    try:
+        qe_apply_move(doc, selection, target)
+    except MoveError as exc:
+        return qe_error_response(str(exc), 409)
+
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/undo', methods=['POST'])
+def quick_editor_undo():
+    if not is_request_allowed():
+        return abort(403)
+    doc_id = request.args.get('doc_id') or (request.get_json(silent=True) or {}).get('doc_id')
+    stack = QUICK_EDITOR_UNDO.get(doc_id) or []
+    if not stack:
+        return qe_error_response('nothing to undo', 400)
+    curr = QUICK_EDITOR_DOCS[doc_id]
+    prev = stack.pop()
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).append(qe_clone(curr))
+    QUICK_EDITOR_DOCS[doc_id] = prev
+    return jsonify(prev)
+
+
+@app.route('/quick-editor/api/redo', methods=['POST'])
+def quick_editor_redo():
+    if not is_request_allowed():
+        return abort(403)
+    doc_id = request.args.get('doc_id') or (request.get_json(silent=True) or {}).get('doc_id')
+    stack = QUICK_EDITOR_REDO.get(doc_id) or []
+    if not stack:
+        return qe_error_response('nothing to redo', 400)
+    curr = QUICK_EDITOR_DOCS[doc_id]
+    nxt = stack.pop()
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(qe_clone(curr))
+    QUICK_EDITOR_DOCS[doc_id] = nxt
+    return jsonify(nxt)
+
+
+@app.route('/quick-editor/api/newline', methods=['POST'])
+def quick_editor_newline():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get('document_id')
+    base_version = payload.get('base_version')
+    after_id = payload.get('insert_after_line_id')
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    new_line = {"id": qe_new_id(), "prefix": "", "is_meta": False, "tokens": []}
+    if after_id:
+        idx, _ = qe_find_line(doc, after_id)
+        doc["lines"].insert(idx + 1, new_line)
+    else:
+        doc["lines"].insert(0, new_line)
+
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/set_prefix', methods=['POST'])
+def quick_editor_set_prefix():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    prefix_int = payload.get("prefix_int")
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    try:
+        _, line = qe_find_line(doc, line_id)
+    except MoveError:
+        return qe_error_response('line not found', 404)
+    if line.get("is_meta"):
+        return qe_error_response('cannot set prefix for meta line', 400)
+
+    if prefix_int is None or str(prefix_int) == "":
+        line["prefix"] = "[]"
+    else:
+        try:
+            n = int(prefix_int)
+        except Exception:
+            return qe_error_response('prefix_int must be an integer or empty', 400)
+        if n < 0:
+            return qe_error_response('prefix_int must be >= 0', 400)
+        line["prefix"] = f"[{n}]"
+
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/insert_tokens', methods=['POST'])
+def quick_editor_insert_tokens():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    insert_at = payload.get("insert_at")
+    tokens = payload.get("tokens") or []
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    try:
+        _, line = qe_find_line(doc, line_id)
+    except MoveError:
+        return qe_error_response('line not found', 404)
+
+    if line.get("is_meta"):
+        return qe_error_response('cannot insert tokens into meta line', 400)
+    if not isinstance(insert_at, int) or insert_at < 0 or insert_at > len(line.get("tokens", [])):
+        return qe_error_response('invalid insert_at', 400)
+
+    new_tokens = []
+    for t in tokens:
+        text = (t or {}).get("text", "")
+        ts = (t or {}).get("ts", "")
+        new_tokens.append({"id": qe_new_id(), "ts": ts, "text": text})
+
+    for offset, tok in enumerate(new_tokens):
+        line["tokens"].insert(insert_at + offset, tok)
+
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/sort_lines', methods=['POST'])
+def quick_editor_sort_lines():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    meta_lines = []
+    lyric_lines = []
+
+    for line in doc.get("lines", []):
+        if line.get("is_meta"):
+            meta_lines.append(line)
+        else:
+            lyric_lines.append(line)
+
+    def _line_start_time(line):
+        if not line.get("tokens"):
+            return float('inf')
+        first_token = line["tokens"][0]
+        ts = first_token.get("ts", "")
+        if not ts or "," not in ts:
+            return float('inf')
+        try:
+            start_time = int(ts.split(",")[0])
+            return start_time
+        except (ValueError, IndexError):
+            return float('inf')
+
+    lyric_lines.sort(key=_line_start_time)
+    doc["lines"] = meta_lines + lyric_lines
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/shift_line', methods=['POST'])
+def quick_editor_shift_line():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    try:
+        delta_ms = int(payload.get("delta_ms") or 0)
+    except Exception:
+        return qe_error_response('delta_ms must be an integer', 400)
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    try:
+        _, line = qe_find_line(doc, line_id)
+    except MoveError:
+        return qe_error_response('line not found', 404)
+
+    if line.get("is_meta"):
+        return qe_error_response('cannot shift meta line', 400)
+
+    for tok in line.get("tokens", []):
+        ts = (tok.get("ts") or "").strip()
+        if "," not in ts:
+            continue
+        try:
+            s_str, d_str = ts.split(",", 1)
+            s, d = int(s_str), int(d_str)
+        except Exception:
+            continue
+        new_start = s + delta_ms
+        if new_start < 0:
+            new_start = 0
+        if new_start != s:
+            tok["ts"] = f"{new_start},{d}"
+
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/set_last_token_duration', methods=['POST'])
+def quick_editor_set_last_token_duration():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get("document_id")
+    base_version = payload.get("base_version")
+    line_id = payload.get("line_id")
+    try:
+        new_dur = int(payload.get("duration_ms"))
+    except Exception:
+        return qe_error_response('duration_ms must be an integer', 400)
+    if new_dur < 0:
+        return qe_error_response('duration_ms must be >= 0', 400)
+
+    doc, before, err = _qe_prepare_mutation(doc_id, base_version)
+    if err:
+        return err
+
+    try:
+        _, line = qe_find_line(doc, line_id)
+    except MoveError:
+        return qe_error_response('line not found', 404)
+
+    if line.get("is_meta"):
+        return qe_error_response('cannot modify meta line', 400)
+    if not line.get("tokens"):
+        return qe_error_response('line has no tokens', 400)
+
+    last_tok = None
+    last_start = None
+    for t in reversed(line.get("tokens", [])):
+        ts = (t.get("ts") or "").strip()
+        if "," not in ts:
+            continue
+        try:
+            s_str, _ = ts.split(",", 1)
+            s = int(s_str)
+        except Exception:
+            continue
+        last_tok = t
+        last_start = s
+        break
+
+    if last_tok is None or last_start is None:
+        return qe_error_response('no valid timestamp token in this line', 400)
+
+    last_tok["ts"] = f"{last_start},{new_dur}"
+    doc["version"] += 1
+    QUICK_EDITOR_UNDO.setdefault(doc_id, []).append(before)
+    QUICK_EDITOR_REDO.setdefault(doc_id, []).clear()
+    return jsonify(doc)
+
+
+@app.route('/quick-editor/api/save', methods=['POST'])
+def quick_editor_save():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('快速编辑歌词')
+    if locked_response:
+        return locked_response
+
+    payload = request.get_json(silent=True) or {}
+    doc_id = payload.get('doc_id') or payload.get('document_id')
+    if not doc_id:
+        return jsonify({'status': 'error', 'message': '缺少 doc_id'}), 400
+
+    doc = QUICK_EDITOR_DOCS.get(doc_id)
+    if not doc:
+        return jsonify({'status': 'error', 'message': 'document not found'}), 404
+
+    meta = QUICK_EDITOR_META.get(doc_id) or {}
+    lyrics_path: Optional[Path] = meta.get('lyrics_path')
+    if not lyrics_path:
+        return jsonify({'status': 'error', 'message': '当前文档缺少保存路径，请从管理页进入快速编辑'}), 400
+
+    lyrics_path.parent.mkdir(parents=True, exist_ok=True)
+    if lyrics_path.exists():
+        backup_path = build_backup_path(lyrics_path, int(time.time()))
+        shutil.copy2(lyrics_path, backup_path)
+
+    with open(lyrics_path, 'w', encoding='utf-8') as f:
+        f.write(qe_dump_lys(doc))
+
+    try:
+        lyrics_relative = resource_relative_from_path(lyrics_path, 'songs')
+        lyrics_url = build_public_url('songs', lyrics_relative)
+    except Exception:
+        lyrics_url = str(lyrics_path)
+
+    return jsonify({'status': 'success', 'lyricsPath': lyrics_url})
 
 # 在Flask应用中添加自定义过滤器
 @app.template_filter('escape_js')
@@ -5059,6 +5912,13 @@ def _ms_to_sec(ms: int) -> float:
     """毫秒转秒，保留3位小数"""
     return round((ms or 0) / 1000.0, 3)
 
+def _coerce_ms(value) -> int:
+    """宽松地把各种数值/字符串转换为毫秒整数。"""
+    try:
+        return int(round(float(value)))
+    except Exception:
+        return 0
+
 def _merge_song_state(current: dict, incoming: dict) -> dict:
     """轻量合并歌曲快照，保留已有有效字段。"""
     merged = (current or {}).copy()
@@ -5368,7 +6228,38 @@ def _amll_lines_to_front(payload_lines: list[dict]) -> list[dict]:
     for line in payload_lines:
         words = line.get("words", [])
         syllables = []
+        word_segments = []
         for wobj in words:
+            word_text = str(wobj.get("word", "") or "")
+            start_ms = _coerce_ms(
+                wobj.get("start_ms")
+                or wobj.get("startMs")
+                or wobj.get("startTime")
+            )
+            end_ms = _coerce_ms(
+                wobj.get("end_ms")
+                or wobj.get("endMs")
+                or wobj.get("endTime")
+            )
+            duration_ms = _coerce_ms(
+                wobj.get("duration_ms")
+                or wobj.get("durationMs")
+                or wobj.get("duration")
+            )
+            if duration_ms <= 0 and end_ms:
+                duration_ms = max(0, end_ms - start_ms)
+            if not end_ms and duration_ms:
+                end_ms = start_ms + duration_ms
+
+            if word_text:
+                word_segments.append({
+                    "text": word_text,
+                    "start_ms": start_ms,
+                    "end_ms": end_ms,
+                    "duration_ms": duration_ms,
+                    "roman": str(wobj.get("romanWord") or wobj.get("roman_word") or "")
+                })
+
             # 拆成逐字
             for ev in split_word_to_chars(wobj):
                 syllables.append({
@@ -5381,6 +6272,7 @@ def _amll_lines_to_front(payload_lines: list[dict]) -> list[dict]:
         # 保持原样，但加入前端需要的额外字段
         out_lines.append({
             "syllables": syllables,
+            "words": word_segments,
             "isBG": bool(line.get("isBG")),
             "isDuet": bool(line.get("isDuet")),
             "translatedLyric": line.get("translatedLyric", "") or ""
@@ -5391,18 +6283,45 @@ def _amll_lines_to_lys(lines: list[dict]) -> str:
     """将 AMLL lines 转为 .lys 格式文本。"""
     buf = ["[from: AMLL]", "[offset:0]"]
     for line in lines:
-        syllables = line.get("syllables") or []
-        if not syllables:
-            continue
         marker = "6" if line.get("isBG") else "1"
         parts = []
-        for syl in syllables:
-            text = str(syl.get("text", "") or "")
-            if not text:
+        word_segments = line.get("words") or []
+        if word_segments:
+            for word in word_segments:
+                text = str(word.get("text") or word.get("word") or "")
+                if text == "":
+                    continue
+                start_ms = _coerce_ms(
+                    word.get("start_ms")
+                    or word.get("startMs")
+                    or word.get("startTime")
+                )
+                end_ms = _coerce_ms(
+                    word.get("end_ms")
+                    or word.get("endMs")
+                    or word.get("endTime")
+                )
+                duration_ms = _coerce_ms(
+                    word.get("duration_ms")
+                    or word.get("durationMs")
+                    or word.get("duration")
+                )
+                if duration_ms <= 0 and end_ms:
+                    duration_ms = max(0, end_ms - start_ms)
+                if not end_ms and duration_ms:
+                    end_ms = start_ms + duration_ms
+                parts.append(f"{text}({start_ms},{duration_ms})")
+        else:
+            syllables = line.get("syllables") or []
+            if not syllables:
                 continue
-            start_ms = int(round(float(syl.get("startTime", 0)) * 1000))
-            duration_ms = int(round(float(syl.get("duration", 0)) * 1000))
-            parts.append(f"{text}({start_ms},{duration_ms})")
+            for syl in syllables:
+                text = str(syl.get("text", "") or "")
+                if text == "":
+                    continue
+                start_ms = int(round(float(syl.get("startTime", 0)) * 1000))
+                duration_ms = int(round(float(syl.get("duration", 0)) * 1000))
+                parts.append(f"{text}({start_ms},{duration_ms})")
         if parts:
             buf.append(f"[{marker}]{''.join(parts)}")
     return "\n".join(buf)

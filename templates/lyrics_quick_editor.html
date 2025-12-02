@@ -1,0 +1,1467 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>快速编辑歌词{% if display_name %} · {{ display_name }}{% endif %}</title>
+  <!-- 可选：为跨域后端提供 API 基址，例如 https://your-backend.example.com -->
+  <meta name="api-base" content="/quick-editor" />
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2328;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
+      --primary: #2563eb;
+      --primary-600: #1d4ed8;
+      --primary-50: #eff6ff;
+      --accent: #8b5cf6;
+      --accent-50: #f5f3ff;
+      --radius: 10px;
+      --radius-sm: 8px;
+      --radius-xs: 6px;
+      --token: #f9fafb;
+      --token-border: #e5e7eb;
+      --token-hover: #eef2ff;
+      --token-selected: #f3e8ff;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f15;
+        --card: #0f1722;
+        --text: #e5e7eb;
+        --muted: #9aa4b2;
+        --border: #1f2937;
+        --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 8px 24px rgba(0,0,0,0.45);
+        --primary: #3b82f6;
+        --primary-600: #2563eb;
+        --primary-50: #0b1220;
+        --accent: #a78bfa;
+        --accent-50: #141327;
+        --token: #0f1722;
+        --token-border: #1f2937;
+        --token-hover: #111827;
+        --token-selected: #18122b;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Noto Sans', Arial, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+      color: var(--text);
+      background: radial-gradient(1200px 800px at 10% -10%, rgba(37,99,235,0.05), transparent 40%),
+                  radial-gradient(900px 600px at 100% 0%, rgba(139,92,246,0.06), transparent 45%),
+                  var(--bg);
+    }
+
+    header {
+      position: sticky; top: 0; z-index: 20;
+      padding: 14px 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.75)) no-repeat,
+                  var(--card);
+      backdrop-filter: saturate(1.2) blur(6px);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+    @media (prefers-color-scheme: dark) {
+      header { background: linear-gradient(180deg, rgba(15,23,34,0.8), rgba(15,23,34,0.75)) no-repeat, var(--card); }
+    }
+
+    h1 { margin: 0 0 10px 0; font-size: 20px; font-weight: 650; letter-spacing: 0.2px; }
+
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .controls input[type=file] {
+      padding: 6px 8px; border: 1px dashed var(--border); border-radius: var(--radius-xs);
+      background: var(--card); color: var(--muted);
+    }
+    .controls button {
+      padding: 8px 12px; border: 1px solid var(--border); background: var(--card);
+      border-radius: var(--radius); cursor: pointer; color: var(--text);
+      transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .06s ease;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+    }
+    .controls button:hover { border-color: #cbd5e1; box-shadow: 0 4px 10px rgba(2,6,23,0.05); }
+    .controls button:active { transform: translateY(1px); }
+    .controls button:disabled { opacity: 0.6; cursor: not-allowed; }
+    /* Primary emphasis */
+    #btnImport, #btnSave {
+      background: linear-gradient(180deg, var(--primary), var(--primary-600));
+      color: #fff; border-color: transparent; box-shadow: 0 6px 18px rgba(37,99,235,0.25);
+    }
+    #btnImport:hover, #btnSave:hover { box-shadow: 0 8px 22px rgba(37,99,235,0.3); }
+    #btnImport:disabled, #btnSave:disabled { background: #aab4c6; box-shadow: none; }
+
+    main {
+      display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; padding: 18px; max-width: 1200px; margin: 0 auto;
+    }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .panel > h2 { margin: 2px 0 10px; font-size: 16px; color: var(--muted); font-weight: 600; }
+
+    #docInfo { color: var(--muted); margin-bottom: 10px; font-size: 13px; }
+
+    #lines { display: flex; flex-direction: column; gap: 10px; }
+
+    .line {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      padding: 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--card) 92%, transparent);
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    .line:hover { border-color: #cbd5e1; box-shadow: 0 2px 10px rgba(2,6,23,0.04); }
+    .line.meta { background: var(--primary-50); border-style: solid; }
+
+    .prefix { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+    .tok {
+      display: inline-block; padding: 6px 10px; border: 1px solid var(--token-border);
+      border-radius: 999px; cursor: grab; user-select: none;
+      background: var(--token); color: var(--text);
+      transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .06s ease;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+      outline: none;
+    }
+    .tok:hover { border-color: #c7d2fe; background: var(--token-hover); }
+    .tok:active { cursor: grabbing; transform: translateY(1px); }
+    .tok.selected {
+      background: var(--token-selected);
+      border-color: #c084fc;
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+    }
+    .tok.anchor { outline: 2px solid var(--primary); }
+    .tok:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent); }
+
+    .tok.drop-left { box-shadow: -3px 0 0 0 var(--primary) inset, 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+    .tok.drop-right { box-shadow:  3px 0 0 0 var(--primary) inset, 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+
+    .box { background: linear-gradient(180deg, var(--accent-50), transparent 80%); padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    #status { margin-top: 10px; color: var(--muted); min-height: 1.4em; font-size: 13px; transition: color .2s ease; }
+    #status.success { color: #0c8599; }
+    #status.error { color: #c92a2a; }
+    .muted { color: var(--muted); font-size: 12px; }
+
+    /* Smooth scrollbars */
+    ::-webkit-scrollbar { height: 10px; width: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* Line drop highlight */
+    .line.drop-left { box-shadow: inset 4px 0 0 0 var(--primary); border-style: solid; }
+    .line.drop-right { box-shadow: inset -4px 0 0 0 var(--primary); border-style: solid; }
+    .line.selected { border-color: #93c5fd; background: color-mix(in srgb, var(--primary-50) 65%, var(--card)); }
+
+    /* Prefix editor */
+    .prefix-editor { width: 64px; min-width: 56px; padding: 4px 6px; border: 1px dashed var(--border); border-radius: 7px; background: var(--card); color: var(--text); text-align: center; font-variant-numeric: tabular-nums; }
+    .prefix-editor::placeholder { color: var(--muted); }
+    .prefix-editor:focus { outline: none; border-color: #cbd5e1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent); }
+    /* Playing highlight */
+    .tok.active {
+      background: #fef3c7; /* amber-100 */
+      border-color: #f59e0b; /* amber-500 */
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25);
+    }
+    .line.playing {
+      outline: 2px solid rgba(245, 158, 11, 0.35);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>.lys 歌词顺序编辑器（多选拖放，前端不显示时间戳）</h1>
+    <div class="controls">
+      <input type="file" id="fileInput" accept=".lys,.lrc,.txt" />
+      <button id="btnImport">导入 .lys</button>
+      <button id="btnUndo" disabled>撤销</button>
+      <button id="btnRedo" disabled>重做</button>
+      <button id="btnSortLines" disabled>排序歌词行</button>
+      <button id="btnSave" disabled>保存</button>
+      <button id="btnUndoImport" style="display:none;">撤销导入</button>
+      <span style="flex:1"></span>
+      <!-- 新增：按键延迟(ms) 设置 -->
+      <label class="muted" style="display:flex; align-items:center; gap:6px;">
+        延迟(ms)
+        <input id="keyDelayInput" type="number" step="1" placeholder="0"
+               style="width:90px; padding:4px 6px; border:1px dashed var(--border); border-radius:6px;">
+      </label>
+      <input type="file" id="mediaInput" accept="audio/*,video/*" />
+      <button id="btnPlayPause" disabled>播放</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>文档</h2>
+      <div id="docInfo"></div>
+      <div id="lines"></div>
+    </section>
+
+    <section class="panel">
+      <h2>用法说明</h2>
+      <div class="box">
+        <h3 style="margin-top: 0; color: var(--primary);">🎵 基础操作</h3>
+        <p><strong>选择歌词块：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>单击一个歌词块进行单选</li>
+          <li><strong>Ctrl/⌘ + 点击</strong>进行多选（可跨行选择）</li>
+          <li>单击行内的空白区域可选中整行（便于整行复制/粘贴）</li>
+          <li>点击空白处清空所有选择</li>
+        </ul>
+        
+        <p><strong>拖放调整顺序：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>选中文本块后直接拖动到目标位置</li>
+          <li>拖动到另一个块的左半区：插入到该块前面</li>
+          <li>拖动到另一个块的右半区：插入到该块后面</li>
+          <li>拖动到行的左半区：移动到该行开头</li>
+          <li>拖动到行的右半区：移动到该行结尾</li>
+          <li class="muted">拖放时会有蓝色高亮提示插入位置</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">✏️ 编辑功能</h3>
+        <p><strong>复制粘贴：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>Ctrl+C / Ctrl+V（Mac: ⌘C / ⌘V）复制粘贴</li>
+          <li>可复制单个词块或多选词块</li>
+          <li>可复制整行歌词（先点击行空白处）</li>
+          <li>粘贴到词块右侧或行开头</li>
+        </ul>
+        
+        <p><strong>前缀编辑：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>歌词行左侧的数字前缀可直接编辑</li>
+          <li>输入数字后按 Enter 或点击其他地方确认</li>
+          <li>留空则显示为 []（无前缀）</li>
+        </ul>
+        
+        <p><strong>插入空行：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>在行的空白区域快速三击，在该行下方插入新空行</li>
+          <li>新插入的空行可编辑前缀和添加内容</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">🎮 播放控制</h3>
+        <p><strong>播放器功能：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>可选加载 音频/视频 文件进行同步播放</li>
+          <li>点击「播放」按钮或按空格键播放/暂停</li>
+          <li>双击某行的空白区域会从该行开始播放</li>
+          <li>单击整行只会选中该行，不再触发播放</li>
+          <li>右上角「延迟(ms)」可设置按键偏移，应用于 F/H 等对齐快捷键</li>
+          <li>当前播放的歌词行和词块会高亮显示</li>
+          <li>不加载媒体文件时使用时钟模式播放</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">🛠️ 高级功能</h3>
+        <p><strong>撤销重做：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>使用「撤销」和「重做」按钮恢复操作</li>
+          <li>支持多步撤销和重做</li>
+        </ul>
+        
+        <p><strong>歌词行排序：</strong></p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>点击「排序歌词行」按开始时间自动排序</li>
+          <li>保留原有时间戳，只调整行的先后顺序</li>
+        </ul>
+        
+        <h3 style="color: var(--primary);">📁 文件支持</h3>
+        <p><strong>导入格式：</strong> .lys、.lrc、.txt 文件</p>
+        <p><strong>保存格式：</strong> 保存回 .lys 文件，时间戳完整保留</p>
+        <p class="muted">💡 提示：页面不显示时间戳，但所有操作都会保留原时间戳；保存后管理页会直接使用最新内容。</p>
+        
+        <h3 style="color: var(--primary);">⌨️ 快捷键</h3>
+        <div style="background: var(--primary-50); padding: 12px; border-radius: 8px; margin-top: 12px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+C / ⌘C</td>
+              <td style="padding: 6px 8px; color: var(--muted);">复制选中的歌词内容</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+V / ⌘V</td>
+              <td style="padding: 6px 8px; color: var(--muted);">粘贴到选中的位置</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">Space (空格)</td>
+              <td style="padding: 6px 8px; color: var(--muted);">播放/暂停</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">F</td>
+              <td style="padding: 6px 8px; color: var(--muted);">
+                让"选中行"的歌词从此刻开始（含按键延迟）
+              </td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">H</td>
+              <td style="padding: 6px 8px; color: var(--muted);">
+                让"选中行"的最后一个字在此刻结束（只改持续时间）
+              </td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">W</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀清空为 []</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">A</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 4</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">S</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 6</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 6px 8px; font-weight: 600;">D</td>
+              <td style="padding: 6px 8px; color: var(--muted);">将选中行前缀设置为 5</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 8px; font-weight: 600;">Ctrl+点击 / ⌘+点击</td>
+              <td style="padding: 6px 8px; color: var(--muted);">多选歌词块</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+      <div id="status"></div>
+    </section>
+  </main>
+
+
+  <script>
+    const PRELOAD_JSON_FILE = {{ json_file|tojson|safe }};
+    const PRELOAD_DISPLAY_NAME = {{ display_name|tojson|safe }};
+    const PRELOADED_DATA = {{ preload_data|tojson|safe }};
+    const $ = (sel) => document.querySelector(sel);
+    // API 基址（默认同源）。可在部署到 GitHub Pages 时，通过注入 window.API_BASE 或设置 <meta name="api-base" content="..."> 来指定后端域名。
+    const API_BASE = (window.API_BASE || (document.querySelector('meta[name="api-base"]')?.content || '')).replace(/\/$/, '');
+    const BASE_TITLE = document.title || '快速编辑歌词';
+    const apiUrl = (path) => API_BASE + path;
+    const apiFetch = (path, init) => fetch(apiUrl(path), init);
+
+    let state = {
+      doc: null,
+      selectedTokenIds: new Set(),
+      selectedLineId: null, // 选中的整行（用于行级复制/粘贴）
+      clipboard: null,      // { tokens: [{text, ts}], fromLineId }
+      settings: {
+        keyDelayMs: 0,
+      },
+      // 播放相关
+      playback: {
+        usingMedia: false,
+        mediaEl: null,
+        playing: false,
+        rafId: 0,
+        clockStartEpoch: 0,
+        clockStartOffset: 0, // ms
+      },
+      tokenCache: [], // [{id, lineId, start, end, el}]
+      // 页面状态
+      unsaved: false,                // 是否有未保存变更（用于关闭确认）
+      lastImportBackup: null,        // { doc, selectedTokenIds, selectedLineId, unsaved }
+      context: {
+        jsonFile: '',
+        lyricsPath: '',
+        translationPath: '',
+        songUrl: '',
+        displayName: PRELOAD_DISPLAY_NAME || '',
+        updatedJson: false
+      }
+    };
+
+    const hasDocData = () => !!(state.doc && Array.isArray(state.doc.lines) && state.doc.lines.length > 0);
+
+    function setStatus(msg, type = 'info') {
+      const el = $('#status');
+      el.textContent = msg || '';
+      el.classList.remove('success', 'error');
+      if (type === 'success') el.classList.add('success');
+      if (type === 'error') el.classList.add('error');
+    }
+
+    function updateDocInfo() {
+      if (!state.doc) {
+        $('#docInfo').textContent = '暂无文档';
+        return;
+      }
+      const fileLabel = state.context.displayName || state.context.jsonFile || '未命名';
+      $('#docInfo').textContent = `文件: ${fileLabel} | DocID: ${state.doc.id} — version: ${state.doc.version} — 行数: ${state.doc.lines.length}`;
+    }
+
+    function applyDoc(doc, contextOverrides = {}) {
+      state.doc = doc;
+      state.selectedTokenIds.clear();
+      state.selectedLineId = null;
+      if (contextOverrides && Object.keys(contextOverrides).length > 0) {
+        state.context = { ...state.context, ...contextOverrides };
+      }
+      renderDoc();
+      $('#btnSave').disabled = false;
+      $('#btnUndo').disabled = false;
+      $('#btnRedo').disabled = false;
+      $('#btnSortLines').disabled = false;
+      $('#btnPlayPause').disabled = false;
+      clearDirty();
+    }
+
+    function renderDoc() {
+      const c = $('#lines');
+      c.innerHTML = '';
+      if (!state.doc) {
+        updateDocInfo();
+        return;
+      }
+      // 标题上的小圆点提示（有无变更）
+      const titleSuffix = state.context.displayName ? ` · ${state.context.displayName}` : '';
+      document.title = (state.unsaved ? '● ' : '') + BASE_TITLE + titleSuffix;
+
+      updateDocInfo();
+
+      state.tokenCache = [];
+      state.doc.lines.forEach((line) => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'line' + (line.is_meta ? ' meta' : '');
+        lineDiv.dataset.lineId = line.id;
+        if (state.selectedLineId === line.id) lineDiv.classList.add('selected');
+
+        // 可编辑的前缀数字输入（仅非 meta 行）
+        if (!line.is_meta) {
+          const preWrap = document.createElement('div');
+          preWrap.className = 'prefix';
+          const input = document.createElement('input');
+          input.className = 'prefix-editor';
+          input.type = 'number';
+          input.placeholder = '[ ]';
+          const m = /\[([^\]]*)\]/.exec(line.prefix || '');
+          input.value = m ? m[1] : '';
+          input.title = '可编辑的前缀数字（留空为无前缀）';
+          input.addEventListener('click', (e) => { e.stopPropagation(); });
+          input.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') { await commitPrefix(line.id, input.value); }
+            e.stopPropagation();
+          });
+          input.addEventListener('blur', async () => { await commitPrefix(line.id, input.value); });
+          input.addEventListener('focus', () => {              // ✅ 新增
+            state.selectedLineId = line.id;
+          });
+          preWrap.appendChild(input);
+          lineDiv.appendChild(preWrap);
+        } else if (line.prefix) {
+          const pre = document.createElement('span');
+          pre.className = 'prefix';
+          pre.textContent = line.prefix;
+          lineDiv.appendChild(pre);
+        }
+
+        line.tokens.forEach((tok) => {
+          const span = document.createElement('span');
+          span.className = 'tok';
+          // 不显示时间戳，只显示文本
+          span.textContent = tok.text || '(空)';
+          span.title = `tokenId=${tok.id}`; // 不显示时间戳
+          span.dataset.tokenId = tok.id;
+          span.dataset.lineId = line.id;
+          span.draggable = !line.is_meta;  // meta 行不允许拖拽
+
+          // 解析时间戳（start,duration）
+          let sMs = null, dMs = null;
+          if (tok.ts && typeof tok.ts === 'string' && tok.ts.includes(',')) {
+            const parts = tok.ts.split(',');
+            sMs = parseInt(parts[0], 10);
+            dMs = parseInt(parts[1], 10);
+            if (!Number.isFinite(sMs) || !Number.isFinite(dMs)) { sMs = null; dMs = null; }
+          }
+          if (sMs != null && dMs != null) {
+            span.dataset.startMs = String(sMs);
+            span.dataset.durMs = String(dMs);
+            state.tokenCache.push({ id: tok.id, lineId: line.id, start: sMs, end: sMs + dMs, el: span });
+          }
+
+          if (state.selectedTokenIds.has(tok.id)) span.classList.add('selected');
+
+          // 点击：多选/取消
+          span.addEventListener('click', (e) => {
+            const multi = e.metaKey || e.ctrlKey;
+            if (multi) {
+              if (state.selectedTokenIds.has(tok.id)) state.selectedTokenIds.delete(tok.id);
+              else state.selectedTokenIds.add(tok.id);
+            } else {
+              // 单击切换选择到这个 token（便于单选拖动）
+              state.selectedTokenIds.clear();
+              state.selectedTokenIds.add(tok.id);
+            }
+            renderDoc();
+          });
+
+          // 拖拽开始：若当前 token 不在选择中，则将选择重置为该 token
+          span.addEventListener('dragstart', (e) => {
+            if (!state.selectedTokenIds.has(tok.id)) {
+              state.selectedTokenIds.clear();
+              state.selectedTokenIds.add(tok.id);
+              renderDoc();
+            }
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', 'drag'); // 占位以启用拖拽
+          });
+
+          // 在 token 上方悬停：决定 before / after 的视觉提示
+          span.addEventListener('dragover', (e) => {
+            if (!state.doc) return;
+            e.preventDefault(); // 允许 drop
+            const rect = span.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            span.classList.toggle('drop-left', isLeft);
+            span.classList.toggle('drop-right', !isLeft);
+          });
+
+          // 离开时清理样式
+          span.addEventListener('dragleave', () => {
+            span.classList.remove('drop-left', 'drop-right');
+          });
+
+          // 放下：计算 before/after，构造 selection + target，调用 /api/move
+          span.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            const rect = span.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            span.classList.remove('drop-left', 'drop-right');
+            await doDropMove({
+              anchorLineId: span.dataset.lineId,
+              anchorTokenId: span.dataset.tokenId,
+              position: isLeft ? 'before' : 'after',
+            });
+          });
+
+          lineDiv.appendChild(span);
+        });
+
+        // —— 单/双/三击：1=只选中；2=跳转播放；>=3=在该行后新建空行 —— //
+        if (!line.is_meta) {
+          lineDiv.addEventListener('click', (e) => {
+            // 点到 token 或前缀输入框时，不走行级点击
+            if (e.target.classList.contains('tok') || e.target.classList.contains('prefix-editor')) return;
+            e.stopPropagation();
+
+            const CLICK_DECISION_DELAY = 300; // ms，用于区分双击/三击
+
+            // 在 DOM 节点上做一个简单的点击计数器
+            if (lineDiv._clickTimer) clearTimeout(lineDiv._clickTimer);
+            lineDiv._clickCount = (lineDiv._clickCount || 0) + 1;
+
+            lineDiv._clickTimer = setTimeout(async () => {
+              const count = lineDiv._clickCount || 0;
+              lineDiv._clickCount = 0;
+              lineDiv._clickTimer = null;
+
+              if (count >= 3) {
+                // 三击：在此行后新建空行
+                await createEmptyLineAfter(line.id);
+              } else if (count === 2) {
+                // 双击：选中并跳转播放
+                state.selectedTokenIds.clear();
+                state.selectedLineId = line.id;
+                renderDoc();
+                startFromLine(line.id); // ← 原本单击触发的"跳转"，移到双击里
+              } else {
+                // 单击：只选中该行，不跳转
+                state.selectedTokenIds.clear();
+                state.selectedLineId = line.id;
+                renderDoc();
+              }
+            }, CLICK_DECISION_DELAY);
+          });
+
+          lineDiv.addEventListener('dragover', (e) => {
+            if (!state.doc) return; e.preventDefault();
+            const rect = lineDiv.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            lineDiv.classList.toggle('drop-left', isLeft);
+            lineDiv.classList.toggle('drop-right', !isLeft);
+          });
+          lineDiv.addEventListener('dragleave', () => {
+            lineDiv.classList.remove('drop-left', 'drop-right');
+          });
+          lineDiv.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            const rect = lineDiv.getBoundingClientRect();
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            lineDiv.classList.remove('drop-left', 'drop-right');
+            await doDropMoveLine({ lineId: line.id, position: isLeft ? 'start' : 'end' });
+          });
+        }
+
+        c.appendChild(lineDiv);
+      });
+      // 渲染后刷新一次高亮（保持播放中时 UI 同步）
+      updateHighlight(getNowMs());
+    }
+
+    // 将选中的 token ID 集合合并成若干个 [start_id, end_id] 的连续区间（逐行）
+    function groupSelectionIntoRanges() {
+      if (!state.doc) return [];
+      const idToIndex = new Map();
+      state.doc.lines.forEach((line, li) => {
+        line.tokens.forEach((tok, ti) => {
+          idToIndex.set(tok.id, { li, ti, line_id: line.id });
+        });
+      });
+
+      const selected = Array.from(state.selectedTokenIds)
+        .map((id) => idToIndex.get(id))
+        .filter(Boolean)
+        .sort((a, b) => (a.li - b.li) || (a.ti - b.ti));
+
+      const ranges = [];
+      let i = 0;
+      while (i < selected.length) {
+        const { li, line_id } = selected[i];
+        let startTi = selected[i].ti;
+        let endTi = startTi;
+
+        let j = i + 1;
+        while (j < selected.length && selected[j].li === li && selected[j].ti === endTi + 1) {
+          endTi = selected[j].ti;
+          j++;
+        }
+        const line = state.doc.lines[li];
+        const start_token_id = line.tokens[startTi].id;
+        const end_token_id = line.tokens[endTi].id;
+        ranges.push({ line_id, start_token_id, end_token_id });
+        i = j;
+      }
+      return ranges;
+    }
+
+    async function doDropMove({ anchorLineId, anchorTokenId, position }) {
+      if (!state.doc) return;
+      const selectionRanges = groupSelectionIntoRanges();
+      if (selectionRanges.length === 0) {
+        setStatus('请先选择要移动的歌词块（可 Ctrl/⌘ 多选）');
+        return;
+      }
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        selection: selectionRanges,
+        target: {
+          type: 'anchor',
+          line_id: anchorLineId,
+          anchor_token_id: anchorTokenId,
+          position: position // 'before' | 'after'
+        }
+      };
+
+      const res = await apiFetch('/api/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('移动失败：' + text);
+        return;
+      }
+      const doc = await res.json();
+      state.doc = doc;
+      // 成功后默认清空选择，避免误拖
+      state.selectedTokenIds.clear();
+      renderDoc();
+      setStatus('已完成拖放移动。');
+      markDirty();
+    }
+
+    async function doDropMoveLine({ lineId, position }) {
+      if (!state.doc) return;
+      const selectionRanges = groupSelectionIntoRanges();
+      if (selectionRanges.length === 0) { setStatus('请先选择要移动的歌词块（可 Ctrl/⌘ 多选）'); return; }
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        selection: selectionRanges,
+        target: { type: 'line', line_id: lineId, position } // 'start' | 'end'
+      };
+      const res = await apiFetch('/api/move', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('移动失败：' + text); return; }
+      const doc = await res.json();
+      state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已完成拖放移动。');
+    }
+
+    async function createEmptyLineAfter(afterLineId) {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 记录变更前的行 id 集合，用来找出"新行"的 id
+      const beforeIds = new Set(state.doc.lines.map(l => l.id));
+
+      const res = await apiFetch('/api/newline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document_id: state.doc.id,
+          base_version: state.doc.version,
+          insert_after_line_id: afterLineId
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('创建空行失败：' + text);
+        return;
+      }
+
+      const newDoc = await res.json();
+      // 找出新增的那一行 id
+      let newLineId = null;
+      for (const l of newDoc.lines) {
+        if (!beforeIds.has(l.id)) { newLineId = l.id; break; }
+      }
+
+      state.doc = newDoc;
+      state.selectedTokenIds.clear();
+      state.selectedLineId = newLineId || afterLineId; // 兜底：找不到就选原行
+      renderDoc();
+
+      setStatus('已在该行后创建空行');
+      markDirty();
+    }
+
+    async function insertEmptyLineBelow(afterLineId) {
+      const res = await apiFetch('/api/newline', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, insert_after_line_id: afterLineId })
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('插入空行失败：' + text); return; }
+      const doc = await res.json(); state.doc = doc; renderDoc(); setStatus('已插入空行。');
+      markDirty();
+    }
+
+    async function commitPrefix(lineId, value) {
+      if (!state.doc) return;
+      const v = String(value || '').trim();
+      const res = await apiFetch('/api/set_prefix', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, prefix_int: v === '' ? "" : v })
+      });
+      if (!res.ok) { return; }
+      const doc = await res.json(); state.doc = doc; renderDoc();
+      markDirty();
+    }
+
+    function collectSelectedTokens() {
+      if (!state.doc) return [];
+      const idToTok = new Map();
+      const order = [];
+      state.doc.lines.forEach((line, li) => {
+        line.tokens.forEach((tok, ti) => {
+          idToTok.set(tok.id, { tok, li, ti, line_id: line.id });
+          order.push({ id: tok.id, li, ti });
+        });
+      });
+      const arr = Array.from(state.selectedTokenIds).map(id => idToTok.get(id)).filter(Boolean);
+      arr.sort((a,b)=> (a.li-b.li)||(a.ti-b.ti));
+      return arr;
+    }
+
+    function handleCopy() {
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        const tokens = sels.map(s => ({ text: s.tok.text, ts: s.tok.ts }));
+        state.clipboard = { tokens, fromLineId: sels[0].line_id };
+        setStatus('已复制所选歌词块。');
+        return true;
+      }
+      if (state.selectedLineId) {
+        const line = state.doc.lines.find(ln => ln.id === state.selectedLineId);
+        if (line && !line.is_meta && line.tokens.length) {
+          const tokens = line.tokens.map(t => ({ text: t.text, ts: t.ts }));
+          state.clipboard = { tokens, fromLineId: line.id };
+          setStatus('已复制整行歌词。');
+          return true;
+        }
+      }
+      setStatus('没有可复制的内容');
+      return false;
+    }
+
+    function resolveActiveLineId() {
+      if (!state.doc) return null;
+      if (state.selectedLineId) return state.selectedLineId;
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        return sels[0].line_id;
+      }
+      return null;
+    }
+
+    async function setSelectedLineQuickPrefix(prefixValue) {
+      const lineId = resolveActiveLineId();
+      if (!lineId) {
+        setStatus('请先选中要调整前缀的歌词行。');
+        return;
+      }
+      const currentLineIndex = state.doc.lines.findIndex((ln) => ln.id === lineId);
+      if (currentLineIndex === -1) {
+        setStatus('未找到目标歌词行。');
+        return;
+      }
+      const line = state.doc.lines[currentLineIndex];
+      if (!line || line.is_meta) {
+        setStatus('该快捷键仅适用于普通歌词行。');
+        return;
+      }
+      const current = line.prefix ? (/\[([^\]]*)\]/.exec(line.prefix || '')?.[1] ?? '') : '';
+      const desired = (prefixValue === null || typeof prefixValue === 'undefined') ? '' : String(prefixValue);
+      const nextLineId = (() => {
+        for (let i = currentLineIndex + 1; i < state.doc.lines.length; i++) {
+          const candidate = state.doc.lines[i];
+          if (!candidate.is_meta) return candidate.id;
+        }
+        return null;
+      })();
+      const displayValue = desired === '' ? '[]' : desired;
+      if (current === desired) {
+        state.selectedLineId = nextLineId || lineId;
+        state.selectedTokenIds.clear();
+        renderDoc();
+        setStatus(`该行前缀已是 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行'}。`);
+        return;
+      }
+      state.selectedLineId = lineId;
+      await commitPrefix(lineId, desired);
+      if (nextLineId) {
+        state.selectedLineId = nextLineId;
+      }
+      state.selectedTokenIds.clear();
+      renderDoc();
+      setStatus(`已将该行前缀设置为 ${displayValue}，已选中${nextLineId ? '下一行' : '当前行'}。`);
+    }
+
+    async function handlePaste() {
+      if (!state.clipboard || !state.doc) { setStatus('剪贴板为空'); return; }
+      const items = state.clipboard.tokens || [];
+      if (items.length === 0) { setStatus('剪贴板为空'); return; }
+
+      // 优先：若选中了 token，则粘贴到其右边（取该行中选中的最右一个 token 索引+1）
+      const sels = collectSelectedTokens();
+      if (sels.length > 0) {
+        const lineId = sels[0].line_id;
+        const line = state.doc.lines.find(ln => ln.id === lineId);
+        const lastTi = Math.max(...sels.filter(s=>s.line_id===lineId).map(s=>s.ti));
+        await insertTokens(lineId, lastTi + 1, items);
+        return;
+      }
+      // 否则：若选中行，则粘贴到该行最左
+      if (state.selectedLineId) {
+        await insertTokens(state.selectedLineId, 0, items);
+        return;
+      }
+      setStatus('请先选中一个目标（token或行）再粘贴');
+    }
+
+    async function insertTokens(lineId, insertAt, tokens) {
+      const res = await apiFetch('/api/insert_tokens', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: state.doc.id, base_version: state.doc.version, line_id: lineId, insert_at: insertAt, tokens })
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('粘贴失败：' + text); return; }
+      const doc = await res.json(); state.doc = doc; state.selectedTokenIds.clear(); renderDoc(); setStatus('已粘贴。');
+      markDirty();
+    }
+
+    // ---- 基础 API 调用（导入、保存、撤销、重做） ----
+    async function loadFromServer(jsonFile) {
+      if (!jsonFile) {
+        setStatus('缺少 JSON 文件名');
+        return;
+      }
+      setStatus('正在加载歌曲数据...');
+      const res = await apiFetch('/api/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonFile })
+      });
+      const data = await res.json();
+      if (!res.ok || data.status !== 'success') {
+        throw new Error(data.message || '加载失败');
+      }
+      applyDoc(data.doc, {
+        jsonFile,
+        lyricsPath: data.lyricsPath || '',
+        translationPath: data.translationPath || '',
+        songUrl: data.songUrl || '',
+        displayName: data.title || data.jsonFile || jsonFile,
+        updatedJson: !!data.updatedJson
+      });
+      if (data.songUrl) {
+        loadMediaUrl(data.songUrl);
+      }
+      setStatus(`已加载：${state.context.displayName || jsonFile}`);
+    }
+
+    async function importLys(file) {
+      // 若已有数据，先询问；允许撤销本次导入
+      if (hasDocData()) {
+        const ok = confirm('当前页面已有数据，导入新文件将替换当前文档。\n确定继续？\n（提示：导入后可点击"撤销导入"恢复）');
+        if (!ok) { setStatus('已取消导入'); return; }
+        // 记录导入前快照，以便撤销导入
+        state.lastImportBackup = {
+          doc: state.doc,
+          selectedLineId: state.selectedLineId,
+          selectedTokenIds: new Set(state.selectedTokenIds),
+          unsaved: state.unsaved,
+          context: { ...state.context },
+        };
+        $('#btnUndoImport').style.display = 'inline-block';
+      } else {
+        state.lastImportBackup = null;
+        $('#btnUndoImport').style.display = 'none';
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await apiFetch('/api/import', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || '导入失败');
+      }
+      const doc = await res.json();
+      applyDoc(doc, {
+        jsonFile: '',
+        lyricsPath: '',
+        translationPath: '',
+        songUrl: '',
+        displayName: file.name || ''
+      });
+    }
+
+    async function saveToServer() {
+      if (!state.doc) { setStatus('请先加载歌词'); return; }
+      if (!state.context.jsonFile) {
+        setStatus('当前文档未绑定管理歌曲，无法保存', 'error');
+        return;
+      }
+      const res = await apiFetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doc_id: state.doc.id })
+      });
+      const data = await res.json();
+      if (!res.ok || data.status !== 'success') {
+        setStatus('保存失败：' + (data.message || res.statusText), 'error');
+        return;
+      }
+      clearDirty();
+      setStatus('保存成功：' + (data.lyricsPath || '歌词文件'), 'success');
+    }
+
+    function undoImport() {
+      if (!state.lastImportBackup) { setStatus('没有可撤销的导入'); return; }
+      const b = state.lastImportBackup;
+      state.doc = b.doc;
+      state.selectedLineId = b.selectedLineId || null;
+      state.selectedTokenIds = new Set(b.selectedTokenIds || []);
+      state.unsaved = !!b.unsaved;
+      state.context = b.context ? { ...b.context } : state.context;
+      renderDoc();
+      $('#btnUndoImport').style.display = 'none';
+      setStatus('已撤销导入，恢复到导入前的文档。');
+    }
+
+    function markDirty() {
+      state.unsaved = true;
+      // 有数据即拦截关闭，这里不额外设置；统一在 beforeunload 回调里判断
+      renderDoc(); // 刷新标题提示小圆点
+    }
+    function clearDirty() {
+      state.unsaved = false;
+      renderDoc();
+    }
+
+    async function undo() {
+      const params = new URLSearchParams({ doc_id: state.doc.id });
+      const res = await apiFetch('/api/undo?' + params.toString(), { method: 'POST' });
+      if (!res.ok) { setStatus('无法撤销'); return; }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+      markDirty();
+    }
+
+    async function redo() {
+      const params = new URLSearchParams({ doc_id: state.doc.id });
+      const res = await apiFetch('/api/redo?' + params.toString(), { method: 'POST' });
+      if (!res.ok) { setStatus('无法重做'); return; }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+      markDirty();
+    }
+
+    async function sortLines() {
+      if (!state.doc) { setStatus('请先导入文档'); return; }
+      
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version
+      };
+      
+      const res = await apiFetch('/api/sort_lines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('排序失败：' + text);
+        return;
+      }
+      
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+      setStatus('歌词行已按时间顺序排序完成');
+      markDirty();
+    }
+
+    // ======== 播放器逻辑 ========
+    function ensureMediaEl() {
+      if (!state.playback.mediaEl) {
+        const v = document.createElement('video');
+        v.id = 'player';
+        v.controls = true; // 允许用户控制
+        v.style.maxWidth = '100%';
+        v.style.display = 'block';
+        v.style.marginTop = '10px';
+        // 放到用法面板下（更自然）
+        const panel = document.querySelectorAll('.panel')[1];
+        panel.appendChild(v);
+        state.playback.mediaEl = v;
+        // 当媒体播放/暂停时，同步按钮状态
+        v.addEventListener('play', () => { state.playback.playing = true; startLoop(); syncPlayButton(); });
+        v.addEventListener('pause', () => { state.playback.playing = false; stopLoop(); syncPlayButton(); });
+        v.addEventListener('seeked', () => { updateHighlight(getNowMs()); });
+        v.addEventListener('timeupdate', () => { updateHighlight(getNowMs()); });
+        v.addEventListener('ended', () => { state.playback.playing = false; stopLoop(); syncPlayButton(); });
+      }
+      return state.playback.mediaEl;
+    }
+
+    function loadMediaUrl(url) {
+      if (!url) return;
+      const v = ensureMediaEl();
+      v.src = url;
+      v.load();
+      state.playback.usingMedia = true;
+      $('#btnPlayPause').disabled = false;
+      setStatus('已加载音乐：' + url);
+    }
+
+    function loadMediaFile(file) {
+      const v = ensureMediaEl();
+      const url = URL.createObjectURL(file);
+      v.src = url;
+      v.load();
+      state.playback.usingMedia = true;
+      $('#btnPlayPause').disabled = false;
+      setStatus('已加载媒体：' + (file.name || '')); 
+    }
+
+    function getNowMs() {
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        return (state.playback.mediaEl.currentTime || 0) * 1000;
+      }
+      // 时钟模式
+      return state.playback.clockStartOffset + (state.playback.playing ? (performance.now() - state.playback.clockStartEpoch) : 0);
+    }
+
+    function play() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.play();
+      } else {
+        // 无媒体，使用时钟
+        state.playback.playing = true;
+        state.playback.clockStartEpoch = performance.now();
+        startLoop();
+        syncPlayButton();
+      }
+    }
+
+    function pause() {
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.pause();
+      } else {
+        // 时钟暂停
+        state.playback.clockStartOffset = getNowMs();
+        state.playback.playing = false;
+        stopLoop();
+        syncPlayButton();
+      }
+    }
+
+    function togglePlay() {
+      if (state.playback.playing) pause(); else play();
+    }
+
+    function seekMs(ms) {
+      ms = Math.max(0, ms|0);
+      if (state.playback.usingMedia && state.playback.mediaEl) {
+        state.playback.mediaEl.currentTime = ms / 1000;
+      } else {
+        state.playback.clockStartOffset = ms;
+        if (state.playback.playing) state.playback.clockStartEpoch = performance.now();
+        updateHighlight(getNowMs());
+      }
+    }
+
+    function startFromLine(lineId) {
+      if (!state.doc) return;
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || !line.tokens || line.tokens.length === 0) return;
+      // 找到该行最早的 start
+      let minStart = Infinity;
+      for (const t of line.tokens) {
+        if (!t.ts) continue;
+        const [s, d] = String(t.ts).split(',').map(x=>parseInt(x,10));
+        if (Number.isFinite(s)) minStart = Math.min(minStart, s);
+      }
+      if (!Number.isFinite(minStart)) return;
+      seekMs(minStart);
+      // 若未播放则开始
+      if (!state.playback.playing) play();
+    }
+
+    function syncPlayButton() {
+      $('#btnPlayPause').textContent = state.playback.playing ? '暂停' : '播放';
+    }
+
+    function startLoop() {
+      cancelAnimationFrame(state.playback.rafId);
+      const loop = () => {
+        updateHighlight(getNowMs());
+        state.playback.rafId = requestAnimationFrame(loop);
+      };
+      state.playback.rafId = requestAnimationFrame(loop);
+    }
+
+    function stopLoop() {
+      cancelAnimationFrame(state.playback.rafId);
+    }
+
+    function updateHighlight(nowMs) {
+      // 高亮 token，及其所在行
+      const activeLines = new Set();
+      for (const item of state.tokenCache) {
+        const active = nowMs >= item.start && nowMs < item.end;
+        item.el.classList.toggle('active', !!active);
+        if (active) activeLines.add(item.lineId);
+      }
+      // 行级标记
+      document.querySelectorAll('.line').forEach(ln => {
+        const lid = ln.dataset.lineId;
+        ln.classList.toggle('playing', activeLines.has(lid));
+      });
+    }
+
+    // ✅ 新增：优先以"选中的最靠前词所在行"为目标；否则回退到选中行
+    async function alignSelectedToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 1) 若有选中 token，则取文档顺序最靠前的那个
+      const sels = collectSelectedTokens();
+      let lineId = null;
+      if (sels.length > 0) {
+        lineId = sels[0].line_id;
+      } else if (state.selectedLineId) {
+        // 2) 否则用选中的行
+        lineId = state.selectedLineId;
+      } else {
+        setStatus('请先选中一个词或点击选中一行');
+        return;
+      }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可对齐（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可对齐的歌词'); return; }
+
+      // —— 取"该行中第一个有合法时间戳的词"的开始时间（顺序扫描）
+      let firstStart = null;
+      for (const t of line.tokens) {
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const s = parseInt(ts.split(',')[0], 10);
+        if (Number.isFinite(s)) { firstStart = s; break; }
+      }
+      if (!Number.isFinite(firstStart)) { setStatus('该行没有合法时间戳可对齐'); return; }
+
+      const now = getNowMs();
+      const delay = Number(state.settings.keyDelayMs || 0);
+      const delta = Math.round((now + delay) - firstStart);
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        delta_ms: delta
+      };
+
+      const res = await apiFetch('/api/shift_line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) { const text = await res.text(); setStatus('对齐失败：' + text); return; }
+
+      state.doc = await res.json();
+      renderDoc();
+      const sign = delta >= 0 ? '+' : '';
+      setStatus(`已对齐：以该行第一个词为参照（延迟 ${delay|0}ms，Δ=${sign}${delta}ms）。`);
+      markDirty();
+    }
+
+    // 旧函数可保留作为后备
+    async function alignSelectedLineToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+      const lineId = state.selectedLineId;
+      if (!lineId) { setStatus('请先选中一整行（点击行空白处即可选中该行）'); return; }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可对齐（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可对齐的歌词'); return; }
+
+      // 找到该行"首个"合法时间戳的开始时间（取最小 start）
+      let firstStart = Infinity;
+      for (const t of line.tokens) {
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const parts = ts.split(',');
+        const s = parseInt(parts[0], 10);
+        if (Number.isFinite(s)) firstStart = Math.min(firstStart, s);
+      }
+      if (!Number.isFinite(firstStart)) { setStatus('该行没有合法时间戳可对齐'); return; }
+
+      const now = getNowMs();
+      const delay = Number(state.settings.keyDelayMs || 0);
+      const delta = Math.round((now + delay) - firstStart); // 让 firstStart 对齐到 now+delay
+
+      // Δ 为 0 也允许提交，以便进入撤销栈；但做个提示
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        delta_ms: delta
+      };
+
+      const res = await apiFetch('/api/shift_line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('对齐失败：' + text);
+        return;
+      }
+      const doc = await res.json();
+      state.doc = doc;
+      renderDoc();
+
+      const sign = delta >= 0 ? '+' : '';
+      setStatus(`已对齐该行到当前时间（延迟 ${delay|0}ms，Δ=${sign}${delta}ms）。`);
+      markDirty();
+    }
+
+    async function setLastTokenDurationToNow() {
+      if (!state.doc) { setStatus('请先导入 .lys'); return; }
+
+      // 只接受"选中行"。若未选中行，尝试从所选 token 推断其所在行（兜底）。
+      let lineId = state.selectedLineId;
+      if (!lineId) {
+        const sels = collectSelectedTokens();
+        if (sels.length > 0) {
+          lineId = sels[sels.length - 1].line_id; // 取最后一个所选 token 所在行
+        } else {
+          setStatus('请先选中一行（点击行空白处即可选中该行）');
+          return;
+        }
+      }
+
+      const line = state.doc.lines.find(l => l.id === lineId);
+      if (!line || line.is_meta) { setStatus('该行不可操作（meta或不存在）'); return; }
+      if (!line.tokens || line.tokens.length === 0) { setStatus('该行没有可操作的歌词'); return; }
+
+      // 从后往前找"最后一个带合法时间戳"的 token
+      let lastTok = null;
+      let startMs = null;
+      for (let i = line.tokens.length - 1; i >= 0; i--) {
+        const t = line.tokens[i];
+        const ts = (t.ts || '');
+        if (!ts.includes(',')) continue;
+        const s = parseInt(ts.split(',')[0], 10);
+        if (Number.isFinite(s)) { lastTok = t; startMs = s; break; }
+      }
+      if (!lastTok || !Number.isFinite(startMs)) { setStatus('该行没有合法时间戳可设置'); return; }
+
+      const now = getNowMs();                // 当前播放时间（媒体或时钟）
+      const newDur = Math.max(0, Math.round(now - startMs));  // 只改持续时间
+
+      const payload = {
+        document_id: state.doc.id,
+        base_version: state.doc.version,
+        line_id: lineId,
+        duration_ms: newDur
+      };
+
+      const res = await apiFetch('/api/set_last_token_duration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        setStatus('设置失败：' + text);
+        return;
+      }
+      state.doc = await res.json();
+      renderDoc();
+      setStatus(`已设置：最后一字持续 ${newDur}ms（start=${startMs}ms → end=${startMs + newDur}ms）`);
+      markDirty();
+    }
+
+    function init() {
+      updateDocInfo();
+      $('#btnImport').addEventListener('click', async () => {
+        const f = $('#fileInput').files[0];
+        if (!f) { setStatus('请选择一个 .lys 文件'); return; }
+        try {
+          await importLys(f);
+          setStatus('导入成功。');
+        } catch (e) {
+          setStatus(String(e));
+        }
+      });
+      // 撤销导入
+      $('#btnUndoImport').addEventListener('click', undoImport);
+
+      $('#btnSave').addEventListener('click', saveToServer);
+      $('#btnUndo').addEventListener('click', undo);
+      $('#btnRedo').addEventListener('click', redo);
+      $('#btnSortLines').addEventListener('click', sortLines);
+      $('#btnPlayPause').addEventListener('click', togglePlay);
+      $('#mediaInput').addEventListener('change', (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) loadMediaFile(f);
+      });
+
+      // ✅ 只在点击容器真正的空白处（不在任何 .line 内部）时清空选择
+      $('#lines').addEventListener('click', (e) => {
+        if (e.target.closest('.line')) return;  // ← 在某一行内部就别清
+        state.selectedTokenIds.clear();
+        state.selectedLineId = null;
+        renderDoc();
+      });
+
+      // —— 按键延迟设置 —— //
+      const delayInput = $('#keyDelayInput');
+      // 读取本地保存
+      const savedDelay = parseInt(localStorage.getItem('keyDelayMs') || '0', 10);
+      if (Number.isFinite(savedDelay)) {
+        state.settings.keyDelayMs = savedDelay;
+        delayInput.value = String(savedDelay);
+      }
+      // 变更即保存
+      delayInput.addEventListener('change', () => {
+        const v = parseInt(delayInput.value, 10);
+        if (Number.isFinite(v)) {
+          state.settings.keyDelayMs = v;
+          localStorage.setItem('keyDelayMs', String(v));
+        } else {
+          state.settings.keyDelayMs = 0;
+          delayInput.value = '';
+          localStorage.removeItem('keyDelayMs');
+        }
+      });
+
+      // 键盘复制/粘贴
+      document.addEventListener('keydown', async (e) => {
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC')>=0;
+        const key = e.key.toLowerCase();
+        const copyCombo = (isMac ? e.metaKey : e.ctrlKey) && key === 'c';
+        const pasteCombo = (isMac ? e.metaKey : e.ctrlKey) && key === 'v';
+        if (copyCombo) { e.preventDefault(); handleCopy(); }
+        if (pasteCombo) { e.preventDefault(); await handlePaste(); }
+        // 空格 播放/暂停
+        if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+        // F：让"选中的第一个词所在行"或"选中行"从此刻开始（包含按键延迟）
+        const prefixKeyMap = { w: '', a: '4', s: '6', d: '5' };
+        if (!e.repeat && Object.prototype.hasOwnProperty.call(prefixKeyMap, key)) {
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+          e.preventDefault();
+          await setSelectedLineQuickPrefix(prefixKeyMap[key]);
+          return;
+        }
+        if (!e.repeat && key === 'f') {
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+          e.preventDefault();
+          await alignSelectedToNow();    // ← 改成这个
+        }
+        // 👉 新增：H 键——把选中行的"最后一个字"结束到此刻（只改持续时间）
+        if (!e.repeat && key === 'h') {
+          const tag = (e.target && e.target.tagName) || '';
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+          e.preventDefault();
+          await setLastTokenDurationToNow();
+        }
+      });
+
+      // 自动加载来自管理页的 JSON 或后端预渲染数据
+      if (PRELOADED_DATA && PRELOADED_DATA.status === 'success' && PRELOADED_DATA.doc) {
+        applyDoc(PRELOADED_DATA.doc, {
+          jsonFile: PRELOADED_DATA.jsonFile || PRELOAD_JSON_FILE || '',
+          lyricsPath: PRELOADED_DATA.lyricsPath || '',
+          translationPath: PRELOADED_DATA.translationPath || '',
+          songUrl: PRELOADED_DATA.songUrl || '',
+          displayName: PRELOADED_DATA.title || PRELOADED_DATA.jsonFile || PRELOAD_JSON_FILE || '',
+          updatedJson: !!PRELOADED_DATA.updatedJson
+        });
+        if (PRELOADED_DATA.songUrl) {
+          loadMediaUrl(PRELOADED_DATA.songUrl);
+        }
+        setStatus(`已加载：${state.context.displayName || PRELOAD_JSON_FILE}`);
+      } else if (PRELOAD_JSON_FILE) {
+        loadFromServer(PRELOAD_JSON_FILE).catch((err) => {
+          setStatus(err.message || String(err));
+        });
+      }
+
+      // 初始：若未加载媒体，也允许时钟播放（但需导入 doc 后才能播放）
+      $('#btnPlayPause').disabled = true;
+
+      // 关闭/刷新询问：仅在存在未保存变更时提醒
+      window.addEventListener('beforeunload', (e) => {
+        if (state.unsaved) {
+          e.preventDefault();
+          e.returnValue = '';
+          return '';
+        }
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

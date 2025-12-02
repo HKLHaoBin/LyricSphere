@@ -1189,6 +1189,7 @@
                         </div>
                     </div>
                     <textarea id="lyricsEditor" class="lyrics-editor"></textarea>
+                    <button class="lyrics-action-btn path-update-btn" onclick="openQuickEdit()">✂️ 快速编辑歌词</button>
                     <button class="lyrics-action-btn save-btn" onclick="saveLyrics(0)">💾 保存歌词</button>
                 </div>
 
@@ -2080,6 +2081,15 @@
 
             modal.style.display = 'block'
             checkFileExtension()
+        }
+
+        function openQuickEdit() {
+            if (!currentJsonFile) {
+                alert('请先选择要编辑的歌曲')
+                return
+            }
+            const target = `/quick-editor?json=${encodeURIComponent(currentJsonFile)}`
+            window.open(target, '_blank')
         }
 
         function saveLyrics(index) {
