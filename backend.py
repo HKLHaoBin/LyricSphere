@@ -5671,7 +5671,7 @@ def amll_stream_api():
 @app.route('/lyrics-amll')
 def lyrics_amll_page():
     """AMLL 歌词展示页面"""
-    return render_template("Lyrics-style.HTML-AMLL.HTML")
+    return render_template("Lyrics-style.HTML-AMLL-v1.HTML")
 
 @app.route('/amll/create_song', methods=['POST'])
 def amll_create_song():
@@ -6213,7 +6213,8 @@ def _amll_publish(evt_type: str, data: dict):
     try:
         AMLL_QUEUE.put_nowait({"type": evt_type, "data": data})
     except queue.Full:
-        app.logger.warning("AMLL 队列已满，丢弃事件")
+        # 队列满时静默丢弃，避免日志刷屏
+        pass
 
 def _sse(event: str, data: dict) -> str:
     """SSE 格式：event:<name>\ndata:<json>\n\n"""
