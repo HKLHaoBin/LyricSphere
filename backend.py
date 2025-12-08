@@ -542,6 +542,7 @@ def parse_bool(value, default=False):
 NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
 BRACKET_CHARACTERS = '()（）[]【】'
 BRACKET_TRANSLATION = str.maketrans('', '', BRACKET_CHARACTERS)
+BRACKET_ONLY_PATTERN = re.compile(rf'^[\s{re.escape(BRACKET_CHARACTERS)}]+$')
 
 
 def strip_bracket_blocks(content: str) -> str:
@@ -2633,8 +2634,8 @@ class TTMLLine:
         for child in child_elements:
             # TEXT_NODE
             if getattr(child, "nodeType", None) == 3 and getattr(child, "nodeValue", None) is not None:
-                # 合并极短的空白到上一 syl
-                if len(self.__orig_line) > 0 and len(child.nodeValue) < 2:
+                # 仅合并空白字符，避免把括号等可见字符黏到前一音节
+                if len(self.__orig_line) > 0 and len(child.nodeValue) < 2 and not child.nodeValue.strip():
                     try:
                         last = self.__orig_line[-1]
                         if isinstance(last, TTMLSyl):
@@ -2711,10 +2712,15 @@ class TTMLLine:
             for v in self.__orig_line:
                 if isinstance(v, str):
                     if v.strip():
-                        filtered_line.append(v)
+                        # 仅括号的文本片段保留原文，不参与时间渲染
+                        filtered_line.append(v if not BRACKET_ONLY_PATTERN.match(v) else v.strip())
                 else:
                     has_syl = True
-                    filtered_line.append(v)
+                    # 括号音节不需要附带时间戳，直接保留文本
+                    if BRACKET_ONLY_PATTERN.match(v.text or ''):
+                        filtered_line.append((v.text or '').strip())
+                    else:
+                        filtered_line.append(v)
 
             line_text = ''.join([str(v) for v in filtered_line]) if filtered_line else ''
 
@@ -2861,16 +2867,13 @@ def ttml_to_lys(input_path, songs_dir):
 
 def preprocess_brackets(content):
     """
-    预处理特殊括号模式，按照用户建议处理：
-    "((" → 删除第一个"("，保留第二个"("，结果为"("
-    ")(" → 删除")"，保留"("，结果为"("
-    同时处理更复杂的嵌套情况
+    保留括号原样，避免把时间标记边界吞掉。
+    仅做轻量的空白折叠，不再移除 ')(' / '(('。
     """
-    # 处理 "((" 模式
-    content = re.sub(r'\(\(', '(', content)
-    # 处理 ")(" 模式
-    content = re.sub(r'\)\(', '(', content)
-    return content
+    if not content:
+        return ''
+    # 折叠多余空白，避免影响 regex 解析
+    return re.sub(r'\s{2,}', ' ', content)
 
 
 def extract_tag_value(text: str, tag: str) -> Optional[str]:
@@ -4989,9 +4992,10 @@ def export_lyrics_csv():
 def get_json_data():
     if not is_request_allowed():
         return abort(403)
-    locked_response = require_unlocked_device('查看歌曲数据')
-    if locked_response:
-        return locked_response
+    if not is_style_preview_path(request.path):
+        locked_response = require_unlocked_device('查看歌曲数据')
+        if locked_response:
+            return locked_response
     filename = request.args.get('filename')
     if not filename:
         return jsonify({'status': 'error', 'message': '缺少文件名参数'}), 400
@@ -5011,9 +5015,10 @@ def get_json_data():
 def get_lyrics_by_path():
     if not is_request_allowed():
         return abort(403)
-    locked_response = require_unlocked_device('查看歌词')
-    if locked_response:
-        return locked_response
+    if not is_style_preview_path(request.path):
+        locked_response = require_unlocked_device('查看歌词')
+        if locked_response:
+            return locked_response
     try:
         data = request.get_json()
         lyrics_path = data.get('path', '')
@@ -5277,8 +5282,24 @@ def is_local_remote(remote: Optional[str] = None) -> bool:
     return False
 
 
+# 样式预览按钮需要在安全保护模式下也可访问的接口白名单
+STYLE_PREVIEW_ALLOW_PATHS = {
+    '/get_json_data',
+    '/convert_to_ttml_temp',
+    '/get_lyrics',
+}
+
+def is_style_preview_path(path: str) -> bool:
+    """判断是否为样式预览场景下需要放行的接口"""
+    return path in STYLE_PREVIEW_ALLOW_PATHS
+
+
 def is_request_allowed():
     """统一的请求权限检查函数"""
+    # 样式预览接口在安全模式下也需放行，便于未授权用户查看歌词样式
+    if is_style_preview_path(request.path):
+        return True
+
     # 获取安全配置
     security_config = get_security_config()
     
@@ -5641,8 +5662,9 @@ def get_my_ip():
 @app.route('/amll/state')
 def amll_state_api():
     """AMLL 状态快照 API"""
+    host = request.host
     return jsonify({
-        "song": AMLL_STATE["song"],
+        "song": _normalize_song_for_host(AMLL_STATE["song"], host),
         "progress_ms": AMLL_STATE["progress_ms"],
         "lines": AMLL_STATE["lines"]
     })
@@ -5650,19 +5672,34 @@ def amll_state_api():
 @app.route('/amll/stream')
 def amll_stream_api():
     """AMLL 实时事件流 API (Server-Sent Events)"""
+
+    def _normalize_song_for_client(song_val: dict) -> dict:
+        return _normalize_song_for_host(song_val or {}, request.host)
+
+    def _normalize_state_snapshot(snapshot: dict) -> dict:
+        return {
+            "song": _normalize_song_for_client(snapshot.get("song", {})),
+            "progress_ms": snapshot.get("progress_ms", 0),
+            "lines": snapshot.get("lines", [])
+        }
+
     @stream_with_context
     def _gen():
         # 先发一份完整快照（让新打开的前端立刻有内容）
-        yield _sse("state", {
-            "song": AMLL_STATE["song"],
-            "progress_ms": AMLL_STATE["progress_ms"],
-            "lines": AMLL_STATE["lines"]
-        })
+        yield _sse("state", _normalize_state_snapshot(AMLL_STATE))
         # 然后持续推送增量
         while True:
             try:
                 evt = AMLL_QUEUE.get(timeout=15)
-                yield _sse(evt["type"], evt["data"])
+                etype = evt.get("type")
+                data = evt.get("data", {})
+                if etype == "state":
+                    payload = _normalize_state_snapshot(data)
+                elif etype == "song":
+                    payload = {"song": _normalize_song_for_client(data.get("song", {}))}
+                else:
+                    payload = data
+                yield _sse(etype, payload)
             except queue.Empty:
                 # 心跳：防止 Nginx/浏览器断流
                 yield ": keep-alive\n\n"
@@ -6197,6 +6234,65 @@ def _normalize_song_info(info: dict) -> dict:
     if cover_data_url:
         song["cover_data_url"] = cover_data_url
     return song
+
+
+def _normalize_media_url_for_host(raw_value: Optional[str], host: str) -> str:
+    """根据请求 host 规范化媒体 URL，修正 127/localhost 和 /static 路径。"""
+    if not raw_value:
+        return ""
+
+    cleaned = str(raw_value).strip()
+    if not cleaned or cleaned == "!":
+        return ""
+
+    if cleaned.startswith(("data:", "blob:")):
+        return cleaned
+
+    cleaned = cleaned.replace("\\", "/").replace("/static/songs/", "/songs/").replace("static/songs/", "songs/")
+    try:
+        parsed = urlparse(cleaned)
+    except Exception:
+        parsed = None
+
+    if parsed and parsed.scheme:
+        netloc = parsed.netloc
+        if parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0"} and host:
+            netloc = host
+        path = (parsed.path or "").replace("/static/songs/", "/songs/")
+        rebuilt = parsed._replace(netloc=netloc, path=path)
+        return rebuilt.geturl()
+
+    if cleaned.startswith("/"):
+        return cleaned
+    if cleaned.startswith("songs/"):
+        return "/" + cleaned
+    return "/songs/" + cleaned.lstrip("/")
+
+
+def _normalize_song_for_host(song: dict, host: str) -> dict:
+    """为前端请求方规范化歌曲信息中的封面/背景路径。"""
+    if not isinstance(song, dict):
+        return {}
+    normalized = song.copy()
+    meta_src = song.get("meta") if isinstance(song.get("meta"), dict) else {}
+    meta = meta_src.copy()
+
+    def apply(target: dict, key: str):
+        if key not in target:
+            return
+        normed = _normalize_media_url_for_host(target.get(key), host)
+        if normed:
+            target[key] = normed
+
+    apply(meta, "Background-image")
+
+    for key in ("albumImgSrc", "cover", "coverUrl", "cover_file_url"):
+        apply(meta, key)
+        apply(normalized, key)
+
+    normalized["meta"] = meta
+    return normalized
+
 
 def _amll_publish(evt_type: str, data: dict):
     """发布事件到AMLL前端"""

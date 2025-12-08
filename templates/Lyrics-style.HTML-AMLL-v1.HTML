@@ -253,6 +253,9 @@
         const AMLL_STATE_URL = '/amll/state';
         const AMLL_STREAM_URL = '/amll/stream';
         const PROGRESS_RESYNC_INTERVAL_MS = 3000;
+        const LAST_SONG_STORAGE_KEY = 'amll_last_song_meta';
+        const LYRICS_REFETCH_INTERVAL_MS = 1200;
+        const LYRICS_REFETCH_MAX_ATTEMPTS = 4;
 
         function guardAmllSettingsStorage() {
             try {
@@ -366,6 +369,8 @@
             let currentSong = {};
             const playbackClock = { baseMs: 0, lastUpdateAt: performance.now(), smoothing: null, synced: false, rawBaseMs: 0, rawUpdateAt: performance.now() };
             const lineClock = { progressMs: 0, updatedAt: performance.now() };
+            let lyricsRefetchTimer = null;
+            let lyricsRefetchAttempts = 0;
             let latestProgressSample = null;
             let progressResyncTimer = null;
             let streamSource = null;
@@ -459,6 +464,32 @@
                     playbackClock.rawUpdateAt = now;
                     syncPlaybackProgress(projected, { immediate: true });
                 }, PROGRESS_RESYNC_INTERVAL_MS);
+            }
+
+            function ensureLyricsRefetch() {
+                if (lyricsRefetchTimer) {
+                    clearTimeout(lyricsRefetchTimer);
+                }
+                lyricsRefetchTimer = setTimeout(async () => {
+                    if (lyricsData.length > 0) {
+                        resetLyricsRefetch();
+                        return;
+                    }
+                    if (lyricsRefetchAttempts >= LYRICS_REFETCH_MAX_ATTEMPTS) {
+                        return;
+                    }
+                    lyricsRefetchAttempts += 1;
+                    await requestStateOnce();
+                    ensureLyricsRefetch();
+                }, LYRICS_REFETCH_INTERVAL_MS);
+            }
+
+            function resetLyricsRefetch() {
+                lyricsRefetchAttempts = 0;
+                if (lyricsRefetchTimer) {
+                    clearTimeout(lyricsRefetchTimer);
+                    lyricsRefetchTimer = null;
+                }
             }
 
             function createAmllStubElement(id) {
@@ -648,8 +679,22 @@
                     return null;
                 }
                 const normalized = trimmed.replace(/^\.\//, '');
-                if (/^https?:\/\//i.test(normalized) || normalized.startsWith('data:') || normalized.startsWith('blob:')) {
+                if (normalized.startsWith('data:') || normalized.startsWith('blob:')) {
                     return normalized;
+                }
+                if (/^https?:\/\//i.test(normalized)) {
+                    try {
+                        const urlObj = new URL(normalized, window.location.href);
+                        const localHostPattern = /^(127\.\d+\.\d+\.\d+|localhost|0\.0\.0\.0|::1)$/i;
+                        if (localHostPattern.test(urlObj.hostname)) {
+                            urlObj.protocol = window.location.protocol;
+                            urlObj.hostname = window.location.hostname;
+                            urlObj.port = window.location.port || urlObj.port;
+                        }
+                        return urlObj.toString();
+                    } catch (e) {
+                        return normalized;
+                    }
                 }
                 return normalized.startsWith('/') ? normalized : '/' + normalized;
             }
@@ -729,7 +774,8 @@
                     return false;
                 }
 
-                removeExistingBackground();
+                const oldCleanup = backgroundCleanup;
+                const oldContainers = Array.from(document.querySelectorAll('.background-container'));
 
                 const container = document.createElement('div');
                 container.className = 'background-container';
@@ -748,6 +794,7 @@
                     }
                     container.remove();
                 };
+                backgroundCleanup.__kind = 'amll';
 
                 try {
                     await background.setAlbum(url);
@@ -756,12 +803,28 @@
                     const dpr = window.devicePixelRatio || 1;
                     background.setRenderScale(dpr);
                     background.resume();
+
+                    if (oldCleanup && oldCleanup.__kind !== 'amll') {
+                        try { oldCleanup(); } catch (e) { /* 忽略 */ }
+                    }
+                    oldContainers.forEach((el) => { if (el !== container) el.remove(); });
+
                     return true;
                 } catch (error) {
                     console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
                     if (backgroundCleanup) {
-                        backgroundCleanup();
+                        try { backgroundCleanup(); } catch (e) { /* 忽略 */ }
                         backgroundCleanup = null;
+                    }
+                    const fallbackContainer = oldContainers[0];
+                    if (fallbackContainer) {
+                        try {
+                            fallbackContainer.appendChild(amllBackgroundState.element);
+                            backgroundCleanup = oldCleanup || null;
+                        } catch (attachError) { /* 忽略 */ }
+                    } else if (amllBackgroundState.host) {
+                        try { amllBackgroundState.host.appendChild(amllBackgroundState.element); } catch (attachError) { /* 忽略 */ }
+                        backgroundCleanup = oldCleanup || null;
                     }
                     return false;
                 }
@@ -773,7 +836,8 @@
                     return false;
                 }
 
-                removeExistingBackground();
+                const oldCleanup = backgroundCleanup;
+                const oldContainers = Array.from(document.querySelectorAll('.background-container'));
 
                 return new Promise((resolve) => {
                     const container = document.createElement('div');
@@ -797,12 +861,19 @@
                         video.autoplay = true;
                         video.playsInline = true;
                         video.addEventListener('loadeddata', () => {
-                            backgroundCleanup = () => {
+                            const cleanup = () => {
                                 video.pause();
                                 video.removeAttribute('src');
                                 video.load();
                                 container.remove();
                             };
+                            if (oldCleanup) {
+                                try { oldCleanup(); } catch (e) { /* 忽略 */ }
+                            } else {
+                                oldContainers.forEach((el) => { if (el !== container) el.remove(); });
+                            }
+                            backgroundCleanup = cleanup;
+                            backgroundCleanup.__kind = 'media';
                             resolve(true);
                             video.play().catch(() => {});
                         }, { once: true });
@@ -812,9 +883,16 @@
                         const img = document.createElement('img');
                         img.src = url;
                         img.addEventListener('load', () => {
-                            backgroundCleanup = () => {
+                            const cleanup = () => {
                                 container.remove();
                             };
+                            if (oldCleanup) {
+                                try { oldCleanup(); } catch (e) { /* 忽略 */ }
+                            } else {
+                                oldContainers.forEach((el) => { if (el !== container) el.remove(); });
+                            }
+                            backgroundCleanup = cleanup;
+                            backgroundCleanup.__kind = 'media';
                             resolve(true);
                         }, { once: true });
                         img.addEventListener('error', handleFailure, { once: true });
@@ -831,6 +909,33 @@
                 currentSong = { ...currentSong, ...songPatch, meta: mergedMeta };
             }
 
+            function saveLastSongMeta(song = {}) {
+                try {
+                    const payload = {
+                        title: song.title,
+                        artist: song.artist,
+                        cover: song.cover ?? song.cover_file_url ?? song.cover_data_url ?? song.albumImgSrc ?? song.meta?.cover ?? song.meta?.albumImgSrc,
+                        background: song.meta?.['Background-image'],
+                        meta: song.meta
+                    };
+                    localStorage.setItem(LAST_SONG_STORAGE_KEY, JSON.stringify(payload));
+                } catch (error) {
+                    console.warn('[AMLL] 缓存最近一次歌曲信息失败', error);
+                }
+            }
+
+            function loadPersistedSong() {
+                try {
+                    const raw = localStorage.getItem(LAST_SONG_STORAGE_KEY);
+                    if (!raw) return;
+                    const parsed = JSON.parse(raw);
+                    if (!parsed || typeof parsed !== 'object') return;
+                    applySongUpdate(parsed, { skipPersist: true });
+                } catch (error) {
+                    console.warn('[AMLL] 恢复最近一次歌曲信息失败', error);
+                }
+            }
+
             async function applyBackgroundFromSong(songMeta = {}) {
                 const meta = songMeta.meta || {};
                 const backgroundCandidate = queryBackground || meta["Background-image"];
@@ -843,8 +948,6 @@
                     meta.albumImgSrc,
                     meta.cover
                 ].filter(Boolean);
-
-                removeExistingBackground();
 
                 if (backgroundCandidate) {
                     const applied = await loadBackground(backgroundCandidate);
@@ -861,12 +964,17 @@
                 }
             }
 
-            function applySongUpdate(songPatch) {
+            function applySongUpdate(songPatch, options = {}) {
+                const { skipPersist = false } = options;
                 if (!songPatch || typeof songPatch !== 'object') return;
                 mergeSongPayload(songPatch);
+                if (!skipPersist) {
+                    saveLastSongMeta(currentSong);
+                }
                 applyBackgroundFromSong(currentSong).catch((error) => {
                     console.warn('[AMLL] 应用背景失败', error);
                 });
+                ensureLyricsRefetch();
             }
 
             function applyLyricsUpdate(lines) {
@@ -875,6 +983,7 @@
                 forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
                 initLyrics();
                 ensureAnimationLoop();
+                resetLyricsRefetch();
             }
 
             function getLineStartMs(line) {
@@ -922,14 +1031,22 @@
                 }
             }
 
-            async function loadInitialState() {
+            async function requestStateOnce() {
                 try {
                     const res = await fetch(AMLL_STATE_URL);
-                    if (!res.ok) {
-                        return;
-                    }
+                    if (!res.ok) return null;
                     const snapshot = await res.json();
                     handleStateSnapshot(snapshot);
+                    return snapshot;
+                } catch (error) {
+                    console.warn('[AMLL] 重新获取状态失败', error);
+                    return null;
+                }
+            }
+
+            async function loadInitialState() {
+                try {
+                    await requestStateOnce();
                 } catch (error) {
                     console.warn('[AMLL] 获取初始 AMLL 状态失败', error);
                 }
@@ -1000,7 +1117,7 @@
 
             // 动画时长控制（前端硬编码，同时由后端解析保持一致）
             let enterDuration =400;             // 歌词行进入动画时长（毫秒）
-            let moveDuration = 100;              // 歌词行移动动画时长（毫秒）
+            let moveDuration = 115;              // 歌词行移动动画时长（毫秒）
             let exitDuration = 400;              // 歌词行退出动画时长（毫秒）
             let placeholderDuration = 50;        // 占位符（消失行）延时
             let configLineDisplayOffset = 0.7;   // 后端配置的垂直偏移（保持同步用）
@@ -1090,8 +1207,11 @@
                 if (Math.abs(adjustedDeltaX) <= 0.5 && Math.abs(adjustedDeltaY) <= 0.5) return;
 
                 // 若上一段动画未完成，则缩短时长并使用线性缓动以平滑衔接
+                const distance = Math.hypot(adjustedDeltaX, adjustedDeltaY);
+                const baseDistance = 78; // 基准位移（px），用于保持长行重排速度一致
+                const distanceFactor = baseDistance > 0 ? clamp(distance / baseDistance, 0.75, 2.6) : 1;
                 const durationFactor = progress > 0 ? Math.max(0.35, 1 - progress * 0.6) : 1;
-                const animationDuration = Math.max(0, moveDuration * durationFactor);
+                const animationDuration = Math.max(0, moveDuration * distanceFactor * durationFactor);
                 const easing = progress > 0.2 ? 'linear' : customEasing;
 
                 element.style.willChange = 'transform';
@@ -1481,10 +1601,12 @@
             }
 
             async function loadData() {
+                loadPersistedSong();
                 await loadInitialState();
                 startAmllStream();
                 startProgressResync();
                 ensureAnimationLoop();
+                ensureLyricsRefetch();
             }
 
             function groupSyllablesIntoWords(container, itemClass = 'syllable') {

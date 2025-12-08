@@ -508,6 +508,26 @@
             background: #FF8B36;
             color: #fff;
         }
+        .search-options {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            color: var(--text-color);
+            flex-wrap: wrap;
+        }
+        .search-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            user-select: none;
+        }
+
+        .no-audio-tag {
+            background: #adb5bd;
+            color: #1a1a1a;
+        }
 
         .lyrics-editor {
             height: 176px;
@@ -968,7 +988,6 @@
                 min-width: fit-content;
             }
             .search-row--focus {
-                flex: 1 1 auto;
                 min-width: 0;
             }
             .search-row--focus .search-box {
@@ -1042,6 +1061,12 @@
             <div class="search-tools">
                 <div class="search-row search-row--focus">
                     <input type="text" class="search-box" id="searchBox" placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
+                    <div class="search-options">
+                        <label class="search-toggle">
+                            <input type="checkbox" id="fuzzySearchToggle">
+                            <span>模糊搜索</span>
+                        </label>
+                    </div>
                 </div>
                 <div class="search-row search-row--sort">
                     <button class="action-button" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
@@ -1077,28 +1102,33 @@
         <li class="json-item" data-mtime="{{ file.mtime }}">
             <div class="json-item-header">
                 <div class="file-name">{{ file.filename.replace('.json', '') }} <button class="copy-btn" onclick="copyFileName(this)" title="复制文件名">📋</button></div>
-                <div class="song-tags">
-                    {% if '::' in file.data.meta.lyrics %}
-                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
+                <div class="song-tags" id="tags-{{ file.filename }}">
+                    {% set lyrics_value = file.data.meta.get('lyrics', '')|string %}
+                    {% set lyrics_check_path = '' %}
+                    {% if '::' in lyrics_value %}
+                    {% set lyrics_parts = lyrics_value.split('::') %}
                     {% if lyrics_parts|length >= 4 and lyrics_parts[1] != '!' %}
-                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
-                    <script>
-                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
-                        document.addEventListener('DOMContentLoaded', function () {
-                            checkLyrics('{{ lyrics_parts[1] }}', '{{ file.filename }}')
-                        });
-                    </script>
+                    {% set lyrics_check_path = lyrics_parts[1] %}
                     {% endif %}
-                    {% elif file.data.meta.lyrics.startswith('http://') %}
-                    <div id="tags-{{ file.filename }}" class="song-tags"></div>
-                    <script>
-                        // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
-                        document.addEventListener('DOMContentLoaded', function () {
-                            checkLyrics('{{ file.data.meta.lyrics }}', '{{ file.filename }}')
-                        });
-                    </script>
+                    {% elif lyrics_value.startswith('http://') %}
+                    {% set lyrics_check_path = lyrics_value %}
+                    {% endif %}
+
+                    {% set raw_song_path = file.data.get('song', '')|string %}
+                    {% set trimmed_song_path = raw_song_path|trim %}
+                    {% set is_placeholder_song = '音乐.mp3' in trimmed_song_path %}
+                    {% if not trimmed_song_path or trimmed_song_path == '!' or is_placeholder_song %}
+                    <span class="song-tag no-audio-tag">无音源</span>
                     {% endif %}
                 </div>
+                {% if lyrics_check_path %}
+                <script>
+                    // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
+                    document.addEventListener('DOMContentLoaded', function () {
+                        checkLyrics('{{ lyrics_check_path }}', '{{ file.filename }}')
+                    });
+                </script>
+                {% endif %}
             </div>
             <div class="json-item-actions">
                 <div class="style-buttons">
@@ -1793,6 +1823,9 @@
                             bgTag.textContent = '包含背景歌词'
                             tagsContainer.appendChild(bgTag)
                         }
+                        if (typeof applySearch === 'function') {
+                            applySearch()
+                        }
                     }
                 })
         }
@@ -1903,18 +1936,99 @@
 
         // 搜索功能
         const searchBox = document.getElementById('searchBox')
+        const fuzzySearchToggle = document.getElementById('fuzzySearchToggle')
         const jsonList = document.getElementById('jsonList')
-        const items = jsonList.getElementsByTagName('li')
+        const allJsonItems = Array.from(jsonList.getElementsByTagName('li'))
 
-        searchBox.addEventListener('input', function () {
-            const searchText = this.value.toLowerCase()
-
-            for (let item of items) {
-                const fileName = item.querySelector('.file-name').textContent.toLowerCase()
-                const searchMatch = fileName.includes(searchText)
-                item.style.display = searchMatch ? '' : 'none'
+        function getSortComparator() {
+            return (a, b) => {
+                if (currentSort.type === 'name') {
+                    const textA = a.querySelector('.file-name').textContent.toLowerCase()
+                    const textB = b.querySelector('.file-name').textContent.toLowerCase()
+                    return currentSort.asc ? textA.localeCompare(textB, 'zh-Hans-CN')
+                        : textB.localeCompare(textA, 'zh-Hans-CN')
+                }
+                const timeA = parseFloat(a.dataset.mtime)
+                const timeB = parseFloat(b.dataset.mtime)
+                return currentSort.asc ? timeA - timeB : timeB - timeA
             }
-        })
+        }
+
+        function parseKeywords(rawText) {
+            const normalized = rawText.replace(/，/g, ',')
+            const keywords = normalized.split(',').map(keyword => keyword.trim()).filter(Boolean)
+            return Array.from(new Set(keywords))
+        }
+
+        function parseFuzzyKeywords(rawText) {
+            const normalized = rawText.replace(/[,，\s\-_]+/g, '')
+            const keywords = Array.from(normalized).filter(Boolean)
+            return Array.from(new Set(keywords))
+        }
+
+        function buildSearchPool(item) {
+            const fileName = item.querySelector('.file-name')?.textContent || ''
+            const tagsText = item.querySelector('.song-tags')?.textContent || ''
+            return `${fileName} ${tagsText}`.toLowerCase()
+        }
+
+        function applySearch() {
+            const rawText = searchBox.value.toLowerCase()
+            const isFuzzy = fuzzySearchToggle && fuzzySearchToggle.checked
+            const keywords = isFuzzy ? parseFuzzyKeywords(rawText) : parseKeywords(rawText)
+            const list = document.getElementById('jsonList')
+            const listItems = Array.from(allJsonItems)
+
+            if (keywords.length === 0) {
+                listItems.sort(getSortComparator())
+                while (list.firstChild) {
+                    list.removeChild(list.firstChild)
+                }
+                listItems.forEach(item => {
+                    item.style.display = ''
+                    list.appendChild(item)
+                })
+                return
+            }
+
+            const comparator = getSortComparator()
+
+            const rankedItems = listItems.map(item => {
+                const searchPool = buildSearchPool(item)
+                const matchCount = keywords.reduce((count, keyword) => searchPool.includes(keyword) ? count + 1 : count, 0)
+                return { item, matchCount }
+            })
+
+            const visibleItems = rankedItems.filter(entry => entry.matchCount > 0)
+            const hiddenItems = rankedItems.filter(entry => entry.matchCount === 0)
+
+            visibleItems.sort((a, b) => {
+                if (b.matchCount !== a.matchCount) {
+                    return b.matchCount - a.matchCount
+                }
+                return comparator(a.item, b.item)
+            })
+
+            hiddenItems.sort((a, b) => comparator(a.item, b.item))
+
+            while (list.firstChild) {
+                list.removeChild(list.firstChild)
+            }
+
+            visibleItems.forEach(({ item }) => {
+                item.style.display = ''
+                list.appendChild(item)
+            })
+
+            hiddenItems.forEach(({ item }) => {
+                item.style.display = 'none'
+            })
+        }
+
+        searchBox.addEventListener('input', applySearch)
+        if (fuzzySearchToggle) {
+            fuzzySearchToggle.addEventListener('change', applySearch)
+        }
 
         let currentEditingFile = ''
         let currentLyricsPath = ''
@@ -1937,7 +2051,7 @@
                 currentSort.asc = (type === 'name') // 名称排序默认升序
             }
             updateSortButtons()
-            sortList()
+            applySearch()
         }
 
         function updateSortButtons() {
@@ -1950,31 +2064,24 @@
 
         function sortList() {
             const list = document.getElementById('jsonList')
-            const items = Array.from(list.getElementsByTagName('li'))
+            const items = Array.from(allJsonItems)
+            const comparator = getSortComparator()
 
-            items.sort((a, b) => {
-                if (currentSort.type === 'name') {
-                    const textA = a.querySelector('.file-name').textContent.toLowerCase()
-                    const textB = b.querySelector('.file-name').textContent.toLowerCase()
-                    return currentSort.asc ? textA.localeCompare(textB, 'zh-Hans-CN')
-                        : textB.localeCompare(textA, 'zh-Hans-CN')
-                } else {
-                    const timeA = parseFloat(a.dataset.mtime)
-                    const timeB = parseFloat(b.dataset.mtime)
-                    return currentSort.asc ? timeA - timeB : timeB - timeA
-                }
-            })
+            items.sort(comparator)
 
             while (list.firstChild) {
                 list.removeChild(list.firstChild)
             }
-            items.forEach(item => list.appendChild(item))
+            items.forEach(item => {
+                item.style.display = ''
+                list.appendChild(item)
+            })
         }
 
         // 初始化时更新按钮状态
         window.onload = function () {
-            sortList()
             updateSortButtons()
+            applySearch()
         }
 
         function viewFile(type, path) {
@@ -3433,9 +3540,22 @@
                 
                 if (data.status === 'success') {
                     console.log('成功获取时间戳，数量:', data.timestamps.length);
-                    // 将时间戳写入翻译编辑器
-                    document.getElementById('translationEditor').value = data.timestamps.join('\n');
-                    console.log('时间戳已写入翻译编辑器');
+                    const translationEditor = document.getElementById('translationEditor');
+                    const rawTranslation = translationEditor.value || '';
+                    const translationLines = rawTranslation
+                        .split(/\r?\n/)
+                        .map(line => line.replace(/^\s*\d+[\.、．:：]?\s*/, '').trim())
+                        .filter(line => line.length > 0);
+
+                    if (translationLines.length === data.timestamps.length && translationLines.length > 0) {
+                        const merged = data.timestamps.map((ts, idx) => `${ts}${translationLines[idx] ? ' ' + translationLines[idx] : ''}`);
+                        translationEditor.value = merged.join('\n');
+                        console.log('时间戳已与翻译逐行合并');
+                    } else {
+                        // 行数不一致时维持旧行为，仅输出时间戳供用户手动粘贴
+                        translationEditor.value = data.timestamps.join('\n');
+                        console.warn(`翻译行数(${translationLines.length})与时间戳(${data.timestamps.length})不一致，已仅写入时间戳`);
+                    }
                 } else {
                     console.error('提取时间戳失败:', data.message);
                     alert('提取时间戳失败：' + data.message);
