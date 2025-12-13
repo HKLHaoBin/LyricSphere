@@ -9,6 +9,7 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - **歌词音节分组功能**：实现音节分组，优化歌词行渲染时的布局表现，支持word-break和white-space的动态控制
 - **资源URL规范化处理**：实现安全的路径解析和资源URL规范化，支持动态解析不同格式的路径，增强安全性检查
 - **翻译状态可视化**：翻译流程提供阶段状态、进度追踪与多态提示动画，并在检测到问题时高亮对应歌词行
+- **字体元标签与逐音节字体渲染**：解析 `[font-family:...]` 元标签并按中/英/日脚本自动选择字体，支持本地文件、Google Fonts 与 CDN 多源字体加载、可用性检测，以及针对特殊字体的纯色显示与逐音节动画优化
 - **ZIP文件导入导出功能**：支持批量导入/导出歌词JSON文件和资源文件，提供一键打包歌曲和相关资源的分享功能
 - **资源完整性检查**：在导出时对缺失资源生成警告，确保分享内容的完整性
 - 歌词编辑和格式转换功能
@@ -32,6 +33,21 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 - 支持背景人声和对唱歌词的处理
 - 歌词括号预处理功能，可通过strip_brackets配置选项控制是否移除歌词中的括号内容，采用高性能字符串翻译表替代正则表达式优化处理性能，并添加多余空格清理逻辑以提升输出质量
 
+## 使用示例
+
+### 字体元标签（逐音节字体选择）
+
+在歌词文本中插入 `[font-family:...]` 元标签即可控制后续歌词的字体，按脚本自动匹配中/英/日等字体：
+
+```
+[font-family:Hymmnos]               # 全局默认改为 Hymmnos
+[font-family:Hymmnos(en),(ja)]      # 英文用 Hymmnos，日文回退默认
+[font-family:Main(en),Sub(ja),Extra]# 英文用 Main，日文用 Sub，其余用 Extra
+[font-family:]                      # 清空字体，恢复默认
+```
+
+模板会逐音节检测脚本类型，支持本地文件、Google Fonts 与 CDN 加载；特殊字体会自动使用纯色模式并优化逐音节动画。
+
 ## 技术栈
 
 - 后端：Python、Flask
@@ -49,7 +65,7 @@ LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示�
 ### 安装依赖
 
 ```bash
-pip install flask openai bcrypt waitress
+pip install flask openai bcrypt waitress websockets
 ```
 
 ### 运行应用
