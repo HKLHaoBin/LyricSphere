@@ -543,6 +543,60 @@ NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
 BRACKET_CHARACTERS = '()（）[]【】'
 BRACKET_TRANSLATION = str.maketrans('', '', BRACKET_CHARACTERS)
 BRACKET_ONLY_PATTERN = re.compile(rf'^[\s{re.escape(BRACKET_CHARACTERS)}]+$')
+FONT_FAMILY_META_REGEX = re.compile(r'^\[font-family:\s*([^\]]*)\s*\]$', re.IGNORECASE)
+
+SCRIPT_CHECKERS = {
+    'ja': re.compile(r'[\u3040-\u30ff\u31f0-\u31ff\u4e00-\u9fff]'),
+    'en': re.compile(r'[A-Za-z]')
+}
+
+def detect_script(text: str) -> str:
+    if not text:
+        return ''
+    for lang, pattern in SCRIPT_CHECKERS.items():
+        if pattern.search(text):
+            return lang
+    return ''
+
+def choose_font_for_text(text: str, default_font: Optional[str], lang_map: Dict[str, str]) -> Optional[str]:
+    script = detect_script(text)
+    if script and script in lang_map:
+        mapped = lang_map[script]
+        return mapped or None
+    return default_font or None
+
+
+def parse_font_family_meta(raw: str) -> Tuple[Optional[str], Dict[str, str]]:
+    """
+    解析 font-family 元标签，支持多字体/语言映射。
+    语法示例：
+      [font-family:Hymmnos]                   -> 默认字体 Hymmnos
+      [font-family:Hymmnos(en),(ja)]          -> en 用 Hymmnos，ja 用默认
+      [font-family:Main(en),Sub(ja),Extra]    -> en 用 Main，ja 用 Sub，默认 Extra
+      [font-family:]                          -> 清空为默认字体
+    返回 (default_font, lang_map)
+    """
+    if raw is None:
+        return None, {}
+
+    parts = [p.strip() for p in raw.split(',')]
+    default_font: Optional[str] = None
+    lang_map: Dict[str, str] = {}
+
+    for part in parts:
+        if not part:
+            continue
+        m = re.match(r'^(?:(?P<name>[^()]+)?\s*\((?P<lang>[^)]+)\))|(?P<plain>[^()]+)$', part)
+        if not m:
+            continue
+        if m.group('plain'):
+            default_font = m.group('plain').strip() or default_font
+            continue
+        name = (m.group('name') or '').strip()
+        lang = (m.group('lang') or '').strip().lower()
+        if lang:
+            lang_map[lang] = name
+    return default_font or None, lang_map
 
 
 def strip_bracket_blocks(content: str) -> str:
@@ -954,6 +1008,8 @@ def parse_lys(lys_content):
     offset_regex = re.compile(r'\[offset:\s*(-?\d+)\s*\]')
     last_align = 'left'
     offset = 0
+    current_font_family: Optional[str] = None
+    current_font_map: Dict[str, str] = {}
 
     # 查找并解析 offset
     offset_match = offset_regex.search(lys_content)
@@ -961,8 +1017,17 @@ def parse_lys(lys_content):
         offset = int(offset_match.group(1))
 
     for line in lys_content.splitlines():
+        stripped_line = line.strip()
+        font_meta_match = FONT_FAMILY_META_REGEX.match(stripped_line)
+        if font_meta_match:
+            detected_family = font_meta_match.group(1)
+            default_font, lang_map = parse_font_family_meta(detected_family or "")
+            current_font_family = default_font
+            current_font_map = lang_map or {}
+            continue
+
         # 跳过元数据行
-        if line.startswith('[from:') or line.startswith('[id:') or line.startswith('[offset:'):
+        if stripped_line.startswith('[from:') or stripped_line.startswith('[id:') or stripped_line.startswith('[offset:'):
             continue
         
         # 修改标记解析逻辑：允许空[]，只排除非数字的标记
@@ -992,6 +1057,7 @@ def parse_lys(lys_content):
         
         syllables = []
         full_line_text = ""
+        detected_scripts: Set[str] = set()
         matches = block_regex.finditer(content)
         for match in matches:
             text_part, start_ms, duration_ms = match.groups()
@@ -999,21 +1065,52 @@ def parse_lys(lys_content):
             if not parenthetical_background:
                 cleaned_text = re.sub(r'[()]', '', cleaned_text)
             if cleaned_text:
+                detected_scripts.add(detect_script(cleaned_text))
+                syllable_font = choose_font_for_text(cleaned_text, current_font_family, current_font_map)
                 syllables.append({
                     'text': cleaned_text,
                     'startTime': (int(start_ms) + offset) / 1000.0, # 应用 offset
-                    'duration': int(duration_ms) / 1000.0
+                    'duration': int(duration_ms) / 1000.0,
+                    'fontFamily': syllable_font
                 })
                 full_line_text += cleaned_text
         
         if syllables:
+            style = {
+                'align': align,
+                'fontSize': font_size
+            }
+            if current_font_family:
+                style['fontFamily'] = current_font_family
+            if current_font_map:
+                style['fontFamilyMap'] = dict(current_font_map)
+            if current_font_map and not current_font_family:
+                suggested_fonts = set()
+                for sc in detected_scripts:
+                    mapped_font = current_font_map.get(sc)
+                    if mapped_font:
+                        suggested_fonts.add(mapped_font)
+                if suggested_fonts:
+                    style['fontFamilySuggested'] = ','.join(sorted(suggested_fonts))
+
+            # 调试输出：展示当前行的字体选择结果，方便排查
+            try:
+                if style.get('fontFamily') or style.get('fontFamilyMap') or style.get('fontFamilySuggested'):
+                    print("[FONT_DEBUG] line=%d scripts=%s family=%s map=%s suggested=%s text=%s" % (
+                        len(lyrics_data),
+                        ','.join(sorted(s for s in detected_scripts if s)) or '-',
+                        style.get('fontFamily') or '-',
+                        style.get('fontFamilyMap') or '-',
+                        style.get('fontFamilySuggested') or '-',
+                        full_line_text[:80]
+                    ))
+            except Exception:
+                pass
+
             lyrics_data.append({
                 'line': full_line_text,
                 'syllables': syllables,
-                'style': {
-                    'align': align,
-                    'fontSize': font_size
-                },
+                'style': style,
                 'isBackground': is_background
             })
         last_align = align

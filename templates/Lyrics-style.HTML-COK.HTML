@@ -125,21 +125,38 @@
             width: 100%;
             word-break: keep-all;
             white-space: normal;
+            overflow: hidden;
+        }
+
+        /* 对于“侵入式”连体字体，允许溢出显示，避免字形被裁 */
+        .lyric-line.allow-overflow {
+            overflow: visible;
+        }
+        .lyric-line.allow-overflow .blur-layer,
+        .lyric-line.allow-overflow .syllable,
+        .lyric-line.allow-overflow .blur-text,
+        .lyric-line.allow-overflow .word-wrapper {
+            overflow: visible !important;
         }
 
         /* 模糊层容器 */
         .blur-layer {
             position: absolute;
-            top: 0;
             left: 0;
             width: 100%;
-            height: 100%;
+            --blur-safe-pad: 24px; /* 更大的垂直安全边距以适配高 x-height 字体 */
+            top: calc(var(--blur-safe-pad) * -0.5);
+            height: calc(100% + var(--blur-safe-pad));
             display: flex;
             flex-wrap: wrap;
             justify-content: inherit;
             align-items: inherit;
             z-index: -1;
             pointer-events: none;
+        }
+
+        .lyric-line.allow-overflow .blur-layer {
+            overflow: visible;
         }
 
         /* 模糊文本 */
@@ -183,6 +200,22 @@
             white-space: nowrap;
             transform: translateY(0); /* 为逐音节上浮动画设定基线 */
             will-change: transform, background-position;
+            margin-top: 0.05em;
+            margin-bottom: 0.05em;
+        }
+
+        /* 自定义字体行：禁用卡拉OK渐变，直接用纯色，防止字形互相遮挡 */
+        .syllable.no-gradient {
+            background: none !important;
+            background-image: none !important;
+            background-size: auto !important;
+            background-position: initial !important;
+            background-repeat: initial !important;
+            background-clip: initial !important;
+            -webkit-background-clip: initial !important;
+            color: rgba(255, 255, 255, 0.95);
+            -webkit-text-fill-color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
         }
 
         .syllable.non-latin,
@@ -230,6 +263,22 @@
             right: 20px;
             z-index: 1000;
         }
+        #font-load-tip {
+            position: fixed;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 14px;
+            background: rgba(0, 0, 0, 0.75);
+            color: #fff;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 1200;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+        }
         
         /* 仅在手机等小屏幕设备上显示滑块 */
         @media screen and (max-width: 768px), screen and (orientation: portrait) {
@@ -250,6 +299,267 @@
 
     <script>
         const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
+        const fontLoadPromises = new Map();
+        const fontClassCache = new Map();
+        let fontTipTimer = null;
+
+        function showFontTip(message) {
+            if (!message) return;
+            let el = document.getElementById('font-load-tip');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'font-load-tip';
+                document.body.appendChild(el);
+            }
+            el.textContent = message;
+            el.style.opacity = '1';
+            if (fontTipTimer) clearTimeout(fontTipTimer);
+            fontTipTimer = setTimeout(() => {
+                el.style.opacity = '0';
+            }, 4000);
+        }
+
+        async function loadFontFromGoogle(fontName) {
+            const encodedName = encodeURIComponent(fontName).replace(/%20/g, '+');
+            const cssUrl = `https://fonts.googleapis.com/css2?family=${encodedName}:wght@400;500;600;700&display=swap`;
+            const res = await fetch(cssUrl, { mode: 'cors' });
+            if (!res.ok) {
+                throw new Error(`Google Fonts responded ${res.status}`);
+            }
+            const cssText = await res.text();
+            if (!cssText || !cssText.includes('@font-face')) {
+                throw new Error('Google Fonts returned empty CSS');
+            }
+            const styleEl = document.createElement('style');
+            styleEl.textContent = cssText;
+            document.head.appendChild(styleEl);
+        }
+
+        async function loadFontFromCdnFonts(fontName) {
+            const encodedName = encodeURIComponent(fontName);
+            const cssUrl = `https://fonts.cdnfonts.com/css/${encodedName}`;
+            const res = await fetch(cssUrl, { mode: 'cors' });
+            if (!res.ok) {
+                throw new Error(`cdnfonts responded ${res.status}`);
+            }
+            const cssText = await res.text();
+            if (!cssText || !cssText.includes('@font-face')) {
+                throw new Error('cdnfonts returned empty CSS');
+            }
+            const styleEl = document.createElement('style');
+            styleEl.textContent = cssText;
+            document.head.appendChild(styleEl);
+        }
+
+        async function tryLocalFont(fontName, aliases) {
+            const encodedName = encodeURIComponent(fontName);
+            const candidates = [
+                `/songs/${encodedName}.woff2`,
+                `/songs/${encodedName}.ttf`,
+                `/songs/${encodedName}.otf`,
+                `/fonts/${encodedName}.woff2`,
+                `/fonts/${encodedName}.ttf`,
+                `/fonts/${encodedName}.otf`
+            ];
+            for (const url of candidates) {
+                try {
+                    const res = await fetch(url, { method: 'GET', cache: 'force-cache' });
+                    if (!res.ok) continue;
+                    const styleEl = document.createElement('style');
+                    const localParts = (aliases || [fontName]).map(a => `local('${a}')`).join(', ');
+                    styleEl.textContent = `
+@font-face {
+    font-family: '${fontName}';
+    src: ${localParts ? localParts + ',' : ''} url('${url}');
+    font-display: swap;
+}`;
+                    document.head.appendChild(styleEl);
+                    return url;
+                } catch (err) {
+                    console.warn('Local font fetch failed', fontName, url, err);
+                }
+            }
+            return '';
+        }
+
+        function isFontAvailable(fontName) {
+            if (!fontName || !document.fonts || !document.fonts.check) return false;
+            try {
+                return document.fonts.check(`1em "${fontName}"`);
+            } catch (err) {
+                return false;
+            }
+        }
+
+        function measureFontDifference(fontName) {
+            const name = (fontName || '').trim();
+            if (!name) return false;
+            const tester = document.createElement('span');
+            tester.textContent = 'ABCDEFGHIJKLMnopqrstuvwxyz 1234567890 汉字かなカナ';
+            tester.style.position = 'absolute';
+            tester.style.visibility = 'hidden';
+            tester.style.fontSize = '32px';
+            tester.style.left = '-9999px';
+            tester.style.fontFamily = 'serif';
+            document.body.appendChild(tester);
+            const serifWidth = tester.getBoundingClientRect().width;
+            tester.style.fontFamily = `"${name}", serif`;
+            const customWidth = tester.getBoundingClientRect().width;
+            document.body.removeChild(tester);
+            return Math.abs(customWidth - serifWidth) > 0.5;
+        }
+
+        function buildFontAliases(fontName) {
+            const raw = (fontName || '').trim();
+            if (!raw) return [];
+            const aliases = new Set();
+            aliases.add(raw);
+            aliases.add(raw.replace(/[-_]+/g, ' '));
+            aliases.add(raw.replace(/[-_]+/g, ''));
+            const dashSplit = raw.split(/[-_ ]+/);
+            if (dashSplit.length > 1) {
+                aliases.add(dashSplit[0]);
+            }
+            return Array.from(aliases).filter(Boolean);
+        }
+
+        function parseFontStack(fontValue) {
+            if (!fontValue) return [];
+            return fontValue.split(',')
+                .map((name) => (name || '').trim())
+                .filter(Boolean);
+        }
+
+        const SCRIPT_CHECKERS = {
+            ja: /[\u3040-\u30ff\u31f0-\u31ff\u4e00-\u9fff]/,
+            en: /[A-Za-z]/
+        };
+
+        function detectScript(text) {
+            if (!text) return '';
+            if (SCRIPT_CHECKERS.ja.test(text)) return 'ja';
+            if (SCRIPT_CHECKERS.en.test(text)) return 'en';
+            return '';
+        }
+
+        function selectFontForText(text, fontMap, defaultFont, fallbackStack) {
+            const script = detectScript(text);
+            const hasMap = fontMap && script && Object.prototype.hasOwnProperty.call(fontMap, script);
+            if (hasMap) {
+                const mapped = fontMap[script];
+                if (mapped) return mapped; // 显式指定
+                return ''; // 显式空：使用系统默认
+            }
+            if (defaultFont && (!script || script === 'en')) return defaultFont;
+            return '';
+        }
+
+        function buildFontValue(primary, fallbackList, bodyFont, allowFallback = true) {
+            const esc = (v) => v.replace(/'/g, "\\'");
+            const ordered = [];
+            if (primary) ordered.push(`'${esc(primary)}'`);
+            if (allowFallback && primary) {
+                (fallbackList || []).forEach((f) => {
+                    if (f && f !== primary) {
+                        ordered.push(`'${esc(f)}'`);
+                    }
+                });
+            }
+            if (bodyFont) {
+                ordered.push(bodyFont);
+            }
+            return ordered.join(', ');
+        }
+
+        function fontClassName(fontName) {
+            return `custom-font-${fontName.replace(/[^a-zA-Z0-9_-]/g, '-') || 'unknown'}`;
+        }
+
+        function ensureFontClass(fontName, fontFamilyValue) {
+            const name = (fontName || '').trim();
+            if (!name || !fontFamilyValue) return '';
+            if (fontClassCache.has(name)) return fontClassCache.get(name);
+            const cls = fontClassName(name);
+            const styleEl = document.createElement('style');
+            styleEl.textContent = `
+.${cls} {
+    font-family: ${fontFamilyValue} !important;
+}`;
+            document.head.appendChild(styleEl);
+            fontClassCache.set(name, cls);
+            return cls;
+        }
+
+        function ensureFontLoaded(fontName) {
+            const name = (fontName || '').trim();
+            if (!name) return Promise.resolve();
+            if (fontLoadPromises.has(name)) {
+                return fontLoadPromises.get(name);
+            }
+            showFontTip(`尝试加载字体 ${name} ...`);
+            const loader = (async () => {
+                try {
+                    let loaded = false;
+                    let localUrl = '';
+                    const fontStack = parseFontStack(name);
+                    for (const fontCandidate of fontStack.length ? fontStack : [name]) {
+                        const candidateAliases = buildFontAliases(fontCandidate);
+                        const url = await tryLocalFont(fontCandidate, candidateAliases);
+                        localUrl = localUrl || url;
+                        if (url && document.fonts && document.fonts.load) {
+                            try {
+                                await document.fonts.load(`1em "${fontCandidate}"`);
+                            } catch (err) {
+                                console.warn('fonts.load failed', fontCandidate, err);
+                            }
+                        }
+                    }
+                    if (localUrl && isFontAvailable(name)) {
+                        loaded = true;
+                        showFontTip(`字体 ${name} 已加载（本地文件 ${localUrl}）`);
+                    }
+                    try {
+                        await loadFontFromGoogle(name);
+                        loaded = true;
+                    } catch (err1) {
+                        console.warn('Google Fonts load failed', name, err1);
+                    }
+                    if (!loaded) {
+                        try {
+                            await loadFontFromCdnFonts(name);
+                            loaded = true;
+                        } catch (err2) {
+                            console.warn('cdnfonts load failed', name, err2);
+                        }
+                    }
+
+                    // 触发一次测量，确保浏览器开始请求字体文件
+                    if (document.fonts && document.fonts.load) {
+                        try {
+                            await document.fonts.load(`1em "${name}"`);
+                        } catch (err) {
+                            console.warn('fonts.load failed', name, err);
+                        }
+                    }
+
+                    const finalAvailable = isFontAvailable(name);
+                    const visuallyDifferent = finalAvailable && measureFontDifference(name);
+                    if (finalAvailable && visuallyDifferent) {
+                        const source = localUrl ? `本地文件 ${localUrl}` : (loaded ? '远程字体' : '系统/本地字体');
+                        showFontTip(`字体 ${name} 已可用（${source}）`);
+                    } else if (finalAvailable) {
+                        showFontTip(`字体 ${name} 已检测到，但显示效果与系统字体无差异，可能未实际生效`);
+                    } else {
+                        showFontTip(`字体 ${name} 加载失败或未找到，请确认文件存在 /songs 或 /fonts 目录`);
+                    }
+                } catch (err) {
+                    console.warn('Font load failed', name, err);
+                    showFontTip(`字体 ${name} 加载失败，请确认已安装或手动引入`);
+                }
+            })();
+            fontLoadPromises.set(name, loader);
+            return loader;
+        }
 
         function guardAmllSettingsStorage() {
             try {
@@ -1019,13 +1329,15 @@
                             });
                         }
 
-                        function prepareSyllableAnimations(lineIndex, lineEl, lineInfo, lineData) {
-                            if (!lineInfo || !lineEl || !lineData || !Array.isArray(lineData.syllables) || lineData.syllables.length === 0) return;
+            function prepareSyllableAnimations(lineIndex, lineEl, lineInfo, lineData) {
+                if (!lineInfo || !lineEl || !lineData || !Array.isArray(lineData.syllables) || lineData.syllables.length === 0) return;
 
-                            const spans = Array.from(lineEl.querySelectorAll('.syllable'));
-                            if (spans.length === 0) return;
+                const spans = Array.from(lineEl.querySelectorAll('.syllable'));
+                if (spans.length === 0) return;
+                const isSpecialFont = lineEl.dataset.specialFont === '1';
+                const opacityOnly = isSpecialFont;
 
-                            cancelLineAnimations(lineInfo);
+                cancelLineAnimations(lineInfo);
 
                             const blocks = [];
                             for (let i = 0; i < lineData.syllables.length; i++) {
@@ -1038,7 +1350,9 @@
                                 blocks.push({
                                     ele: span,
                                     startTime: startMs,
-                                    endTime: endMs
+                                    endTime: endMs,
+                                    // 特殊字体不再基于时长限制上浮，统一允许；非特殊字体沿用默认行为
+                                    allowFloat: true
                                 });
                             }
 
@@ -1055,17 +1369,23 @@
                                 const computedStyle = getComputedStyle(span);
                                 const spanWidth = span.offsetWidth || parseFloat(computedStyle.width) || 0;
                                 const spanHeight = span.offsetHeight || parseFloat(computedStyle.fontSize) || 0;
-                                const { backgroundImage, backgroundSize, totalPxWidth } = generateBackgroundFadeStyle(spanWidth, spanHeight, SYLLABLE_FADE_RATIO);
-                                const floatDistance = Math.max(1, spanHeight * 0.1);
-                                const floatOffset = -(Math.round(floatDistance * 100) / 100);
+                                const fadeStyle = opacityOnly
+                                    ? { backgroundImage: 'none', backgroundSize: '', totalPxWidth: 0 }
+                                    : generateBackgroundFadeStyle(spanWidth, spanHeight, SYLLABLE_FADE_RATIO);
+                                const { backgroundImage, backgroundSize, totalPxWidth } = fadeStyle;
+                                const allowFloat = Boolean(block.allowFloat);
+                                const floatDistance = allowFloat ? Math.max(1, spanHeight * 0.1) : 0;
+                                const floatOffset = allowFloat ? -(Math.round(floatDistance * 100) / 100) : 0;
                                 const syllableDurationMs = Math.max(1, block.endTime - block.startTime);
                                 const ascendStartMs = block.startTime;
-                                const requiredAscendMs = Math.max(syllableDurationMs, floatDistance / SYLLABLE_FLOAT_MAX_SPEED);
+                                const requiredAscendMs = allowFloat ? Math.max(syllableDurationMs, floatDistance / SYLLABLE_FLOAT_MAX_SPEED) : syllableDurationMs;
                                 const ascendEndMs = ascendStartMs + requiredAscendMs;
-                                const settleTailMs = Math.max(
-                                    SYLLABLE_FLOAT_SETTLE_TAIL_MS,
-                                    Math.min(requiredAscendMs * 0.35, 600)
-                                );
+                                const settleTailMs = allowFloat
+                                    ? Math.max(
+                                        SYLLABLE_FLOAT_SETTLE_TAIL_MS,
+                                        Math.min(requiredAscendMs * 0.35, 600)
+                                    )
+                                    : 0;
                                 const settleEndMs = ascendEndMs + settleTailMs;
 
                                 extendedLineDuration = Math.max(extendedLineDuration, settleEndMs - firstStart);
@@ -1105,8 +1425,24 @@
                                 span.style.backgroundPosition = `${totalPxWidth}px 0`;
                                 span.style.backgroundRepeat = 'no-repeat';
                                 span.style.transform = 'translateY(0)';
+                                if (opacityOnly) {
+                                    span.style.color = 'rgba(255,255,255,0.95)';
+                                    span.style.webkitTextFillColor = 'rgba(255,255,255,0.95)';
+                                    span.style.opacity = '0.25';
+                                }
 
-                                const frames = createKaraokeFrames(blocks, idx, originalLineDuration, SYLLABLE_FADE_RATIO);
+                                const frames = opacityOnly
+                                    ? (() => {
+                                        const startRel = Math.max(0, Math.min(1, (block.startTime - firstStart) / originalLineDuration));
+                                        const endRel = Math.max(startRel, Math.min(1, (block.endTime - firstStart) / originalLineDuration));
+                                        return [
+                                            { offset: 0, opacity: 0.25 },
+                                            { offset: startRel, opacity: 0.25 },
+                                            { offset: endRel, opacity: 1 },
+                                            { offset: 1, opacity: 1 }
+                                        ];
+                                    })()
+                                    : createKaraokeFrames(blocks, idx, originalLineDuration, SYLLABLE_FADE_RATIO);
                                 const animation = span.animate(frames, {
                                     duration: originalLineDuration,
                                     easing: 'linear',
@@ -1116,57 +1452,59 @@
                                 animation.__mapTime = (time) => Math.min(time, originalLineDuration);
                                 lineInfo.animations.push(animation);
 
-                                const floatDistance = metric.floatDistance;
-                                const floatOffset = metric.floatOffset;
-                                const ascendStartOffset = Math.max(0, Math.min(1, (metric.ascendStartMs - firstStart) / extendedLineDuration));
-                                const ascendEndOffset = Math.max(
-                                    ascendStartOffset,
-                                    Math.min(1, (metric.ascendEndMs - firstStart) / extendedLineDuration)
-                                );
-                                const settleEndOffset = Math.max(
-                                    ascendEndOffset,
-                                    Math.min(1, (metric.settleEndMs - firstStart) / extendedLineDuration)
-                                );
+                                if (metric.floatDistance > 0) {
+                                    const floatDistance = metric.floatDistance;
+                                    const floatOffset = metric.floatOffset;
+                                    const ascendStartOffset = Math.max(0, Math.min(1, (metric.ascendStartMs - firstStart) / extendedLineDuration));
+                                    const ascendEndOffset = Math.max(
+                                        ascendStartOffset,
+                                        Math.min(1, (metric.ascendEndMs - firstStart) / extendedLineDuration)
+                                    );
+                                    const settleEndOffset = Math.max(
+                                        ascendEndOffset,
+                                        Math.min(1, (metric.settleEndMs - firstStart) / extendedLineDuration)
+                                    );
 
-                                const floatFrames = [];
-                                floatFrames.push({ offset: 0, transform: 'translateY(0)' });
-                                if (ascendStartOffset > 0) {
-                                    floatFrames.push({ offset: ascendStartOffset, transform: 'translateY(0)' });
-                                }
-                                floatFrames.push({
-                                    offset: ascendEndOffset,
-                                    transform: `translateY(${floatOffset}px)`,
-                                    easing: SYLLABLE_FLOAT_ASCEND_EASING
-                                });
-                                if (settleEndOffset > ascendEndOffset) {
+                                    const floatFrames = [];
+                                    floatFrames.push({ offset: 0, transform: 'translateY(0)' });
+                                    if (ascendStartOffset > 0) {
+                                        floatFrames.push({ offset: ascendStartOffset, transform: 'translateY(0)' });
+                                    }
                                     floatFrames.push({
-                                        offset: settleEndOffset,
+                                        offset: ascendEndOffset,
                                         transform: `translateY(${floatOffset}px)`,
-                                        easing: SYLLABLE_FLOAT_SETTLE_EASING
+                                        easing: SYLLABLE_FLOAT_ASCEND_EASING
                                     });
-                                    if (settleEndOffset < 1) {
+                                    if (settleEndOffset > ascendEndOffset) {
+                                        floatFrames.push({
+                                            offset: settleEndOffset,
+                                            transform: `translateY(${floatOffset}px)`,
+                                            easing: SYLLABLE_FLOAT_SETTLE_EASING
+                                        });
+                                        if (settleEndOffset < 1) {
+                                            floatFrames.push({
+                                                offset: 1,
+                                                transform: `translateY(${floatOffset}px)`
+                                            });
+                                        }
+                                    } else if (ascendEndOffset < 1) {
                                         floatFrames.push({
                                             offset: 1,
-                                            transform: `translateY(${floatOffset}px)`
+                                            transform: `translateY(${floatOffset}px)`,
+                                            easing: SYLLABLE_FLOAT_SETTLE_EASING
                                         });
+                                    } else {
+                                        const lastFrame = floatFrames[floatFrames.length - 1];
+                                        lastFrame.easing = SYLLABLE_FLOAT_SETTLE_EASING;
                                     }
-                                } else if (ascendEndOffset < 1) {
-                                    floatFrames.push({
-                                        offset: 1,
-                                        transform: `translateY(${floatOffset}px)`,
-                                        easing: SYLLABLE_FLOAT_SETTLE_EASING
+                                    const floatAnimation = span.animate(floatFrames, {
+                                        duration: extendedLineDuration,
+                                        easing: 'linear',
+                                        fill: 'both'
                                     });
-                                } else {
-                                    const lastFrame = floatFrames[floatFrames.length - 1];
-                                    lastFrame.easing = SYLLABLE_FLOAT_SETTLE_EASING;
+                                    floatAnimation.pause();
+                                    lineInfo.animations.push(floatAnimation);
                                 }
-                                const floatAnimation = span.animate(floatFrames, {
-                                    duration: extendedLineDuration,
-                                    easing: 'linear',
-                                    fill: 'both'
-                                });
-                                floatAnimation.pause();
-                                lineInfo.animations.push(floatAnimation);
                             });
 
                             syncLineAnimations(lineInfo);
@@ -1205,6 +1543,127 @@
                 }
                 return result;
             }
+
+            // 将持续时间超过 1s 的英文词拆分为逐字符的子音节，按等份时间平分
+        function splitLongWordSyllables(lines, minDurationSec = 1, predicate = () => true) {
+            if (!Array.isArray(lines)) return [];
+
+            return lines.map((line) => {
+                if (!predicate(line)) return line;
+                if (!line || !Array.isArray(line.syllables)) {
+                    return line;
+                }
+
+                    const newSyllables = [];
+                    line.syllables.forEach((syllable) => {
+                        if (!syllable) return;
+                        const rawText = syllable.text || '';
+                        const text = rawText.trim();
+                        const duration = Number.parseFloat(syllable.duration);
+                        const start = Number.parseFloat(syllable.startTime);
+                        const looksLikeWord = /^[A-Za-z][A-Za-z,'-]*[A-Za-z]?[.,!?]?$/.test(text) && !text.includes(' ');
+
+                        if (
+                            Number.isFinite(duration) &&
+                            Number.isFinite(start) &&
+                            duration > minDurationSec &&
+                            text.length > 1 &&
+                            looksLikeWord
+                        ) {
+                            const chars = Array.from(rawText);
+                            const partDuration = duration / chars.length;
+                            chars.forEach((char, idx) => {
+                                const splitStart = start + partDuration * idx;
+                                newSyllables.push({
+                                    ...syllable,
+                                    text: char,
+                                    startTime: splitStart,
+                                    duration: partDuration
+                                });
+                            });
+                        } else {
+                            newSyllables.push(syllable);
+                        }
+                    });
+
+                    return { ...line, syllables: newSyllables };
+            });
+        }
+
+        function isLineUsingSpecialFont(line) {
+            if (!line) return false;
+            const hasLineFont = Boolean(line.style && line.style.fontFamily);
+            const hasSyllableFont =
+                Array.isArray(line.syllables) && line.syllables.some((sy) => sy && sy.fontFamily);
+            return hasLineFont || hasSyllableFont;
+        }
+
+        function mergeSpecialFontWords(lines) {
+            if (!Array.isArray(lines)) return [];
+            const isSeparator = (text = '') => {
+                if (!text) return true;
+                if (/\s/.test(text)) return true;
+                return /^[.,;!?:，。？！、：；]+$/.test(text);
+            };
+            const isLatinWord = (text = '') => /[A-Za-z]/.test(text);
+
+            return lines.map((line) => {
+                if (!line || !line.style || !line.style.fontFamily || !Array.isArray(line.syllables)) {
+                    return line;
+                }
+                const merged = [];
+                let current = null;
+
+                const pushCurrent = () => {
+                    if (current) {
+                        current.duration = Math.max(0, current.endTime - current.startTime);
+                        delete current.endTime;
+                        merged.push(current);
+                        current = null;
+                    }
+                };
+
+                line.syllables.forEach((sy) => {
+                    if (!sy) return;
+                    const text = sy.text || '';
+                    const start = parseFloat(sy.startTime) || 0;
+                    const dur = parseFloat(sy.duration) || 0;
+                    const end = start + dur;
+                    const fontFamily = sy.fontFamily;
+
+                    if (isSeparator(text) || !isLatinWord(text)) {
+                        pushCurrent();
+                        merged.push({
+                            text,
+                            startTime: start,
+                            duration: dur,
+                            fontFamily
+                        });
+                        return;
+                    }
+
+                    if (!current || current.fontFamily !== fontFamily) {
+                        current = {
+                            text,
+                            startTime: start,
+                            endTime: end,
+                            fontFamily
+                        };
+                    } else {
+                        current.text += text;
+                        current.endTime = end;
+                    }
+                });
+
+                pushCurrent();
+
+                return {
+                    ...line,
+                    syllables: merged,
+                    line: merged.map((s) => s.text || '').join('')
+                };
+            });
+        }
 
             async function loadData() {
                 try {
@@ -1259,6 +1718,14 @@
                     const lyricsRes = await fetch('/lyrics');
                     const lyricsJson = await lyricsRes.json();
                     lyricsData = lyricsJson.lyrics || [];
+                    // 长词拆分仅应用于非自定义字体行或音节，避免特殊字体被拆成单字符
+                    lyricsData = splitLongWordSyllables(
+                        lyricsData,
+                        1,
+                        (line) => !isLineUsingSpecialFont(line)
+                    );
+                    // 对特殊字体行：按单词合并音节（空格/标点分词），避免跨词遮挡
+                    lyricsData = mergeSpecialFontWords(lyricsData);
 
                     // 判断是否所有歌词行都不是 right（没有对唱标记）
                     forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
@@ -1363,25 +1830,45 @@
                 const line = lyricsData[lineIndex];
                 if (!line) return null;
 
+                const lineStyle = line.style || {};
+                const bodyFont = window.getComputedStyle(document.body).fontFamily;
+                const syllableFonts = Array.isArray(line.syllables)
+                    ? line.syllables
+                        .map((s) => (s && s.fontFamily ? String(s.fontFamily) : ''))
+                        .filter((name) => name && name.trim().length > 0)
+                    : [];
+                const uniqueFonts = Array.from(new Set(syllableFonts));
+                const aliasList = uniqueFonts.flatMap((name) => buildFontAliases(name));
+                const dedupAliases = Array.from(new Set(aliasList));
+                uniqueFonts.forEach((f) => ensureFontLoaded(f));
+                const hasAnySpecialFont = uniqueFonts.length > 0;
+                const disableBlurLayer = hasAnySpecialFont;
+
                 const lineEl = document.createElement('div');
                 lineEl.classList.add('lyric-line');
+                if (hasAnySpecialFont) {
+                    lineEl.classList.add('allow-overflow');
+                    lineEl.dataset.specialFont = '1';
+                    lineEl.dataset.maxFloatMs = '1000';
+                    lineEl.style.fontWeight = 'normal';
+                }
                 lineEl.dataset.lineIndex = lineIndex;
                 
                 // 应用从后端传来的样式
                 if (forceCenterAlign) {
                     lineEl.classList.add('center-aligned');
-                    if (line.style && line.style.fontSize === 'small') {
+                    if (lineStyle.fontSize === 'small') {
                         lineEl.classList.add('small-font');
                     }
                 } else if (line.style) {
-                    if (line.style.align === 'right') {
+                    if (lineStyle.align === 'right') {
                         lineEl.classList.add('right-aligned');
-                    } else if (line.style.align === 'center') {
+                    } else if (lineStyle.align === 'center') {
                         lineEl.classList.add('center-aligned');
                     } else {
                         lineEl.classList.add('left-aligned');
                     }
-                    if (line.style.fontSize === 'small') {
+                    if (lineStyle.fontSize === 'small') {
                         lineEl.classList.add('small-font');
                     }
                 } else {
@@ -1394,34 +1881,47 @@
                     lineEl.dataset.startTime = firstSyllable.startTime;
                     lineEl.dataset.endTime = parseFloat(lastSyllable.startTime) + parseFloat(lastSyllable.duration);
                 }
-                const isSmallFont = (line.style && line.style.fontSize === 'small');
+                const isSmallFont = (lineStyle.fontSize === 'small');
                 
                 // 创建模糊层（在翻译渲染之前，以便计算正确的高度）
-                const blurLayer = document.createElement('div');
-                blurLayer.className = 'blur-layer';
-                
-                // 复制上层歌词的样式
-                blurLayer.style.justifyContent = getComputedStyle(lineEl).justifyContent;
-                blurLayer.style.alignItems = getComputedStyle(lineEl).alignItems;
-                
-                // 为每个音节创建模糊文本
-                line.syllables.forEach((syllable) => {
-                    const blurText = document.createElement('span');
-                    blurText.className = 'blur-text';
-                    blurText.textContent = syllable.text;
-                    blurText.style.fontSize = getComputedStyle(lineEl).fontSize;
-                    blurText.style.fontWeight = getComputedStyle(lineEl).fontWeight;
-                    blurText.style.lineHeight = getComputedStyle(lineEl).lineHeight;
+                let blurLayer = null;
+                if (!disableBlurLayer) {
+                    blurLayer = document.createElement('div');
+                    blurLayer.className = 'blur-layer';
                     
-                    // 复制间距
-                    if (syllable.text && syllable.text.includes(' ')) {
-                        blurText.style.marginRight = '0.28em';
-                    }
+                    // 复制上层歌词的样式
+                    blurLayer.style.justifyContent = getComputedStyle(lineEl).justifyContent;
+                    blurLayer.style.alignItems = getComputedStyle(lineEl).alignItems;
                     
-                    blurLayer.appendChild(blurText);
-                });
-                
-                lineEl.appendChild(blurLayer);
+                    // 为每个音节创建模糊文本
+                    line.syllables.forEach((syllable) => {
+                        const blurText = document.createElement('span');
+                        blurText.className = 'blur-text';
+                        blurText.textContent = syllable.text;
+                        blurText.style.fontSize = getComputedStyle(lineEl).fontSize;
+                        blurText.style.fontWeight = getComputedStyle(lineEl).fontWeight;
+                        blurText.style.lineHeight = getComputedStyle(lineEl).lineHeight;
+                        const hasPresetFont = Object.prototype.hasOwnProperty.call(syllable, 'fontFamily');
+                        const presetFont = hasPresetFont ? (syllable.fontFamily || '') : '';
+                        const chosenFont = hasPresetFont ? presetFont : '';
+                        const allowFallback = Boolean(chosenFont);
+                        const blurFontValue = buildFontValue(chosenFont, dedupAliases, bodyFont, allowFallback);
+                        if (blurFontValue) {
+                            blurText.style.fontFamily = blurFontValue;
+                            const chosenClass = chosenFont ? ensureFontClass(chosenFont, blurFontValue) : '';
+                            if (chosenClass) blurText.classList.add(chosenClass);
+                        }
+                        
+                        // 复制间距
+                        if (syllable.text && syllable.text.includes(' ')) {
+                            blurText.style.marginRight = '0.28em';
+                        }
+                        
+                        blurLayer.appendChild(blurText);
+                    });
+                    
+                    lineEl.appendChild(blurLayer);
+                }
                 
                 line.syllables.forEach((syllable) => {
                     const syllableEl = document.createElement('span');
@@ -1429,6 +1929,16 @@
                     syllableEl.textContent = syllable.text;
                     syllableEl.dataset.startTime = syllable.startTime;
                     syllableEl.dataset.duration = syllable.duration;
+                    const hasPresetFont = Object.prototype.hasOwnProperty.call(syllable, 'fontFamily');
+                    const presetFont = hasPresetFont ? (syllable.fontFamily || '') : '';
+                    const chosenFont = hasPresetFont ? presetFont : '';
+                    const allowFallback = Boolean(chosenFont);
+                    const syllableFontValue = buildFontValue(chosenFont, dedupAliases, bodyFont, allowFallback);
+                    if (syllableFontValue) {
+                        syllableEl.style.fontFamily = syllableFontValue;
+                        const chosenClass = chosenFont ? ensureFontClass(chosenFont, syllableFontValue) : '';
+                        if (chosenClass) syllableEl.classList.add(chosenClass);
+                    }
                     // 如果音节内容包含空格，则加右边距
                     if (syllable.text && syllable.text.includes(' ')) {
                         // 使用 em 单位，使其可以随字体大小等比缩放
@@ -1466,6 +1976,7 @@
                         transDiv.textContent = bestTrans.content;
                         // 强制换行并允许文本对齐
                         transDiv.style.width = '100%';
+                        transDiv.style.paddingBottom = '0.2em'; // 给模糊层留下空间
                         // 翻译对齐方式与主歌词一致
                         if (lineEl.classList.contains('left-aligned')) transDiv.classList.add('left-aligned');
                         if (lineEl.classList.contains('center-aligned')) transDiv.classList.add('center-aligned');
@@ -1476,7 +1987,7 @@
                         setTimeout(() => {
                             const transHeight = transDiv.offsetHeight;
                             if (transHeight > 0 && blurLayer) {
-                                blurLayer.style.height = `calc(100% - ${transHeight}px)`;
+                                blurLayer.style.height = `calc(100% - ${transHeight}px + var(--blur-safe-pad))`;
                             }
                         }, 0);
                     }

@@ -1189,6 +1189,7 @@
             <div style="display: flex; flex-direction: column;">
                 <div>
                     <h3>歌词</h3>
+                    <div id="fontFamilyNotice" style="margin: 4px 0 8px; color: #666; display: none;"></div>
                     <div>
                         <label>歌词文件路径：</label>
                         <input type="text" id="lyricsPath" class="file-path-input">
@@ -2137,6 +2138,25 @@
                 })
         }
 
+        function detectFontFamilyTag(text) {
+            if (!text) return '';
+            const match = text.match(/^\s*\[font-family:\s*([^\]]+?)\s*\]\s*$/mi);
+            return match ? match[1].trim() : '';
+        }
+
+        function updateFontFamilyNotice(content) {
+            const noticeEl = document.getElementById('fontFamilyNotice');
+            if (!noticeEl) return;
+            const detected = detectFontFamilyTag(content);
+            if (detected) {
+                noticeEl.textContent = `检测到字体标签：${detected}`;
+                noticeEl.style.display = 'block';
+            } else {
+                noticeEl.textContent = '未检测到字体标签';
+                noticeEl.style.display = 'block';
+            }
+        }
+
         function editLyrics(lyricsPath, translationPath, index, jsonFile) {
             currentJsonFile = jsonFile
             const modal = document.getElementById('lyricsModal')
@@ -2156,6 +2176,8 @@
                 translationPathInput.value = ''
             }
 
+            updateFontFamilyNotice('')
+
             // 加载歌词内容
             fetch('/get_lyrics', {
                 method: 'POST',
@@ -2166,6 +2188,7 @@
                 .then(data => {
                     if (data.status === 'success') {
                         lyricsEditor.value = data.content
+                        updateFontFamilyNotice(data.content)
                     }
                 })
 
