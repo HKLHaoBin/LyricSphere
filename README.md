@@ -2,6 +2,9 @@
 
 LyricSphere 是一个基于 Flask 的 Web 应用程序，用于管理和显示动态歌词，并支持实时同步播放。该应用支持多种歌词格式，包括 .lrc、.lys 和 .ttml，并提供了编辑、转换和显示歌词的功能。
 
+特别感谢 https://github.com/BingoKingo/amll-web/tree/amlw-dev 
+是该仓库提供了 AMLL-web 功能和部分模板文件所使用的AMLL背景功能。
+
 ## 主要功能
 
 - 支持多种歌词格式：.lrc（行级时间）、.lys（音节级时间）、.ttml 和 LQE 格式
