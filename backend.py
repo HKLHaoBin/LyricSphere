@@ -684,6 +684,46 @@ def build_meta_lyrics_value(existing_parts: List[str],
     return lyrics_url or ''
 
 
+def analyze_lyrics_tags(lyrics_path: str) -> Tuple[bool, bool]:
+    """
+    检查歌词文件是否包含对唱或背景人声标记。
+    返回 (has_duet, has_background)。
+    """
+    if not lyrics_path or lyrics_path == '!':
+        return False, False
+
+    real_path = resolve_resource_path(lyrics_path, 'songs')
+    if not real_path.exists():
+        raise FileNotFoundError(f'歌词文件未找到: {real_path}')
+
+    with open(real_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    has_duet = '[2]' in content or '[5]' in content or 'ttm:agent="v2"' in content
+    has_background = '[6]' in content or '[7]' in content or '[8]' in content or 'ttm:role="x-bg"' in content
+    return has_duet, has_background
+
+
+def has_valid_audio(song_value: str) -> bool:
+    """判断音源字段是否有效（排除占位符并校验本地文件存在性）。"""
+    trimmed = (song_value or '').strip()
+    if not trimmed or trimmed == '!' or '音乐.mp3' in trimmed:
+        return False
+
+    try:
+        parsed = urlparse(trimmed)
+        if parsed.scheme in ('http', 'https'):
+            return True
+    except Exception:
+        pass
+
+    try:
+        real_path = resolve_resource_path(trimmed, 'songs')
+        return real_path.exists()
+    except Exception:
+        return False
+
+
 def qe_parse_lys(raw_text: str) -> Dict[str, Any]:
     """
     将 .lys 文本解析为结构化文档：
@@ -1125,34 +1165,8 @@ def parse_lys(lys_content):
 
 @app.route('/')
 def index():
-    json_files = []
-    static_dir = BASE_PATH / 'static'
-    for file in static_dir.iterdir():
-        if file.suffix == '.json':
-            mtime = file.stat().st_mtime
-            with open(file, 'r', encoding='utf-8') as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    continue
-
-                if not isinstance(data, dict):
-                    data = {'raw': data, 'meta': {}}
-                else:
-                    meta_obj = data.get('meta')
-                    if not isinstance(meta_obj, dict):
-                        data['meta'] = {}
-
-                json_files.append({
-                    'filename': file.name,
-                    'data': data,
-                    'mtime': mtime  # 添加修改时间
-                })
-    # 按修改时间排序（最新在前）
-    json_files.sort(key=lambda x: x['mtime'], reverse=True)
     return render_template(
         'LyricSphere.html',
-        json_files=json_files,
         amll_player_base_url=get_amll_web_player_base_url()
     )
 
@@ -2381,27 +2395,82 @@ def check_lyrics():
         return locked_response
     lyrics_path = request.json.get('path')
     try:
-        real_path = resolve_resource_path(lyrics_path, 'songs')
+        has_duet, has_background = analyze_lyrics_tags(lyrics_path)
     except ValueError as exc:
         return jsonify({'status': 'error', 'message': f'无法解析歌词路径: {exc}'})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
 
-    try:
-        with open(real_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    return jsonify({
+        'status': 'success',
+        'hasDuet': has_duet,
+        'hasBackgroundVocals': has_background
+    })
 
-        # 检查是否包含对唱标记
-        has_duet = '[2]' in content or '[5]' in content or 'ttm:agent="v2"' in content
 
-        # 检查是否包含背景人声标记
-        has_background = '[6]' in content or '[7]' in content or '[8]' in content or 'ttm:role="x-bg"' in content
+@app.route('/songs/summary')
+def list_song_summaries():
+    """返回精简的歌曲列表信息，避免前端批量读取静态资源。"""
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('查看歌曲列表')
+    if locked_response:
+        return locked_response
 
-        return jsonify({
-            'status': 'success',
+    summaries: List[Dict[str, Any]] = []
+    for file in STATIC_DIR.glob('*.json'):
+
+        try:
+            raw_data = json.loads(file.read_text(encoding='utf-8'))
+        except Exception as exc:
+            app.logger.warning("读取 JSON 失败，已跳过 %s: %s", file.name, exc)
+            continue
+
+        if not isinstance(raw_data, dict):
+            continue
+
+        meta = raw_data.get('meta') or {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        lyrics_path, translation_path, roman_path, _ = parse_meta_lyrics(meta.get('lyrics'))
+
+        artists_raw = meta.get('artists', [])
+        if isinstance(artists_raw, list):
+            artists_list = artists_raw
+        elif isinstance(artists_raw, str):
+            artists_list = [artists_raw]
+        else:
+            artists_list = []
+
+        try:
+            has_duet, has_background = analyze_lyrics_tags(lyrics_path)
+        except Exception as exc:
+            app.logger.warning("检测歌词标签失败，已跳过标签标记 %s: %s", lyrics_path, exc)
+            has_duet = False
+            has_background = False
+
+        song_value = str(raw_data.get('song', '')).strip()
+        summary = {
+            'filename': file.name,
+            'title': meta.get('title', ''),
+            'artists': artists_list,
+            'lyricsPath': lyrics_path,
+            'translationPath': translation_path,
+            'romanPath': roman_path,
+            'metaLyrics': meta.get('lyrics', ''),
+            'song': song_value,
+            'albumImgSrc': meta.get('albumImgSrc', ''),
+            'backgroundImage': meta.get('Background-image', ''),
             'hasDuet': has_duet,
-            'hasBackgroundVocals': has_background
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+            'hasBackgroundVocals': has_background,
+            'hasAudio': has_valid_audio(song_value),
+            'mtime': file.stat().st_mtime
+        }
+        summaries.append(summary)
+
+    summaries.sort(key=lambda item: item.get('mtime', 0), reverse=True)
+    return jsonify({'status': 'success', 'songs': summaries})
 
 
 @app.route('/get_backups', methods=['POST'])

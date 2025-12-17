@@ -84,6 +84,245 @@
             justify-content: center;
         }
 
+        .list-status {
+            margin: 6px 14px;
+            color: #666;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            min-height: 24px;
+        }
+
+        .list-status .spinner {
+            width: 18px;
+            height: 18px;
+            border: 3px solid #ddd;
+            border-top-color: #4a90e2;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* From Uiverse.io by mobinkakei */
+        #wifiLoaderWrapper {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        #wifi-loader {
+            --background: #62abff;
+            --front-color: #4f29f0;
+            --back-color: #c3c8de;
+            --text-color: #414856;
+            width: 64px;
+            height: 64px;
+            border-radius: 50px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(3px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        #wifi-loader svg {
+            position: absolute;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #wifi-loader svg circle {
+            position: absolute;
+            fill: none;
+            stroke-width: 6px;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            transform: rotate(-100deg);
+            transform-origin: center;
+        }
+
+        #wifi-loader svg circle.back {
+            stroke: var(--back-color);
+        }
+
+        #wifi-loader svg circle.front {
+            stroke: var(--front-color);
+        }
+
+        #wifi-loader svg.circle-outer {
+            height: 86px;
+            width: 86px;
+        }
+
+        #wifi-loader svg.circle-outer circle {
+            stroke-dasharray: 62.75 188.25;
+        }
+
+        #wifi-loader svg.circle-outer circle.back {
+            animation: circle-outer135 1.8s ease infinite 0.3s;
+        }
+
+        #wifi-loader svg.circle-outer circle.front {
+            animation: circle-outer135 1.8s ease infinite 0.15s;
+        }
+
+        #wifi-loader svg.circle-middle {
+            height: 60px;
+            width: 60px;
+        }
+
+        #wifi-loader svg.circle-middle circle {
+            stroke-dasharray: 42.5 127.5;
+        }
+
+        #wifi-loader svg.circle-middle circle.back {
+            animation: circle-middle6123 1.8s ease infinite 0.25s;
+        }
+
+        #wifi-loader svg.circle-middle circle.front {
+            animation: circle-middle6123 1.8s ease infinite 0.1s;
+        }
+
+        #wifi-loader svg.circle-inner {
+            height: 34px;
+            width: 34px;
+        }
+
+        #wifi-loader svg.circle-inner circle {
+            stroke-dasharray: 22 66;
+        }
+
+        #wifi-loader svg.circle-inner circle.back {
+            animation: circle-inner162 1.8s ease infinite 0.2s;
+        }
+
+        #wifi-loader svg.circle-inner circle.front {
+            animation: circle-inner162 1.8s ease infinite 0.05s;
+        }
+
+        #wifi-loader .text {
+            position: absolute;
+            bottom: -40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            text-transform: lowercase;
+            font-weight: 500;
+            font-size: 14px;
+            letter-spacing: 0.2px;
+        }
+
+        #wifi-loader .text::before,
+        #wifi-loader .text::after {
+            content: attr(data-text);
+        }
+
+        #wifi-loader .text::before {
+            color: var(--text-color);
+        }
+
+        #wifi-loader .text::after {
+            color: var(--front-color);
+            animation: text-animation76 3.6s ease infinite;
+            position: absolute;
+            left: 0;
+        }
+
+        @keyframes circle-outer135 {
+            0% {
+                stroke-dashoffset: 25;
+            }
+
+            25% {
+                stroke-dashoffset: 0;
+            }
+
+            65% {
+                stroke-dashoffset: 301;
+            }
+
+            80% {
+                stroke-dashoffset: 276;
+            }
+
+            100% {
+                stroke-dashoffset: 276;
+            }
+        }
+
+        @keyframes circle-middle6123 {
+            0% {
+                stroke-dashoffset: 17;
+            }
+
+            25% {
+                stroke-dashoffset: 0;
+            }
+
+            65% {
+                stroke-dashoffset: 204;
+            }
+
+            80% {
+                stroke-dashoffset: 187;
+            }
+
+            100% {
+                stroke-dashoffset: 187;
+            }
+        }
+
+        @keyframes circle-inner162 {
+            0% {
+                stroke-dashoffset: 9;
+            }
+
+            25% {
+                stroke-dashoffset: 0;
+            }
+
+            65% {
+                stroke-dashoffset: 106;
+            }
+
+            80% {
+                stroke-dashoffset: 97;
+            }
+
+            100% {
+                stroke-dashoffset: 97;
+            }
+        }
+
+        @keyframes text-animation76 {
+            0% {
+                clip-path: inset(0 100% 0 0);
+            }
+
+            50% {
+                clip-path: inset(0);
+            }
+
+            100% {
+                clip-path: inset(0 0 0 100%);
+            }
+        }
+
         .json-item {
             background: var(--card-bg);
             border-radius: 30px;
@@ -290,12 +529,14 @@
             height: calc(100% - 60px);
             margin-top: 10px;
             font-family: 'Fira Code', monospace;
-            resize: vertical;
+            resize: none;
             border-radius: 8px;
             border: 2px solid var(--border-color);
             padding: 12px;
             background: var(--input-bg);
             color: var(--text-color);
+            position: relative;
+            overflow: hidden;
         }
 
         .editor-buttons {
@@ -465,6 +706,53 @@
             white-space: pre-wrap;
             font-family: 'Fira Code', monospace;
             min-height: 64px;
+        }
+
+        .lyrics-translation-wrap {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            flex: 1;
+            min-height: 0;
+            height: 100%;
+        }
+
+        .lyrics-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+            min-height: 0;
+            height: 100%;
+        }
+
+        @media (min-width: 960px) {
+            .lyrics-translation-wrap {
+                flex-direction: row;
+                align-items: flex-start;
+            }
+            .lyrics-translation-wrap .lyrics-panel {
+                flex: 1;
+                min-width: 0;
+            }
+        }
+
+        .lyrics-panel .lyrics-editor {
+            flex: 1;
+            min-height: 220px;
+            height: auto;
+        }
+
+        .lyrics-actions-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .lyrics-actions-row .lyrics-action-btn {
+            flex: 0 0 auto;
+            width: auto;
         }
 
         .create-hint {
@@ -902,14 +1190,14 @@
         }
 
         .lyrics-action-btn {
-            padding: 8px 16px;
+            padding: 8px 13px;
             border-radius: 6px;
             border: none;
             margin: 5px 0;
             transition: all 0.2s ease;
-            display: inline-flex;
+            /* display: inline-flex; */
             align-items: center;
-            gap: 8px;
+            /* gap: 8px; */
         }
 
         .path-update-btn {
@@ -1097,85 +1385,27 @@
         </div>
     </div>
 
-    <ul class="json-list" id="jsonList">
-        {% for file in json_files %}
-        <li class="json-item" data-mtime="{{ file.mtime }}">
-            <div class="json-item-header">
-                <div class="file-name">{{ file.filename.replace('.json', '') }} <button class="copy-btn" onclick="copyFileName(this)" title="复制文件名">📋</button></div>
-                <div class="song-tags" id="tags-{{ file.filename }}">
-                    {% set lyrics_value = file.data.meta.get('lyrics', '')|string %}
-                    {% set lyrics_check_path = '' %}
-                    {% if '::' in lyrics_value %}
-                    {% set lyrics_parts = lyrics_value.split('::') %}
-                    {% if lyrics_parts|length >= 4 and lyrics_parts[1] != '!' %}
-                    {% set lyrics_check_path = lyrics_parts[1] %}
-                    {% endif %}
-                    {% elif lyrics_value.startswith('http://') %}
-                    {% set lyrics_check_path = lyrics_value %}
-                    {% endif %}
-
-                    {% set raw_song_path = file.data.get('song', '')|string %}
-                    {% set trimmed_song_path = raw_song_path|trim %}
-                    {% set is_placeholder_song = '音乐.mp3' in trimmed_song_path %}
-                    {% if not trimmed_song_path or trimmed_song_path == '!' or is_placeholder_song %}
-                    <span class="song-tag no-audio-tag">无音源</span>
-                    {% endif %}
-                </div>
-                {% if lyrics_check_path %}
-                <script>
-                    // 使用 window.onload 或 DOMContentLoaded 事件来确保 DOM 已加载
-                    document.addEventListener('DOMContentLoaded', function () {
-                        checkLyrics('{{ lyrics_check_path }}', '{{ file.filename }}')
-                    });
-                </script>
-                {% endif %}
-            </div>
-            <div class="json-item-actions">
-                <div class="style-buttons">
-                <!--<button class="style-button am-style"
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fsam')">AM歌词样式</button>-->
-                <button class="style-button fs-style"
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fs')">全屏歌词样式</button>
-                <button class="style-button fslr-style"
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'fslr')">全屏对唱歌词样式</button>
-                <button class="style-button am-style"
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'amll')">AMLL-web</button>
-                <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', '亮起')">亮起</button>
-                <button class="action-button" onclick="openLyricsAnimate('{{ file.filename|e }}', 'Kok')">Kok</button>
-                <!-- <button class="style-button am-style"
-                    onclick="openFamyliamCloud('{{ file.filename|e }}', 'am')">visual-lyric歌词样式</button> -->
-                </div>
-                <div class="file-actions">
-                    {% if '::' in file.data.meta.lyrics %}
-                    {% set lyrics_parts = file.data.meta.lyrics.split('::') %}
-                    {% if lyrics_parts|length >= 4 %}
-                    <button class="action-button" 
-                        onclick="editLyrics('{{ lyrics_parts[1]|e }}', '{{ lyrics_parts[2]|e }}', 0, '{{ file.filename|e }}')">修改歌词</button>
-                    {% else %}
-                    <button class="action-button" 
-                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
-                    {% endif %}
-                    {% else %}
-                    <button class="action-button" 
-                        onclick="editLyrics('{{ file.data.meta.lyrics|e }}', '', 0, '{{ file.filename|e }}')">修改歌词</button>
-                    {% endif %}
-                    <button class="action-button" 
-                        onclick="editMusicPath('{{ file.data.song|e }}', '{{ file.filename|e }}')">修改音乐路径</button>
-                    <button class="action-button" 
-                        onclick="editImagePath('{{ file.data.meta.albumImgSrc|e }}', '{{ file.filename|e }}')">修改专辑图路径</button>
-                    <button class="action-button" onclick="exportStatic('{{ file.filename|e }}')">导出分享</button>
-                    <button class="action-button" 
-                        onclick="showRenameModal('{{ file.filename|e }}', '{{ file.data.meta.title|e }}', '{{ file.data.meta.artists|join(',')|e }}')">重命名</button>
-                    <button class="action-button"
-                        onclick="if(confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')){deleteJson('{{ file.filename|e }}')}">删除歌曲</button>
-                </div>
-            </div>
-            <div class="file-preview" id="preview-{{ file.filename }}">
-                <div class="preview-content"></div>
-            </div>
-        </li>
-        {% endfor %}
-    </ul>
+    <div id="jsonListStatus" class="list-status"></div>
+    <div id="wifiLoaderWrapper">
+        <!-- From Uiverse.io by mobinkakei -->
+        <div id="wifi-loader">
+            <svg class="circle-outer" viewBox="0 0 86 86">
+                <circle class="back" cx="43" cy="43" r="40"></circle>
+                <circle class="front" cx="43" cy="43" r="40"></circle>
+                <circle class="new" cx="43" cy="43" r="40"></circle>
+            </svg>
+            <svg class="circle-middle" viewBox="0 0 60 60">
+                <circle class="back" cx="30" cy="30" r="27"></circle>
+                <circle class="front" cx="30" cy="30" r="27"></circle>
+            </svg>
+            <svg class="circle-inner" viewBox="0 0 34 34">
+                <circle class="back" cx="17" cy="17" r="14"></circle>
+                <circle class="front" cx="17" cy="17" r="14"></circle>
+            </svg>
+            <div class="text" data-text="Loading"></div>
+        </div>
+    </div>
+    <ul class="json-list" id="jsonList"></ul>
 
     <div id="lyricsModal" class="modal">
         <div class="modal-content">
@@ -1186,10 +1416,9 @@
                     <button class="lyrics-action-btn close-btn" onclick="closeLyricsModal()">🚪 关闭</button>
                 </div>
             </div>
-            <div style="display: flex; flex-direction: column;">
-                <div>
+            <div class="lyrics-translation-wrap">
+                <div class="lyrics-panel">
                     <h3>歌词</h3>
-                    <div id="fontFamilyNotice" style="margin: 4px 0 8px; color: #666; display: none;"></div>
                     <div>
                         <label>歌词文件路径：</label>
                         <input type="text" id="lyricsPath" class="file-path-input">
@@ -1219,12 +1448,14 @@
                             </label>
                         </div>
                     </div>
-                    <textarea id="lyricsEditor" class="lyrics-editor"></textarea>
-                    <button class="lyrics-action-btn path-update-btn" onclick="openQuickEdit()">✂️ 快速编辑歌词</button>
-                    <button class="lyrics-action-btn save-btn" onclick="saveLyrics(0)">💾 保存歌词</button>
+                    <div id="lyricsEditor" class="lyrics-editor"></div>
+                    <div class="lyrics-actions-row">
+                        <button class="lyrics-action-btn path-update-btn" onclick="openQuickEdit()">✂️ 快速编辑歌词</button>
+                        <button class="lyrics-action-btn save-btn" onclick="saveLyrics(0)">💾 保存歌词</button>
+                    </div>
                 </div>
 
-                <div>
+                <div class="lyrics-panel">
                     <h3>翻译</h3>
                     <div>
                         <label>翻译文件路径：</label>
@@ -1261,12 +1492,13 @@
                             <a href="#" class="btn-shine">正在翻译 · 请求思考阶段</a>
                         </div>
                     </div>
-                    <textarea id="translationEditor" class="lyrics-editor"></textarea>
-                    <button class="lyrics-action-btn save-btn" onclick="saveLyrics(1)">💾 保存翻译</button>
+                    <div id="translationEditor" class="lyrics-editor"></div>
+                    <div class="lyrics-actions-row">
+                        <button class="lyrics-action-btn save-btn" onclick="saveLyrics(1)">💾 保存翻译</button>
+                    </div>
                 </div>
 
                 <div class="editor-buttons">
-                    <button class="lyrics-action-btn close-btn" onclick="closeLyricsModal()">🚪 关闭</button>
                 </div>
             </div>
         </div>
@@ -1939,7 +2171,9 @@
         const searchBox = document.getElementById('searchBox')
         const fuzzySearchToggle = document.getElementById('fuzzySearchToggle')
         const jsonList = document.getElementById('jsonList')
-        const allJsonItems = Array.from(jsonList.getElementsByTagName('li'))
+        const jsonListStatus = document.getElementById('jsonListStatus')
+        const songSummaryCache = new Map()
+        let allJsonItems = []
 
         function getSortComparator() {
             return (a, b) => {
@@ -1967,6 +2201,333 @@
             return Array.from(new Set(keywords))
         }
 
+        function setListStatus(message, isError = false, loading = false) {
+            if (!jsonListStatus) return
+            if (!message) {
+                jsonListStatus.style.display = 'none'
+                jsonListStatus.innerHTML = ''
+                return
+            }
+            jsonListStatus.style.display = 'flex'
+            jsonListStatus.style.color = isError ? '#d9534f' : '#666'
+            if (loading) {
+                jsonListStatus.innerHTML = `<span class="spinner"></span><span>${message}</span>`
+            } else {
+                jsonListStatus.textContent = message
+            }
+        }
+
+        function toggleLoader(show, text = 'Loading') {
+            const wrapper = document.getElementById('wifiLoaderWrapper')
+            const textEl = document.querySelector('#wifi-loader .text')
+            if (!wrapper) return
+            if (textEl && text) {
+                textEl.setAttribute('data-text', text)
+            }
+            wrapper.style.display = show ? 'flex' : 'none'
+        }
+
+        let monacoLoaderPromise = null
+        let lyricsMonacoEditor = null
+        let translationMonacoEditor = null
+        let pendingLyricsText = ''
+        let pendingTranslationText = ''
+        let monacoTheme = 'vs'
+
+        function applyMonacoTheme() {
+            const target = document.body.classList.contains('dark-mode') ? 'vs-dark' : 'vs'
+            monacoTheme = target
+            loadMonaco().then(monaco => {
+                if (monaco && monaco.editor) {
+                    monaco.editor.setTheme(target)
+                }
+            }).catch(() => { /* ignore */ })
+        }
+
+        function loadMonaco() {
+            if (monacoLoaderPromise) return monacoLoaderPromise
+            monacoLoaderPromise = new Promise((resolve, reject) => {
+                if (window.monaco) {
+                    resolve(window.monaco)
+                    return
+                }
+                const script = document.createElement('script')
+                script.src = '/monaco/vs/loader.js'
+                script.onload = () => {
+                    if (!window.require) {
+                        reject(new Error('Monaco loader 未找到'))
+                        return
+                    }
+                    window.require.config({ paths: { 'vs': '/monaco/vs' } })
+                    window.require(['vs/editor/editor.main'], () => resolve(window.monaco))
+                }
+                script.onerror = () => reject(new Error('加载 Monaco 失败'))
+                document.body.appendChild(script)
+            })
+            return monacoLoaderPromise
+        }
+
+        async function ensureMonacoEditors() {
+            const monaco = await loadMonaco()
+            if (!monaco) return
+            if (!lyricsMonacoEditor) {
+                lyricsMonacoEditor = monaco.editor.create(document.getElementById('lyricsEditor'), {
+                    value: pendingLyricsText,
+                    language: 'plaintext',
+                    theme: monacoTheme,
+                    automaticLayout: true,
+                    minimap: { enabled: false }
+                })
+            }
+            if (!translationMonacoEditor) {
+                translationMonacoEditor = monaco.editor.create(document.getElementById('translationEditor'), {
+                    value: pendingTranslationText,
+                    language: 'plaintext',
+                    theme: monacoTheme,
+                    automaticLayout: true,
+                    minimap: { enabled: false }
+                })
+            }
+            bindEditorValueProxy()
+            if (monaco && monaco.editor) {
+                monaco.editor.setTheme(monacoTheme)
+            }
+        }
+
+        function getLyricsContent() {
+            if (lyricsMonacoEditor) return lyricsMonacoEditor.getValue()
+            const el = document.getElementById('lyricsEditor')
+            return el && 'value' in el ? el.value : (pendingLyricsText || '')
+        }
+
+        function setLyricsContent(value) {
+            pendingLyricsText = value || ''
+            if (lyricsMonacoEditor) {
+                lyricsMonacoEditor.setValue(pendingLyricsText)
+            } else {
+                const el = document.getElementById('lyricsEditor')
+                if (el && 'value' in el) {
+                    el.value = pendingLyricsText
+                }
+            }
+        }
+
+        function getTranslationContent() {
+            if (translationMonacoEditor) return translationMonacoEditor.getValue()
+            const el = document.getElementById('translationEditor')
+            return el && 'value' in el ? el.value : (pendingTranslationText || '')
+        }
+
+        function setTranslationContent(value) {
+            pendingTranslationText = value || ''
+            if (translationMonacoEditor) {
+                translationMonacoEditor.setValue(pendingTranslationText)
+            } else {
+                const el = document.getElementById('translationEditor')
+                if (el && 'value' in el) {
+                    el.value = pendingTranslationText
+                }
+            }
+        }
+
+        function bindEditorValueProxy() {
+            const lyricsEl = document.getElementById('lyricsEditor')
+            if (lyricsEl && !lyricsEl.__valueProxy) {
+                Object.defineProperty(lyricsEl, 'value', {
+                    get: () => getLyricsContent(),
+                    set: (v) => setLyricsContent(v)
+                })
+                lyricsEl.__valueProxy = true
+            }
+            const translationEl = document.getElementById('translationEditor')
+            if (translationEl && !translationEl.__valueProxy) {
+                Object.defineProperty(translationEl, 'value', {
+                    get: () => getTranslationContent(),
+                    set: (v) => setTranslationContent(v)
+                })
+                translationEl.__valueProxy = true
+            }
+        }
+
+        function createTag(text, className) {
+            const span = document.createElement('span')
+            span.className = className
+            span.textContent = text
+            return span
+        }
+
+        function buildSongTags(summary) {
+            const container = document.createElement('div')
+            container.className = 'song-tags'
+            container.id = `tags-${summary.filename}`
+            if (!summary.hasAudio) {
+                container.appendChild(createTag('无音源', 'song-tag no-audio-tag'))
+            }
+            if (summary.hasDuet) {
+                container.appendChild(createTag('包含对唱歌词', 'song-tag duet-tag'))
+            }
+            if (summary.hasBackgroundVocals) {
+                container.appendChild(createTag('包含背景歌词', 'song-tag background-vocals-tag'))
+            }
+            return container
+        }
+
+        function createSongItem(summary) {
+            const li = document.createElement('li')
+            li.className = 'json-item'
+            li.dataset.mtime = summary.mtime || 0
+
+            const header = document.createElement('div')
+            header.className = 'json-item-header'
+
+            const fileNameDiv = document.createElement('div')
+            fileNameDiv.className = 'file-name'
+            const displayName = summary.filename.replace(/\.json$/i, '')
+            fileNameDiv.textContent = `${displayName} `
+            const copyBtn = document.createElement('button')
+            copyBtn.className = 'copy-btn'
+            copyBtn.title = '复制文件名'
+            copyBtn.textContent = '📋'
+            copyBtn.addEventListener('click', () => copyFileName(copyBtn))
+            fileNameDiv.appendChild(copyBtn)
+
+            header.appendChild(fileNameDiv)
+            header.appendChild(buildSongTags(summary))
+            li.appendChild(header)
+
+            const actionsWrapper = document.createElement('div')
+            actionsWrapper.className = 'json-item-actions'
+
+            const styleButtons = document.createElement('div')
+            styleButtons.className = 'style-buttons'
+
+            const fsBtn = document.createElement('button')
+            fsBtn.className = 'style-button fs-style'
+            fsBtn.textContent = '全屏歌词样式'
+            fsBtn.addEventListener('click', () => openFamyliamCloud(summary.filename, 'fs'))
+
+            const fslrBtn = document.createElement('button')
+            fslrBtn.className = 'style-button fslr-style'
+            fslrBtn.textContent = '全屏对唱歌词样式'
+            fslrBtn.addEventListener('click', () => openFamyliamCloud(summary.filename, 'fslr'))
+
+            const amllBtn = document.createElement('button')
+            amllBtn.className = 'style-button am-style'
+            amllBtn.textContent = 'AMLL-web'
+            amllBtn.addEventListener('click', () => openFamyliamCloud(summary.filename, 'amll'))
+
+            const brightBtn = document.createElement('button')
+            brightBtn.className = 'action-button'
+            brightBtn.textContent = '亮起'
+            brightBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, '亮起'))
+
+            const kokBtn = document.createElement('button')
+            kokBtn.className = 'action-button'
+            kokBtn.textContent = 'Kok'
+            kokBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, 'Kok'))
+
+            styleButtons.appendChild(fsBtn)
+            styleButtons.appendChild(fslrBtn)
+            styleButtons.appendChild(amllBtn)
+            styleButtons.appendChild(brightBtn)
+            styleButtons.appendChild(kokBtn)
+
+            const fileActions = document.createElement('div')
+            fileActions.className = 'file-actions'
+
+            const editLyricsBtn = document.createElement('button')
+            editLyricsBtn.className = 'action-button'
+            editLyricsBtn.textContent = '修改歌词'
+            editLyricsBtn.addEventListener('click', () => {
+                editLyrics(summary.lyricsPath || '', summary.translationPath || '', 0, summary.filename)
+            })
+
+            const editMusicBtn = document.createElement('button')
+            editMusicBtn.className = 'action-button'
+            editMusicBtn.textContent = '修改音乐路径'
+            editMusicBtn.addEventListener('click', () => editMusicPath(summary.song || '', summary.filename))
+
+            const editImageBtn = document.createElement('button')
+            editImageBtn.className = 'action-button'
+            editImageBtn.textContent = '修改专辑图路径'
+            editImageBtn.addEventListener('click', () => editImagePath(summary.albumImgSrc || '', summary.filename))
+
+            const exportBtn = document.createElement('button')
+            exportBtn.className = 'action-button'
+            exportBtn.textContent = '导出分享'
+            exportBtn.addEventListener('click', () => exportStatic(summary.filename))
+
+            const renameBtn = document.createElement('button')
+            renameBtn.className = 'action-button'
+            renameBtn.textContent = '重命名'
+            const artistsString = Array.isArray(summary.artists) ? summary.artists.join(',') : ''
+            renameBtn.addEventListener('click', () => showRenameModal(summary.filename, summary.title || '', artistsString))
+
+            const deleteBtn = document.createElement('button')
+            deleteBtn.className = 'action-button'
+            deleteBtn.textContent = '删除歌曲'
+            deleteBtn.addEventListener('click', () => {
+                if (confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')) {
+                    deleteJson(summary.filename)
+                }
+            })
+
+            fileActions.appendChild(editLyricsBtn)
+            fileActions.appendChild(editMusicBtn)
+            fileActions.appendChild(editImageBtn)
+            fileActions.appendChild(exportBtn)
+            fileActions.appendChild(renameBtn)
+            fileActions.appendChild(deleteBtn)
+
+            actionsWrapper.appendChild(styleButtons)
+            actionsWrapper.appendChild(fileActions)
+
+            const preview = document.createElement('div')
+            preview.className = 'file-preview'
+            preview.id = `preview-${summary.filename}`
+            const previewContent = document.createElement('div')
+            previewContent.className = 'preview-content'
+            preview.appendChild(previewContent)
+
+            li.appendChild(actionsWrapper)
+            li.appendChild(preview)
+            return li
+        }
+
+        function renderSongList(summaries) {
+            const list = document.getElementById('jsonList')
+            songSummaryCache.clear()
+            list.innerHTML = ''
+            allJsonItems = []
+
+            summaries.forEach(summary => {
+                songSummaryCache.set(summary.filename, summary)
+                const item = createSongItem(summary)
+                allJsonItems.push(item)
+            })
+
+            applySearch()
+        }
+
+        async function loadSongSummaries() {
+            setListStatus('正在加载歌曲列表，请稍候...', false, true)
+            toggleLoader(true, 'Loading')
+            try {
+                const res = await fetch('/songs/summary')
+                const data = await res.json()
+                if (data.status !== 'success') {
+                    throw new Error(data.message || '加载失败')
+                }
+                renderSongList(data.songs || [])
+                setListStatus('')
+            } catch (error) {
+                console.error('加载歌曲摘要失败', error)
+                setListStatus(`加载失败：${error.message || error}`, true)
+            } finally {
+                toggleLoader(false)
+            }
+        }
+
         function buildSearchPool(item) {
             const fileName = item.querySelector('.file-name')?.textContent || ''
             const tagsText = item.querySelector('.song-tags')?.textContent || ''
@@ -1978,7 +2539,14 @@
             const isFuzzy = fuzzySearchToggle && fuzzySearchToggle.checked
             const keywords = isFuzzy ? parseFuzzyKeywords(rawText) : parseKeywords(rawText)
             const list = document.getElementById('jsonList')
-            const listItems = Array.from(allJsonItems)
+            const listItems = Array.from(allJsonItems || [])
+
+            if (listItems.length === 0) {
+                while (list.firstChild) {
+                    list.removeChild(list.firstChild)
+                }
+                return
+            }
 
             if (keywords.length === 0) {
                 listItems.sort(getSortComparator())
@@ -2065,7 +2633,7 @@
 
         function sortList() {
             const list = document.getElementById('jsonList')
-            const items = Array.from(allJsonItems)
+            const items = Array.from(allJsonItems || [])
             const comparator = getSortComparator()
 
             items.sort(comparator)
@@ -2073,17 +2641,20 @@
             while (list.firstChild) {
                 list.removeChild(list.firstChild)
             }
-            items.forEach(item => {
-                item.style.display = ''
-                list.appendChild(item)
-            })
+            if (items.length > 0) {
+                items.forEach(item => {
+                    item.style.display = ''
+                    list.appendChild(item)
+                })
+            }
         }
 
         // 初始化时更新按钮状态
-        window.onload = function () {
+        window.addEventListener('DOMContentLoaded', () => {
             updateSortButtons()
-            applySearch()
-        }
+            bindEditorValueProxy()
+            loadSongSummaries()
+        })
 
         function viewFile(type, path) {
             // 实现文件预览逻辑
@@ -2157,11 +2728,9 @@
             }
         }
 
-        function editLyrics(lyricsPath, translationPath, index, jsonFile) {
+        async function editLyrics(lyricsPath, translationPath, index, jsonFile) {
             currentJsonFile = jsonFile
             const modal = document.getElementById('lyricsModal')
-            const lyricsEditor = document.getElementById('lyricsEditor')
-            const translationEditor = document.getElementById('translationEditor')
             const lyricsPathInput = document.getElementById('lyricsPath')
             const translationPathInput = document.getElementById('translationPath')
             
@@ -2177,6 +2746,7 @@
             }
 
             updateFontFamilyNotice('')
+            await ensureMonacoEditors()
 
             // 加载歌词内容
             fetch('/get_lyrics', {
@@ -2187,7 +2757,7 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        lyricsEditor.value = data.content
+                        setLyricsContent(data.content)
                         updateFontFamilyNotice(data.content)
                     }
                 })
@@ -2202,11 +2772,11 @@
                     .then(response => response.json())
                     .then(data => {
                         if (data.status === 'success') {
-                            translationEditor.value = data.content
+                            setTranslationContent(data.content)
                         }
                     })
             } else {
-                translationEditor.value = ''
+                setTranslationContent('')
             }
 
             modal.style.display = 'block'
@@ -2227,8 +2797,8 @@
                 document.getElementById('lyricsPath').value :
                 document.getElementById('translationPath').value
             const content = index === 0 ?
-                document.getElementById('lyricsEditor').value :
-                document.getElementById('translationEditor').value
+                getLyricsContent() :
+                getTranslationContent()
 
             // 验证路径
             if (!path || path === '.' || path === './') {
@@ -3046,6 +3616,7 @@
             const isDark = document.body.classList.contains('dark-mode')
             localStorage.setItem('darkMode', isDark)
             document.getElementById('themeToggle').textContent = isDark ? '🌞 浅色模式' : '🌒 深色模式'
+            applyMonacoTheme()
         }
 
         // 初始化主题
@@ -3055,6 +3626,7 @@
                 document.body.classList.add('dark-mode')
                 document.getElementById('themeToggle').textContent = '🌞 浅色模式'
             }
+            applyMonacoTheme()
         }
         initTheme()
 
@@ -4319,6 +4891,12 @@
                 let systemPrompt = localStorage.getItem('aiSystemPrompt') || '';
                 const compatModeStorage = localStorage.getItem('aiCompatMode');
                 const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
+                const thinkingEnabledStorage = localStorage.getItem('aiThinkingEnabled');
+                const thinkingEnabled = thinkingEnabledStorage ? thinkingEnabledStorage === 'true' : true;
+                const thinkingPromptStored = localStorage.getItem('aiThinkingPrompt') || '';
+                const thinkingPrompt = thinkingPromptStored.trim().length > 0
+                    ? thinkingPromptStored.trim()
+                    : '先用你的母语对整首歌进行深入理解，归纳情节、情绪、人物和隐喻，再据此翻译歌词，保持逐行对应。';
 
                 let finalPrompt = '';
                 const promptSections = [];
@@ -4326,8 +4904,14 @@
                     if (systemPrompt && systemPrompt.trim()) {
                         promptSections.push(systemPrompt.trim());
                     }
+                    if (thinkingEnabled) {
+                        promptSections.push(thinkingPrompt);
+                    }
                     if (thinkingBlock) {
                         promptSections.push(thinkingBlock);
+                    }
+                    if (thinkingEnabled) {
+                        promptSections.push('请先完成思考阶段，再进行逐行翻译。');
                     }
                     promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
                     finalPrompt = promptSections.filter(Boolean).join('\n\n');
@@ -4335,8 +4919,14 @@
                     if (systemPrompt && systemPrompt.trim()) {
                         promptSections.push(systemPrompt.trim());
                     }
+                    if (thinkingEnabled) {
+                        promptSections.push(thinkingPrompt);
+                    }
                     if (thinkingBlock) {
                         promptSections.push(thinkingBlock);
+                    }
+                    if (thinkingEnabled) {
+                        promptSections.push('请先完成思考阶段，再进行逐行翻译。');
                     }
                     promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
                     finalPrompt = promptSections.filter(Boolean).join('\n\n');
