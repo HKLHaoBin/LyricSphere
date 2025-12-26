@@ -2563,12 +2563,12 @@ def upload_image():
             return jsonify({'status': 'error', 'message': '无效的文件名'})
 
         # 验证文件类型
-        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.webm', '.ogg', '.m4v', '.mov'}
         file_ext = Path(file.filename).suffix.lower()
         if file_ext not in allowed_extensions:
             return jsonify({
                 'status': 'error',
-                'message': '只支持 JPG/PNG/GIF/WEBP 格式'
+                'message': '只支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV 格式'
             })
 
         # 清理文件名，保留空格与安全字符

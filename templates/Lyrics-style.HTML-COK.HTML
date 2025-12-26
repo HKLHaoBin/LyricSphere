@@ -673,6 +673,8 @@
             let forceCenterAlign = false; // 新增
             let translationData = [];
             let backgroundCleanup = null;
+            let backgroundVideo = null;
+            const VIDEO_SYNC_DRIFT = 0.25;
 
             const AMLL_MODULE_URL = "{{ url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
@@ -887,7 +889,59 @@
                     } catch (e) { /* 忽略清理异常 */ }
                     backgroundCleanup = null;
                 }
+                clearBackgroundVideo();
                 document.querySelectorAll('.background-container').forEach((el) => el.remove());
+            }
+
+            function clearBackgroundVideo() {
+                if (!backgroundVideo) {
+                    return;
+                }
+                try {
+                    backgroundVideo.pause();
+                } catch (e) { /* 忽略暂停异常 */ }
+                backgroundVideo = null;
+            }
+
+            function setBackgroundVideo(video) {
+                backgroundVideo = video;
+                if (!backgroundVideo) {
+                    return;
+                }
+                backgroundVideo.muted = true;
+                backgroundVideo.playsInline = true;
+                backgroundVideo.loop = true;
+                syncBackgroundVideo(true);
+                if (audioPlayer.paused) {
+                    backgroundVideo.pause();
+                } else {
+                    backgroundVideo.play().catch(() => {});
+                }
+            }
+
+            function syncBackgroundVideo(force = false) {
+                if (!backgroundVideo) {
+                    return;
+                }
+                const audioTime = Number.isFinite(audioPlayer.currentTime) ? audioPlayer.currentTime : 0;
+                const duration = Number.isFinite(backgroundVideo.duration) ? backgroundVideo.duration : 0;
+                if (duration > 0) {
+                    let target = audioTime;
+                    if (target > duration) {
+                        target = target % duration;
+                    }
+                    const delta = Math.abs(backgroundVideo.currentTime - target);
+                    if (force || delta > VIDEO_SYNC_DRIFT) {
+                        try {
+                            backgroundVideo.currentTime = target;
+                        } catch (e) { /* 忽略同步异常 */ }
+                    }
+                }
+                if (!audioPlayer.paused && backgroundVideo.paused) {
+                    backgroundVideo.play().catch(() => {});
+                } else if (audioPlayer.paused && !backgroundVideo.paused) {
+                    backgroundVideo.pause();
+                }
             }
 
             function resolveMediaUrl(rawPath) {
@@ -1038,7 +1092,7 @@
                     };
 
                     const extension = (url.split('.').pop() || '').toLowerCase();
-                    const isVideo = ['mp4', 'webm', 'ogg'].includes(extension);
+                    const isVideo = ['mp4', 'webm', 'ogg', 'm4v', 'mov'].includes(extension);
 
                     if (isVideo) {
                         const video = document.createElement('video');
@@ -1047,8 +1101,12 @@
                         video.loop = true;
                         video.autoplay = true;
                         video.playsInline = true;
+                        video.addEventListener('loadedmetadata', () => {
+                            setBackgroundVideo(video);
+                        }, { once: true });
                         video.addEventListener('loadeddata', () => {
                             backgroundCleanup = () => {
+                                clearBackgroundVideo();
                                 video.pause();
                                 video.removeAttribute('src');
                                 video.load();
@@ -1060,6 +1118,7 @@
                         video.addEventListener('error', handleFailure, { once: true });
                         container.appendChild(video);
                     } else {
+                        clearBackgroundVideo();
                         const img = document.createElement('img');
                         img.src = url;
                         img.addEventListener('load', () => {
@@ -1803,6 +1862,56 @@
             });
         }
 
+        function splitMultiWordSyllables(lines, minDurationSec = 1, predicate = () => true) {
+            if (!Array.isArray(lines)) return [];
+
+            return lines.map((line) => {
+                if (!predicate(line)) return line;
+                if (!line || !Array.isArray(line.syllables) || line.syllables.length !== 1) {
+                    return line;
+                }
+                const syllable = line.syllables[0];
+                if (!syllable) return line;
+                const rawText = syllable.text || '';
+                if (!/\s/.test(rawText)) return line;
+
+                const duration = Number.parseFloat(syllable.duration);
+                const start = Number.parseFloat(syllable.startTime);
+                if (!Number.isFinite(duration) || !Number.isFinite(start) || duration <= minDurationSec) {
+                    return line;
+                }
+
+                const tokens = rawText.match(/\S+\s*/g);
+                if (!tokens || tokens.length <= 1) return line;
+
+                const weights = tokens.map((token) => {
+                    const weight = token.replace(/\s+/g, '').length;
+                    return weight > 0 ? weight : 1;
+                });
+                const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+                if (totalWeight <= 0) return line;
+
+                let cursor = start;
+                const newSyllables = tokens.map((token, idx) => {
+                    const partDuration = duration * (weights[idx] / totalWeight);
+                    const next = {
+                        ...syllable,
+                        text: token,
+                        startTime: cursor,
+                        duration: partDuration
+                    };
+                    cursor += partDuration;
+                    return next;
+                });
+
+                const last = newSyllables[newSyllables.length - 1];
+                const end = start + duration;
+                last.duration = Math.max(0, end - Number.parseFloat(last.startTime));
+
+                return { ...line, syllables: newSyllables, line: tokens.join('') };
+            });
+        }
+
         function isLineUsingSpecialFont(line) {
             if (!line) return false;
             const hasLineFont = Boolean(line.style && line.style.fontFamily);
@@ -1937,6 +2046,7 @@
                         1,
                         (line) => !isLineUsingSpecialFont(line)
                     );
+                    lyricsData = splitMultiWordSyllables(lyricsData, 1);
                     // 对特殊字体行：按单词合并音节（空格/标点分词），避免跨词遮挡
                     lyricsData = mergeSpecialFontWords(lyricsData);
 
@@ -2512,9 +2622,19 @@
                 }
             }
 
-            audioPlayer.addEventListener('timeupdate', updateLyricsDisplay);
+            audioPlayer.addEventListener('timeupdate', () => {
+                syncBackgroundVideo(false);
+                updateLyricsDisplay();
+            });
+            audioPlayer.addEventListener('seeking', () => {
+                syncBackgroundVideo(true);
+            });
+            audioPlayer.addEventListener('seeked', () => {
+                syncBackgroundVideo(true);
+            });
             // 监听暂停/播放事件，切换展示模式
             audioPlayer.addEventListener('pause', () => {
+                syncBackgroundVideo(true);
                 showAllLinesWhenPaused = true;
                 autoScaleLocked = true;
                 if (autoScaleRaf) {
@@ -2539,6 +2659,7 @@
                 }
             });
             audioPlayer.addEventListener('play', () => {
+                syncBackgroundVideo(true);
                 showAllLinesWhenPaused = false;
                 autoScaleLocked = false;
                 playerContainer.classList.remove('paused-mode');

@@ -399,6 +399,201 @@
                 return Math.min(Math.max(value, min), max);
             }
 
+            const LYRIC_SCALE_MIN = 0.01;
+            const LYRIC_SCALE_DURATION_MS = 360;
+            const AUTO_SCALE_SAFETY_RATIO = 0.97;
+            const AUTO_SCALE_SAFETY_PADDING = 48;
+            const AUTO_SCALE_EPS = 0.01;
+            let userLyricScale = parseFloat(fontSlider?.value || '1') || 1;
+            let appliedLyricScale = userLyricScale;
+            let autoScaleRaf = null;
+            let lyricScaleResyncTimer = null;
+            const lineMetricCache = { metrics: null };
+
+            function refreshDisplayedLineAnimations() {
+                requestAnimationFrame(() => {
+                    displayedLines.forEach((lineInfo, index) => {
+                        const lineData = lyricsData[index];
+                        if (lineInfo?.element && lineData) {
+                            prepareSyllableAnimations(index, lineInfo.element, lineInfo, lineData);
+                        }
+                    });
+                });
+            }
+
+            function requestLyricAnimationResync() {
+                refreshDisplayedLineAnimations();
+                if (lyricScaleResyncTimer) {
+                    clearTimeout(lyricScaleResyncTimer);
+                }
+                lyricScaleResyncTimer = setTimeout(() => {
+                    lyricScaleResyncTimer = null;
+                    refreshDisplayedLineAnimations();
+                }, LYRIC_SCALE_DURATION_MS + 80);
+            }
+
+            function setLyricScale(scale) {
+                const upperBound = userLyricScale;
+                const clamped = clamp(scale, LYRIC_SCALE_MIN, upperBound);
+                appliedLyricScale = clamped;
+                if (playerContainer) {
+                    playerContainer.style.setProperty('--lyric-scale', clamped);
+                }
+                requestLyricAnimationResync();
+                console.log('[auto-scale] apply', {
+                    inputScale: scale,
+                    clampedScale: clamped,
+                    userScale: userLyricScale,
+                    minScale: LYRIC_SCALE_MIN
+                });
+            }
+
+            function measureLineMetrics() {
+                const cached = lineMetricCache.metrics;
+                if (cached) return cached;
+
+                const host = document.createElement('div');
+                host.style.position = 'absolute';
+                host.style.left = '-9999px';
+                host.style.top = '0';
+                host.style.width = '1000px';
+                host.style.pointerEvents = 'none';
+                host.style.visibility = 'hidden';
+                host.style.setProperty('--lyric-scale', '1');
+                document.body.appendChild(host);
+
+                const buildLine = (isSmall, withTranslation) => {
+                    const line = document.createElement('div');
+                    line.className = 'lyric-line center-aligned';
+                    if (isSmall) line.classList.add('small-font');
+                    const word = document.createElement('span');
+                    word.className = 'word-wrapper';
+                    const syllable = document.createElement('span');
+                    syllable.className = 'syllable';
+                    syllable.textContent = 'Sample words here';
+                    word.appendChild(syllable);
+                    line.appendChild(word);
+                    if (withTranslation) {
+                        const trans = document.createElement('div');
+                        trans.className = 'translation-line center-aligned';
+                        trans.style.fontSize = isSmall ? '0.8em' : '0.5em';
+                        trans.style.color = '#ffffff';
+                        trans.style.fontWeight = 'normal';
+                        trans.style.lineHeight = '1.2';
+                        trans.style.marginTop = '0.1em';
+                        trans.style.width = '100%';
+                        trans.style.paddingBottom = '0.2em';
+                        trans.textContent = 'translation';
+                        line.appendChild(trans);
+                    }
+                    return line;
+                };
+
+                const lines = [
+                    { key: 'normal', el: buildLine(false, false) },
+                    { key: 'small', el: buildLine(true, false) },
+                    { key: 'normalTrans', el: buildLine(false, true) },
+                    { key: 'smallTrans', el: buildLine(true, true) }
+                ];
+
+                lines.forEach(({ el }) => host.appendChild(el));
+
+                const metrics = {};
+                lines.forEach(({ key, el }) => {
+                    metrics[key] = el.offsetHeight || el.getBoundingClientRect().height || 0;
+                });
+
+                host.remove();
+                lineMetricCache.metrics = metrics;
+                return metrics;
+            }
+
+            function computeAutoScaleTarget() {
+                const viewportHeight = window.innerHeight
+                    || document.documentElement.clientHeight
+                    || (playerContainer ? playerContainer.clientHeight : 0)
+                    || 0;
+                if (!viewportHeight) {
+                    console.log('[auto-scale] viewport height unavailable');
+                    return clamp(userLyricScale, LYRIC_SCALE_MIN, userLyricScale);
+                }
+                const availableHeight = Math.max(1, viewportHeight - AUTO_SCALE_SAFETY_PADDING);
+
+                const metrics = measureLineMetrics();
+                const lines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || []);
+                if (lines.length === 0) {
+                    console.log('[auto-scale] no visible lines yet');
+                    return clamp(userLyricScale, LYRIC_SCALE_MIN, userLyricScale);
+                }
+
+                let normal = 0;
+                let small = 0;
+                let normalTrans = 0;
+                let smallTrans = 0;
+                lines.forEach((line) => {
+                    const isSmall = line.classList.contains('small-font');
+                    const hasTrans = !!line.querySelector('.translation-line');
+                    if (isSmall) {
+                        if (hasTrans) {
+                            smallTrans += 1;
+                        } else {
+                            small += 1;
+                        }
+                    } else {
+                        if (hasTrans) {
+                            normalTrans += 1;
+                        } else {
+                            normal += 1;
+                        }
+                    }
+                });
+
+                const baseSum =
+                    normal * (metrics.normal || 0) +
+                    small * (metrics.small || 0) +
+                    normalTrans * (metrics.normalTrans || 0) +
+                    smallTrans * (metrics.smallTrans || 0);
+
+                if (baseSum <= 0) {
+                    console.log('[auto-scale] baseSum is zero', { baseSum });
+                    return clamp(userLyricScale, LYRIC_SCALE_MIN, userLyricScale);
+                }
+
+                const baselineTotal = baseSum * userLyricScale;
+                const ratio = availableHeight / baselineTotal;
+                const adjustedRatio = ratio * AUTO_SCALE_SAFETY_RATIO;
+                const target = clamp(
+                    userLyricScale * adjustedRatio,
+                    LYRIC_SCALE_MIN,
+                    userLyricScale
+                );
+                console.log('[auto-scale] compute', {
+                    viewportHeight,
+                    availableHeight,
+                    baseSum,
+                    userScale: userLyricScale,
+                    baselineTotal,
+                    ratio,
+                    adjustedRatio,
+                    target
+                });
+                if (Math.abs(target - appliedLyricScale) < AUTO_SCALE_EPS) {
+                    return appliedLyricScale;
+                }
+                return target;
+            }
+
+            function scheduleAutoScale() {
+                if (autoScaleRaf) return;
+                autoScaleRaf = requestAnimationFrame(() => {
+                    autoScaleRaf = null;
+                    const targetScale = computeAutoScaleTarget();
+                    if (Math.abs(targetScale - appliedLyricScale) > AUTO_SCALE_EPS) {
+                        setLyricScale(targetScale);
+                    }
+                });
+            }
+
             function easeOutCubic(t) {
                 return 1 - Math.pow(1 - t, 3);
             }
@@ -1847,6 +2042,7 @@
 
                 const lineInfo = { element: incomingLine };
                 displayedLines.set(lineIndex, lineInfo);
+                scheduleAutoScale();
 
                 const animation = safeAnimate(incomingLine, [
                     { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
@@ -1949,6 +2145,7 @@
                     clearMoveTransition(placeholderEl);
                     placeholderEl.remove();
                     placeholderLines.delete(lineIndex);
+                    scheduleAutoScale();
 
                     // FLIP - LAST: 读取新位置
                     const newPositions = new Map();
@@ -2156,9 +2353,11 @@
             
             // 字体大小调整滑块逻辑
             fontSlider.addEventListener('input', (e) => {
-                playerContainer.style.setProperty('--lyric-scale', e.target.value);
+                const nextScale = parseFloat(e.target.value) || 1;
+                userLyricScale = nextScale;
+                setLyricScale(computeAutoScaleTarget());
                 // 将设置存入 localStorage
-                localStorage.setItem('lyricScale', e.target.value);
+                localStorage.setItem('lyricScale', nextScale);
                 requestAnimationFrame(() => {
                     displayedLines.forEach((lineInfo, index) => {
                         const lineData = lyricsData[index];
@@ -2167,13 +2366,18 @@
                         }
                     });
                 });
+                scheduleAutoScale();
             });
 
             // 页面加载时应用缓存的字体大小
             const savedScale = localStorage.getItem('lyricScale');
             if (savedScale) {
-                fontSlider.value = savedScale;
-                playerContainer.style.setProperty('--lyric-scale', savedScale);
+                const parsedScale = parseFloat(savedScale);
+                if (!Number.isNaN(parsedScale)) {
+                    userLyricScale = parsedScale;
+                    fontSlider.value = savedScale;
+                    setLyricScale(computeAutoScaleTarget());
+                }
                 requestAnimationFrame(() => {
                     displayedLines.forEach((lineInfo, index) => {
                         const lineData = lyricsData[index];
@@ -2183,6 +2387,10 @@
                     });
                 });
             }
+
+            setLyricScale(userLyricScale);
+            window.addEventListener('resize', scheduleAutoScale);
+            scheduleAutoScale();
 
             // Safari animate 兼容降级
             function safeAnimate(element, keyframes, options) {

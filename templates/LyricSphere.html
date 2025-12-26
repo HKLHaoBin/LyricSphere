@@ -359,6 +359,21 @@
             gap: 10px;
         }
 
+        .file-name.has-cover {
+            justify-content: space-between;
+        }
+
+        .file-name-text {
+            flex: 0 1 auto;
+        }
+
+        .album-cover {
+            height: 120px;
+            width: auto;
+            object-fit: contain;
+            border-radius: 6px;
+        }
+
         .file-name::before {
             content: '🎵';
             font-size: 1.2em;
@@ -755,6 +770,24 @@
             width: auto;
         }
 
+        .amll-icon-btn {
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 50px;
+            height: 50px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+        }
+
+        .amll-icon-btn svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
         .create-hint {
             font-size: 0.88rem;
             color: #666;
@@ -852,6 +885,27 @@
         .status-message.status-success {
             background: var(--status-bg-success);
             color: var(--status-color-success);
+        }
+
+        .soft-notice {
+            position: fixed;
+            right: 20px;
+            bottom: 24px;
+            background: rgba(25, 25, 25, 0.86);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 999px;
+            font-size: 0.95rem;
+            opacity: 0;
+            transform: translateY(6px);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .soft-notice.is-visible {
+            opacity: 1;
+            transform: translateY(0);
         }
 
         #translationStatusMessage {
@@ -1451,6 +1505,9 @@
                     <div id="lyricsEditor" class="lyrics-editor"></div>
                     <div class="lyrics-actions-row">
                         <button class="lyrics-action-btn path-update-btn" onclick="openQuickEdit()">✂️ 快速编辑歌词</button>
+                        <button class="amll-icon-btn" onclick="copyTTMLForAMLL()" title="复制TTML到剪贴板">
+                            <svg width="75" height="76" viewBox="0 0 75 76" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" overflow="hidden"><g transform="translate(-475 -117)"><path d="M67.0548 83.5726C67.0548 79.9014 67.0548 78.0658 67.9562 77.1493 68.4032 76.6952 68.9781 76.3877 69.6041 76.2678 70.8664 76.026 72.3945 77.0445 75.4507 79.0808L83.8623 84.6863C86.387 86.3685 87.6486 87.2096 87.9644 88.3253 88.1219 88.8829 88.1219 89.4733 87.9644 90.0308 87.6486 91.1466 86.387 91.9877 83.8623 93.6699L75.4507 99.2753C72.3945 101.312 70.8664 102.33 69.6041 102.088 68.9781 101.968 68.4032 101.661 67.9562 101.206 67.0548 100.29 67.0548 98.4555 67.0548 94.7836L67.0548 83.5726Z" fill="#FFFFFF" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/><path d="M67.0548 65C67.0548 63.449 68.3121 62.1918 69.863 62.1918L108.493 62.1918C110.044 62.1918 111.301 63.449 111.301 65L111.301 65C111.301 66.551 110.044 67.8083 108.493 67.8083L69.863 67.8082C68.3121 67.8082 67.0548 66.5509 67.0548 65Z" fill="#4FEBB0" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/><path d="M92.6712 78.1849C92.6712 76.6151 93.9438 75.3425 95.5137 75.3425L125.445 75.3425C127.015 75.3425 128.288 76.6151 128.288 78.1849L128.288 78.1849C128.288 79.7548 127.015 81.0274 125.445 81.0274L95.5137 81.0274C93.9438 81.0274 92.6712 79.7548 92.6712 78.1849Z" fill="#4FEBB0" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/><path d="M96.3699 91.3699C96.3699 89.8192 97.6274 88.5616 99.1781 88.5616L116.301 88.5616C117.852 88.5616 119.11 89.8192 119.11 91.3699L119.11 91.3699C119.11 92.9205 117.852 94.1781 116.301 94.1781L99.1781 94.1781C97.6274 94.1781 96.3699 92.9205 96.3699 91.3699Z" fill="#4FEBB0" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/><path d="M84.7945 104.555C84.7945 102.985 86.0671 101.712 87.637 101.712L122.637 101.712C124.207 101.712 125.479 102.985 125.479 104.555L125.479 104.555C125.479 106.125 124.207 107.397 122.637 107.397L87.637 107.397C86.0671 107.397 84.7945 106.125 84.7945 104.555Z" fill="#4FEBB0" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/><path d="M126.575 91.3699C126.575 89.8192 127.833 88.5616 129.384 88.5616L129.658 88.5616C131.208 88.5616 132.466 89.8192 132.466 91.3699L132.466 91.3699C132.466 92.9205 131.208 94.1781 129.658 94.1781L129.384 94.1781C127.833 94.1781 126.575 92.9205 126.575 91.3699Z" fill="#FFFFFF" fill-rule="evenodd" transform="matrix(1 0 0 1.01333 416.233 69.1096)"/></g></svg>
+                        </button>
                         <button class="lyrics-action-btn save-btn" onclick="saveLyrics(0)">💾 保存歌词</button>
                     </div>
                 </div>
@@ -1552,20 +1609,20 @@
             </div>
             
             <div>
-                <h3>背景图片</h3>
+                <h3>背景图片/视频</h3>
                 <label>当前路径：</label>
                 <input type="text" id="backgroundPath" class="file-path-input" readonly>
                 <label>新路径：</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="newBackgroundPath" class="file-path-input" style="flex:1">
                     <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
-                        📤 上传背景图
-                        <input type="file" id="backgroundUpload" accept="image/*" style="display: none;"
+                        📤 上传背景图/视频
+                        <input type="file" id="backgroundUpload" accept="image/*,video/*" style="display: none;"
                             onchange="handleImageUpload(this.files[0], 'background')">
                     </label>
                 </div>
                 <small style="display: block; margin-top: 5px; color: #666;">
-                    提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
+                    提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名
                 </small>
             </div>
             
@@ -2372,6 +2429,133 @@
             return container
         }
 
+        let albumCoverObserver = null
+        const videoCoverCache = new Map()
+
+        function stripQueryHash(value) {
+            return String(value || '').split('?')[0].split('#')[0]
+        }
+
+        function resolveBackgroundVideoUrl(raw) {
+            if (!raw || raw === '!') {
+                return ''
+            }
+            const normalized = normalizeSongsUrl(raw)
+            const checkTarget = stripQueryHash(normalized)
+            if (!hasValidVideoExtension(checkTarget)) {
+                return ''
+            }
+            return normalized
+        }
+
+        function captureVideoMiddleFrame(videoUrl) {
+            if (videoCoverCache.has(videoUrl)) {
+                return videoCoverCache.get(videoUrl)
+            }
+
+            const promise = new Promise(resolve => {
+                const video = document.createElement('video')
+                let settled = false
+
+                const finalize = (dataUrl) => {
+                    if (settled) return
+                    settled = true
+                    try {
+                        video.pause()
+                        video.removeAttribute('src')
+                        video.load()
+                    } catch (error) {
+                        // Ignore cleanup errors
+                    }
+                    resolve(dataUrl || '')
+                }
+
+                const fail = () => finalize('')
+
+                video.crossOrigin = 'anonymous'
+                video.preload = 'metadata'
+                video.muted = true
+                video.playsInline = true
+                video.addEventListener('error', fail, { once: true })
+
+                video.addEventListener('loadedmetadata', () => {
+                    const duration = Number.isFinite(video.duration) ? video.duration : 0
+                    const targetTime = duration > 0 ? duration / 2 : 0
+                    try {
+                        video.currentTime = targetTime
+                    } catch (error) {
+                        fail()
+                    }
+                }, { once: true })
+
+                video.addEventListener('seeked', () => {
+                    const width = video.videoWidth || 0
+                    const height = video.videoHeight || 0
+                    if (!width || !height) {
+                        fail()
+                        return
+                    }
+                    const canvas = document.createElement('canvas')
+                    canvas.width = width
+                    canvas.height = height
+                    const ctx = canvas.getContext('2d')
+                    if (!ctx) {
+                        fail()
+                        return
+                    }
+                    try {
+                        ctx.drawImage(video, 0, 0, width, height)
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.92)
+                        finalize(dataUrl)
+                    } catch (error) {
+                        fail()
+                    }
+                })
+
+                video.src = videoUrl
+            }).then(dataUrl => {
+                if (!dataUrl) {
+                    videoCoverCache.delete(videoUrl)
+                }
+                return dataUrl
+            })
+
+            videoCoverCache.set(videoUrl, promise)
+            return promise
+        }
+
+        function ensureAlbumCoverObserver() {
+            if (albumCoverObserver || !('IntersectionObserver' in window)) {
+                return
+            }
+            albumCoverObserver = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (!entry.isIntersecting) return
+                    const cover = entry.target
+                    const dataSrc = cover.getAttribute('data-src')
+                    const dataVideo = cover.getAttribute('data-video-src')
+                    if (dataVideo && !cover.src) {
+                        captureVideoMiddleFrame(dataVideo).then(dataUrl => {
+                            if (!dataUrl) {
+                                if (cover.parentElement) {
+                                    cover.parentElement.removeChild(cover)
+                                }
+                                const container = cover.closest('.file-name')
+                                if (container) {
+                                    container.classList.remove('has-cover')
+                                }
+                                return
+                            }
+                            cover.src = dataUrl
+                        })
+                    } else if (dataSrc && !cover.src) {
+                        cover.src = dataSrc
+                    }
+                    albumCoverObserver.unobserve(cover)
+                })
+            }, { rootMargin: '150px 0px' })
+        }
+
         function createSongItem(summary) {
             const li = document.createElement('li')
             li.className = 'json-item'
@@ -2383,13 +2567,55 @@
             const fileNameDiv = document.createElement('div')
             fileNameDiv.className = 'file-name'
             const displayName = summary.filename.replace(/\.json$/i, '')
-            fileNameDiv.textContent = `${displayName} `
-            const copyBtn = document.createElement('button')
-            copyBtn.className = 'copy-btn'
-            copyBtn.title = '复制文件名'
-            copyBtn.textContent = '📋'
-            copyBtn.addEventListener('click', () => copyFileName(copyBtn))
-            fileNameDiv.appendChild(copyBtn)
+            const fileNameText = document.createElement('span')
+            fileNameText.className = 'file-name-text'
+            fileNameText.textContent = displayName
+            fileNameDiv.appendChild(fileNameText)
+            const coverUrl = summary.albumImgSrc ? resolveCoverUrl(summary.albumImgSrc) : ''
+            const backgroundVideoUrl = coverUrl ? '' : resolveBackgroundVideoUrl(summary.backgroundImage || '')
+            if (coverUrl || backgroundVideoUrl) {
+                fileNameDiv.classList.add('has-cover')
+                const coverImg = document.createElement('img')
+                coverImg.className = 'album-cover'
+                coverImg.alt = 'album cover'
+                coverImg.loading = 'lazy'
+                if (coverUrl) {
+                    coverImg.setAttribute('data-src', coverUrl)
+                } else {
+                    coverImg.setAttribute('data-video-src', backgroundVideoUrl)
+                }
+                coverImg.addEventListener('error', () => {
+                    if (coverImg.parentElement) {
+                        coverImg.parentElement.removeChild(coverImg)
+                    }
+                    fileNameDiv.classList.remove('has-cover')
+                })
+                fileNameDiv.appendChild(coverImg)
+                ensureAlbumCoverObserver()
+                if (albumCoverObserver) {
+                    albumCoverObserver.observe(coverImg)
+                } else if (coverUrl) {
+                    coverImg.src = coverUrl
+                } else if (backgroundVideoUrl) {
+                    captureVideoMiddleFrame(backgroundVideoUrl).then(dataUrl => {
+                        if (!dataUrl) {
+                            if (coverImg.parentElement) {
+                                coverImg.parentElement.removeChild(coverImg)
+                            }
+                            fileNameDiv.classList.remove('has-cover')
+                            return
+                        }
+                        coverImg.src = dataUrl
+                    })
+                }
+            }
+            fileNameText.addEventListener('click', () => {
+                const selection = window.getSelection()
+                if (selection && !selection.isCollapsed) {
+                    return
+                }
+                copyFileNameText(fileNameText)
+            })
 
             header.appendChild(fileNameDiv)
             header.appendChild(buildSongTags(summary))
@@ -2792,6 +3018,69 @@
             window.open(target, '_blank')
         }
 
+        async function copyTTMLForAMLL() {
+            const lyricsPath = document.getElementById('lyricsPath').value.trim();
+            const lyricsContent = getLyricsContent();
+            const pathExtension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || '';
+            const detectedExtension = detectLyricsExtension(lyricsContent);
+            const isTtml = pathExtension === '.ttml' || detectedExtension === '.ttml';
+
+            if (isTtml) {
+                if (!lyricsContent.trim()) {
+                    alert('当前歌词内容为空，无法复制TTML');
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(lyricsContent);
+                    alert('已复制TTML到剪贴板！\n请在打开的新界面进入：打开 - 从剪贴板导入 TTML。');
+                    window.open('https://editor.amll.dev/', '_blank');
+                } catch (error) {
+                    alert('复制失败：' + (error.message || error));
+                }
+                return;
+            }
+
+            if (!lyricsPath) {
+                alert('请先在"歌词文件路径"输入框中填写LYS/LRC文件名');
+                return;
+            }
+
+            if (pathExtension !== '.lys' && pathExtension !== '.lrc') {
+                alert('仅支持LYS/LRC格式转换为TTML并复制');
+                return;
+            }
+
+            try {
+                const response = await fetch('/convert_to_ttml', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: lyricsPath })
+                });
+                const data = await response.json();
+                if (data.status !== 'success' || !data.ttmlPath) {
+                    alert('转换失败：' + (data.message || '无法生成TTML'));
+                    return;
+                }
+
+                const ttmlResponse = await fetch('/get_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: data.ttmlPath })
+                });
+                const ttmlData = await ttmlResponse.json();
+                if (ttmlData.status !== 'success') {
+                    alert('读取TTML失败：' + (ttmlData.message || '未知错误'));
+                    return;
+                }
+
+                await navigator.clipboard.writeText(ttmlData.content || '');
+                alert('已复制TTML到剪贴板！\n请在打开的新界面进入：打开 - 从剪贴板导入 TTML。');
+                window.open('https://editor.amll.dev/', '_blank');
+            } catch (error) {
+                alert('转换或复制失败：' + (error.message || error));
+            }
+        }
+
         function saveLyrics(index) {
             const path = index === 0 ?
                 document.getElementById('lyricsPath').value :
@@ -2953,6 +3242,11 @@
         }
 
         const VALID_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        const VALID_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.ogg', '.m4v', '.mov']
+        const VALID_BACKGROUND_EXTENSIONS = [
+            '.jpg', '.jpeg', '.png', '.gif', '.webp',
+            '.mp4', '.webm', '.ogg', '.m4v', '.mov'
+        ]
 
         function hasValidImageExtension(path) {
             if (!path) {
@@ -2960,6 +3254,22 @@
             }
             const lower = path.toLowerCase()
             return VALID_IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))
+        }
+
+        function hasValidVideoExtension(path) {
+            if (!path) {
+                return false
+            }
+            const lower = path.toLowerCase()
+            return VALID_VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext))
+        }
+
+        function hasValidBackgroundExtension(path) {
+            if (!path) {
+                return false
+            }
+            const lower = path.toLowerCase()
+            return VALID_BACKGROUND_EXTENSIONS.some(ext => lower.endsWith(ext))
         }
 
         function editImagePath(path, jsonFile) {
@@ -3033,8 +3343,8 @@
 
             if (newPath) {
                 // 检查文件扩展名
-                if (!hasValidImageExtension(newPath)) {
-                    alert('请输入有效的图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                if (!hasValidBackgroundExtension(newPath)) {
+                    alert('请输入有效的背景文件名（支持.jpg、.jpeg、.png、.gif、.webp、.mp4、.webm、.ogg、.m4v、.mov）')
                     return
                 }
             }
@@ -3080,8 +3390,8 @@
 
             let normalizedBackgroundPath = ''
             if (rawBackgroundPath && rawBackgroundPath !== '!') {
-                if (!hasValidImageExtension(rawBackgroundPath)) {
-                    alert('请输入有效的背景图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                if (!hasValidBackgroundExtension(rawBackgroundPath)) {
+                    alert('请输入有效的背景文件名（支持.jpg、.jpeg、.png、.gif、.webp、.mp4、.webm、.ogg、.m4v、.mov）')
                     return
                 }
                 normalizedBackgroundPath = stripSongsPrefix(rawBackgroundPath)
@@ -4060,14 +4370,26 @@
             translationPathInput.value = currentFileName + extension;
         }
 
-        function copyFileName(button) {
-            const fileName = button.parentElement.textContent.replace('📋', '').trim();
+        function showSoftNotice(message) {
+            let notice = document.getElementById('softNotice');
+            if (!notice) {
+                notice = document.createElement('div');
+                notice.id = 'softNotice';
+                notice.className = 'soft-notice';
+                document.body.appendChild(notice);
+            }
+            notice.textContent = message;
+            notice.classList.add('is-visible');
+            clearTimeout(notice._hideTimer);
+            notice._hideTimer = setTimeout(() => {
+                notice.classList.remove('is-visible');
+            }, 1200);
+        }
+
+        function copyFileNameText(textEl) {
+            const fileName = textEl.textContent.trim();
             navigator.clipboard.writeText(fileName).then(() => {
-                const originalText = button.textContent;
-                button.textContent = '✓';
-                setTimeout(() => {
-                    button.textContent = originalText;
-                }, 1000);
+                showSoftNotice('已复制文件名');
             });
         }
 
