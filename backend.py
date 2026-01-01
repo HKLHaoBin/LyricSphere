@@ -4,6 +4,7 @@ import struct
 import hashlib
 import json
 import copy
+import functools
 import bcrypt
 import logging
 import os
@@ -20,13 +21,20 @@ from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from io import BytesIO
-from flask import Flask, jsonify, render_template, request, Response, session, g, abort, stream_with_context, has_request_context, send_from_directory, send_file
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar, copy_context
+from fastapi import FastAPI, Request as StarletteRequest, HTTPException
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse, StreamingResponse, FileResponse, Response as StarletteResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.datastructures import QueryParams, Headers, FormData, UploadFile
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+import aiofiles
 from re import compile, Pattern, Match
 from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any
 from xml.dom.minicompat import NodeList
 from xml.dom import Node
 from xml.dom.minidom import Document, Element
-from flask.ctx import F
 from openai import OpenAI
 import random
 import threading
@@ -35,6 +43,386 @@ import asyncio
 import websockets
 import queue
 from urllib.parse import urlparse, unquote
+
+_request_context: ContextVar[Optional["RequestContext"]] = ContextVar("request_context", default=None)
+_MISSING = object()
+
+
+class FileStorageAdapter:
+    def __init__(self, upload: UploadFile):
+        self._upload = upload
+        self.filename = upload.filename or ""
+        self.stream = upload.file
+
+    def save(self, dst: Union[str, Path]) -> None:
+        dst_path = Path(dst)
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        self._upload.file.seek(0)
+        with open(dst_path, "wb") as out_file:
+            shutil.copyfileobj(self._upload.file, out_file)
+
+    @property
+    def upload(self) -> UploadFile:
+        return self._upload
+
+    def read(self, size: int = -1) -> bytes:
+        return self._upload.file.read(size)
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._upload.file.seek(offset, whence)
+
+
+class FilesWrapper:
+    def __init__(self, mapping: Dict[str, List[FileStorageAdapter]]):
+        self._mapping = mapping
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._mapping
+
+    def __getitem__(self, key: str) -> FileStorageAdapter:
+        return self._mapping[key][0]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key in self._mapping:
+            return self._mapping[key][0]
+        return default
+
+    def getlist(self, key: str) -> List[FileStorageAdapter]:
+        return list(self._mapping.get(key, []))
+
+    def items(self):
+        return ((key, values[0]) for key, values in self._mapping.items())
+
+
+async def save_upload_file(upload: Union[FileStorageAdapter, UploadFile], dst: Union[str, Path]) -> None:
+    dst_path = Path(dst)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_file = upload.upload if isinstance(upload, FileStorageAdapter) else upload
+    if isinstance(upload_file, UploadFile):
+        await upload_file.seek(0)
+        async with aiofiles.open(dst_path, "wb") as out_file:
+            while True:
+                chunk = await upload_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                await out_file.write(chunk)
+        await upload_file.seek(0)
+        return
+    await _run_sync_in_thread(upload.save, dst_path)
+
+
+async def save_upload_file_with_meta(
+    upload: Union[FileStorageAdapter, UploadFile],
+    dst: Union[str, Path]
+) -> Tuple[int, str]:
+    dst_path = Path(dst)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_file = upload.upload if isinstance(upload, FileStorageAdapter) else upload
+    md5_hash = hashlib.md5()
+    size = 0
+    if isinstance(upload_file, UploadFile):
+        await upload_file.seek(0)
+        async with aiofiles.open(dst_path, "wb") as out_file:
+            while True:
+                chunk = await upload_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                md5_hash.update(chunk)
+                await out_file.write(chunk)
+        await upload_file.seek(0)
+        return size, md5_hash.hexdigest()
+
+    def _sync_copy() -> Tuple[int, str]:
+        sync_size = 0
+        upload.seek(0)
+        with open(dst_path, "wb") as out_file:
+            while True:
+                chunk = upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                out_file.write(chunk)
+                md5_hash.update(chunk)
+                sync_size += len(chunk)
+        upload.seek(0)
+        return sync_size, md5_hash.hexdigest()
+
+    return await _run_sync_in_thread(_sync_copy)
+
+
+class RequestContext:
+    def __init__(self, request: StarletteRequest, body: bytes, form: Optional[FormData]):
+        self._request = request
+        self._body = body
+        self._form = form
+        self._json_cache: Any = _MISSING
+        self._files_cache: Optional[FilesWrapper] = None
+
+    @property
+    def method(self) -> str:
+        return self._request.method
+
+    @property
+    def headers(self) -> Headers:
+        return self._request.headers
+
+    @property
+    def cookies(self) -> Dict[str, str]:
+        return dict(self._request.cookies)
+
+    @property
+    def args(self) -> QueryParams:
+        return self._request.query_params
+
+    @property
+    def path(self) -> str:
+        return self._request.url.path
+
+    @property
+    def url_root(self) -> str:
+        url = self._request.url
+        return f"{url.scheme}://{url.netloc}/"
+
+    @property
+    def host(self) -> str:
+        return self._request.headers.get("host", "")
+
+    @property
+    def remote_addr(self) -> Optional[str]:
+        return self._request.client.host if self._request.client else None
+
+    @property
+    def json(self) -> Any:
+        return self.get_json(silent=True)
+
+    @property
+    def files(self) -> FilesWrapper:
+        if self._files_cache is None:
+            mapping: Dict[str, List[FileStorageAdapter]] = {}
+            if self._form:
+                for key, value in self._form.multi_items():
+                    if isinstance(value, UploadFile):
+                        mapping.setdefault(key, []).append(FileStorageAdapter(value))
+            self._files_cache = FilesWrapper(mapping)
+        return self._files_cache
+
+    def get_json(self, silent: bool = False) -> Any:
+        if self._json_cache is not _MISSING:
+            return self._json_cache
+        if not self._body:
+            self._json_cache = None
+            return None
+        try:
+            self._json_cache = json.loads(self._body.decode("utf-8"))
+        except Exception:
+            if silent:
+                self._json_cache = None
+                return None
+            raise
+        return self._json_cache
+
+
+class RequestProxy:
+    def _require_context(self) -> RequestContext:
+        ctx = _request_context.get()
+        if ctx is None:
+            raise RuntimeError("Request context is not available.")
+        return ctx
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._require_context(), name)
+
+
+class SessionProxy:
+    def _get_session(self) -> Dict[str, Any]:
+        ctx = _request_context.get()
+        if ctx is None or not hasattr(ctx._request, "session"):
+            return {}
+        return ctx._request.session
+
+    def __getitem__(self, key: str) -> Any:
+        return self._get_session()[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._get_session()[key] = value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._get_session().get(key, default)
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        return self._get_session().pop(key, default)
+
+    def clear(self) -> None:
+        self._get_session().clear()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._get_session()
+
+
+def has_request_context() -> bool:
+    return _request_context.get() is not None
+
+
+def stream_with_context(generator):
+    return generator
+
+
+def abort(code: int):
+    raise HTTPException(status_code=code)
+
+
+def jsonify(payload: Any = None, **kwargs: Any) -> JSONResponse:
+    if payload is None:
+        payload = kwargs
+    elif kwargs:
+        if isinstance(payload, dict):
+            payload = {**payload, **kwargs}
+        else:
+            payload = {"data": payload, **kwargs}
+    return JSONResponse(content=payload)
+
+
+def _coerce_response(payload: Any) -> StarletteResponse:
+    if isinstance(payload, StarletteResponse):
+        return payload
+    if isinstance(payload, (dict, list)):
+        return JSONResponse(content=payload)
+    if isinstance(payload, (bytes, bytearray)):
+        return StarletteResponse(content=payload)
+    if payload is None:
+        return StarletteResponse(content=b"")
+    return PlainTextResponse(str(payload))
+
+
+def _normalize_response(result: Any) -> StarletteResponse:
+    if isinstance(result, StarletteResponse):
+        return result
+    if isinstance(result, tuple):
+        body = result[0] if len(result) > 0 else None
+        status_code = result[1] if len(result) > 1 else None
+        headers = result[2] if len(result) > 2 else None
+        response = _coerce_response(body)
+        if status_code is not None:
+            response.status_code = status_code
+        if headers:
+            response.headers.update(headers)
+        return response
+    return _coerce_response(result)
+
+
+def send_file(
+    path: Union[str, Path],
+    as_attachment: bool = False,
+    download_name: Optional[str] = None,
+    mimetype: Optional[str] = None
+) -> StarletteResponse:
+    if isinstance(path, (BytesIO, bytearray, bytes)) or hasattr(path, "read"):
+        file_obj = path
+        if isinstance(file_obj, BytesIO):
+            file_obj.seek(0)
+        if isinstance(file_obj, (bytes, bytearray)):
+            content = bytes(file_obj)
+            response = StarletteResponse(content=content, media_type=mimetype)
+        else:
+            def _iter_file():
+                while True:
+                    chunk = file_obj.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            response = StreamingResponse(_iter_file(), media_type=mimetype)
+    else:
+        target = Path(path)
+        if not target.exists():
+            raise HTTPException(status_code=404)
+        response = FileResponse(target, media_type=mimetype)
+    if as_attachment:
+        filename = download_name or (Path(path).name if not hasattr(path, "read") else "download")
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def send_from_directory(directory: Union[str, Path], filename: str, mimetype: Optional[str] = None) -> StarletteResponse:
+    directory_path = Path(directory).resolve()
+    target = (directory_path / filename).resolve()
+    try:
+        target.relative_to(directory_path)
+    except ValueError:
+        raise HTTPException(status_code=404)
+    if not target.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(target, media_type=mimetype)
+
+
+async def _run_sync_in_thread(func, **kwargs):
+    ctx = copy_context()
+    bound = functools.partial(func, **kwargs)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(THREADPOOL_EXECUTOR, ctx.run, bound)
+
+
+class FlaskCompat(FastAPI):
+    def __init__(self, import_name: str, static_folder: str, template_folder: str, static_url_path: str):
+        super().__init__()
+        self.import_name = import_name
+        self.static_folder = static_folder
+        self.template_folder = template_folder
+        self.static_url_path = static_url_path or ""
+        self.config: Dict[str, Any] = {}
+        self.debug = False
+        self.logger = logging.getLogger("famyliam.backend")
+        self._before_request_funcs: List[Any] = []
+        self._after_request_funcs: List[Any] = []
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(self.template_folder),
+            autoescape=select_autoescape(["html", "xml", "HTML"])
+        )
+
+    def route(self, path: str, methods: Optional[List[str]] = None, **kwargs):
+        methods = methods or ["GET"]
+        converted_path = re.sub(
+            r"<(?:(\w+):)?(\w+)>",
+            lambda m: f"{{{m.group(2)}:path}}" if m.group(1) == "path" else f"{{{m.group(2)}}}",
+            path
+        )
+
+        def decorator(func):
+            if not hasattr(func, "_fastapi_endpoint"):
+                async def endpoint(request: StarletteRequest):
+                    if asyncio.iscoroutinefunction(func):
+                        result = await func(**request.path_params)
+                    else:
+                        result = await _run_sync_in_thread(func, **request.path_params)
+                    return _normalize_response(result)
+
+                func._fastapi_endpoint = endpoint
+            self.add_api_route(converted_path, func._fastapi_endpoint, methods=methods, **kwargs)
+            return func
+
+        return decorator
+
+    def before_request(self, func):
+        self._before_request_funcs.append(func)
+        return func
+
+    def after_request(self, func):
+        self._after_request_funcs.append(func)
+        return func
+
+    def template_filter(self, name: Optional[str] = None):
+        def decorator(func):
+            filter_name = name or func.__name__
+            self.jinja_env.filters[filter_name] = func
+            return func
+        return decorator
+
+    def make_response(self, content: Any, status: int = 200, mimetype: Optional[str] = None) -> StarletteResponse:
+        return StarletteResponse(content=content, status_code=status, media_type=mimetype)
+
+
+request = RequestProxy()
+session = SessionProxy()
+Response = StarletteResponse
 
 
 def get_base_path():
@@ -52,8 +440,8 @@ BASE_PATH = get_base_path()
 EXPORTS_DIR = BASE_PATH / 'exports'
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Flask配置（动态路径）
-app = Flask(
+# FastAPI compatibility config (dynamic paths)
+app = FlaskCompat(
     __name__,
     static_folder=str(BASE_PATH / 'static'),
     template_folder=str(BASE_PATH / 'templates'),
@@ -61,9 +449,31 @@ app = Flask(
 )
 app.jinja_env.filters['tojson'] = json.dumps
 app.secret_key = 'your_random_secret_key'
+app.add_middleware(SessionMiddleware, secret_key=app.secret_key)
 
 # 添加Jinja2全局过滤器
 app.jinja_env.globals.update(tojson=json.dumps)
+
+
+def url_for(endpoint: str, **values: Any) -> str:
+    if endpoint == "static":
+        filename = values.get("filename", "")
+        if app.static_url_path:
+            return f"{app.static_url_path.rstrip('/')}/{str(filename).lstrip('/')}"
+        return f"/{str(filename).lstrip('/')}"
+    return f"/{endpoint}"
+
+
+app.jinja_env.globals.update(url_for=url_for)
+
+
+def render_template(template_name: str, **context: Any) -> HTMLResponse:
+    template = app.jinja_env.get_template(template_name)
+    return HTMLResponse(template.render(**context))
+
+
+THREADPOOL_MAX_WORKERS = int(os.getenv("APP_THREADPOOL_WORKERS", "16"))
+THREADPOOL_EXECUTOR = ThreadPoolExecutor(max_workers=THREADPOOL_MAX_WORKERS)
 
 def cleanup_missing_ssl_cert_env() -> List[str]:
     """
@@ -133,6 +543,35 @@ LOG_DIR = BASE_PATH / 'logs'
 # 自动创建目录（首次运行时）
 for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR]:
     path.mkdir(parents=True, exist_ok=True)
+
+AMLL_COVER_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+
+
+def cleanup_amll_cover_images() -> int:
+    """Remove generated amll_cover images from songs dir before startup."""
+    removed = 0
+    if not SONGS_DIR.exists():
+        return removed
+
+    for path in SONGS_DIR.iterdir():
+        if not path.is_file():
+            continue
+        name_lower = path.name.lower()
+        if "amll_cover" not in name_lower:
+            continue
+        if path.suffix.lower() not in AMLL_COVER_IMAGE_EXTS:
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except Exception as exc:
+            app.logger.warning("Failed to remove amll_cover image: %s (%s)", path, exc)
+    if removed:
+        app.logger.info("Removed %s amll_cover images from songs dir", removed)
+    return removed
+
+
+cleanup_amll_cover_images()
 
 RESOURCE_DIRECTORIES = {
     'static': STATIC_DIR,
@@ -333,6 +772,36 @@ def _match_cors_origin(origin: Optional[str]) -> Optional[str]:
     return None
 
 
+@app.middleware("http")
+async def _request_context_middleware(request_in: StarletteRequest, call_next):
+    body = await request_in.body()
+    form: Optional[FormData] = None
+    content_type = request_in.headers.get("content-type", "")
+    if content_type.startswith("multipart/") or "application/x-www-form-urlencoded" in content_type:
+        try:
+            form = await request_in.form()
+        except Exception:
+            form = None
+
+    token = _request_context.set(RequestContext(request_in, body=body, form=form))
+    try:
+        response: Optional[StarletteResponse] = None
+        for func in app._before_request_funcs:
+            result = func()
+            if result is not None:
+                response = _normalize_response(result)
+                break
+        if response is None:
+            response = await call_next(request_in)
+        for func in app._after_request_funcs:
+            updated = func(response)
+            if updated is not None:
+                response = updated
+        return response
+    finally:
+        _request_context.reset(token)
+
+
 @app.before_request
 def handle_cors_preflight():
     if request.method == 'OPTIONS':
@@ -405,6 +874,143 @@ def backup_prefix(name_or_path: Union[str, Path]) -> str:
     """Return the normalized prefix used for locating backups."""
     original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
     return f"{_normalize_backup_basename(original_name)}."
+
+
+def _sanitize_client_id(raw_id: str) -> str:
+    """Normalize client id for filesystem usage."""
+    if not raw_id:
+        return ''
+    safe = re.sub(r'[^a-zA-Z0-9_-]+', '_', str(raw_id))
+    safe = safe.strip('_')[:64]
+    if not safe:
+        hashed = hashlib.sha256(str(raw_id).encode('utf-8')).hexdigest()
+        safe = hashed[:32]
+    return safe
+
+
+def _resolve_import_target(target_path: Path, reserved_paths: Set[str]) -> Tuple[Path, bool]:
+    """Return a non-conflicting target path for import."""
+    relative_key = str(target_path.relative_to(STATIC_DIR)).lower()
+    if not target_path.exists() and relative_key not in reserved_paths:
+        reserved_paths.add(relative_key)
+        return target_path, False
+
+    stem = target_path.stem
+    suffix = target_path.suffix
+    counter = 1
+    while True:
+        candidate = target_path.with_name(f"{stem}_imported_{counter}{suffix}")
+        relative_candidate = str(candidate.relative_to(STATIC_DIR)).lower()
+        if not candidate.exists() and relative_candidate not in reserved_paths:
+            reserved_paths.add(relative_candidate)
+            return candidate, True
+        counter += 1
+
+
+def _replace_import_paths(value: Any, rename_map: Dict[str, str]) -> Any:
+    """Replace renamed import paths in JSON payload."""
+    if isinstance(value, dict):
+        return {k: _replace_import_paths(v, rename_map) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_import_paths(item, rename_map) for item in value]
+    if not isinstance(value, str):
+        return value
+
+    updated = value
+    for old_rel, new_rel in rename_map.items():
+        if old_rel == new_rel:
+            continue
+        if updated == old_rel:
+            updated = new_rel
+            continue
+        if updated.endswith(old_rel):
+            updated = updated[: -len(old_rel)] + new_rel
+    return updated
+
+
+def _build_anchor_id(account: str, password: str) -> str:
+    """Create a stable anchor id from account + password."""
+    raw = f"{account}:{password}"
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def _merge_history(new_history, old_history):
+    """Merge play history with newest-first order."""
+    merged = []
+    for item in (new_history or []):
+        if item not in merged:
+            merged.append(item)
+    for item in (old_history or []):
+        if item not in merged:
+            merged.append(item)
+    return merged[:50]
+
+
+def _merge_listen_stats(new_stats, old_stats):
+    """Merge listen stats, keeping recent history."""
+    merged = {}
+    for key, value in (old_stats or {}).items():
+        if isinstance(value, dict):
+            merged[key] = {
+                'completions': list(value.get('completions', [])),
+                'listens': list(value.get('listens', []))
+            }
+    for key, value in (new_stats or {}).items():
+        if not isinstance(value, dict):
+            continue
+        entry = merged.get(key, {'completions': [], 'listens': []})
+        completions = entry.get('completions', []) + list(value.get('completions', []))
+        listens = entry.get('listens', []) + list(value.get('listens', []))
+        entry['completions'] = completions[-50:]
+        entry['listens'] = listens[-50:]
+        merged[key] = entry
+    return merged
+
+
+def _merge_playlists(new_playlists, old_playlists):
+    """Merge playlists by id and combine tracks."""
+    merged = []
+    playlist_index = {}
+
+    def normalize_playlist(item):
+        if not isinstance(item, dict):
+            return None
+        playlist_id = item.get('id')
+        if not playlist_id:
+            return None
+        tracks = item.get('tracks')
+        if not isinstance(tracks, list):
+            tracks = []
+        return {
+            'id': playlist_id,
+            'name': item.get('name') or item.get('title') or '',
+            'tracks': tracks
+        }
+
+    for item in (new_playlists or []):
+        normalized = normalize_playlist(item)
+        if not normalized:
+            continue
+        playlist_index[normalized['id']] = normalized
+        merged.append(normalized)
+
+    for item in (old_playlists or []):
+        normalized = normalize_playlist(item)
+        if not normalized:
+            continue
+        existing = playlist_index.get(normalized['id'])
+        if existing:
+            existing_tracks = existing.get('tracks', [])
+            for track in normalized.get('tracks', []):
+                if track not in existing_tracks:
+                    existing_tracks.append(track)
+            if not existing.get('name') and normalized.get('name'):
+                existing['name'] = normalized['name']
+        else:
+            playlist_index[normalized['id']] = normalized
+            merged.append(normalized)
+
+    return merged
 
 # 配置日志
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -880,7 +1486,7 @@ def qe_apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: 
 
 
 def qe_error_response(message: str, status: int = 400) -> Response:
-    return Response(message, status=status, mimetype='text/plain')
+    return PlainTextResponse(message, status_code=status)
 
 
 def qe_register_doc(doc: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1204,6 +1810,29 @@ def index_html_alias():
     """Backward compatibility for clients requesting the original index.html entry."""
     return amll_web_player()
 
+def get_lyric_sphere_v2_dist_dir() -> Path:
+    """Return the dist directory for the LyricSphere v2 frontend build."""
+    return BASE_PATH / 'templates' / 'lyric-sphere-v2' / 'dist'
+
+
+@app.route('/lyric-sphere-v2')
+@app.route('/lyric-sphere-v2/')
+@app.route('/lyric-sphere-v2/<path:filename>')
+def lyric_sphere_v2_frontend(filename: str = 'index.html'):
+    """Serve the LyricSphere v2 React build from the dist directory."""
+    dist_dir = get_lyric_sphere_v2_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({'status': 'error', 'message': 'LyricSphere v2 dist not found. Please run npm run build.'}), 404
+
+    safe_path = (dist_dir / filename).resolve()
+    if dist_dir not in safe_path.parents and safe_path != dist_dir:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if safe_path.exists() and safe_path.is_file():
+        return send_from_directory(dist_dir, filename)
+
+    return send_from_directory(dist_dir, 'index.html')
+
 
 @app.route('/quick-editor')
 def quick_editor_page():
@@ -1405,7 +2034,7 @@ def quick_editor_export():
     doc, err = _qe_get_doc(doc_id)
     if err:
         return err
-    return Response(qe_dump_lys(doc), mimetype='text/plain; charset=utf-8')
+    return PlainTextResponse(qe_dump_lys(doc), media_type='text/plain; charset=utf-8')
 
 
 @app.route('/quick-editor/api/move', methods=['POST'])
@@ -1747,7 +2376,7 @@ def quick_editor_save():
 
     return jsonify({'status': 'success', 'lyricsPath': lyrics_url})
 
-# 在Flask应用中添加自定义过滤器
+# Register a custom Jinja2 filter for the compatibility layer
 @app.template_filter('escape_js')
 def escape_js_filter(s):
     return json.dumps(str(s))[1:-1]  # 移除外层的引号
@@ -1765,6 +2394,159 @@ def backup_file():
     backup_path = build_backup_path(Path(file_path), timestamp)
     shutil.copy2(file_path, backup_path)
     return jsonify({'status': 'success'})
+
+
+@app.route('/backup_client_state', methods=['POST'])
+def backup_client_state():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    client_id = _sanitize_client_id(payload.get('client_id') or payload.get('clientId'))
+    anchor_id = _sanitize_client_id(payload.get('anchor_id') or payload.get('anchorId'))
+    data = payload.get('data')
+    if data is None:
+        return jsonify({'status': 'error', 'message': '缺少 data'}), 400
+    if not client_id and not anchor_id:
+        return jsonify({'status': 'error', 'message': '缺少 client_id 或 anchor_id'}), 400
+
+    if anchor_id:
+        backup_dir = BACKUP_DIR / 'anchors'
+        filename = f"{anchor_id}.json"
+    else:
+        backup_dir = BACKUP_DIR / 'clients'
+        filename = f"{client_id}.json"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / filename
+    if anchor_id and backup_path.exists():
+        try:
+            with open(backup_path, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+            existing_payload = existing.get('payload', {}) if isinstance(existing, dict) else {}
+            existing_data = existing_payload.get('data', {}) if isinstance(existing_payload, dict) else {}
+            merged_data = {
+                'playlists': _merge_playlists(data.get('playlists'), existing_data.get('playlists')),
+                'history': _merge_history(data.get('history'), existing_data.get('history')),
+                'listenStats': _merge_listen_stats(data.get('listenStats'), existing_data.get('listenStats'))
+            }
+            data = merged_data
+        except Exception:
+            pass
+
+    payload['data'] = data
+
+    envelope = {
+        'client_id': client_id or None,
+        'anchor_id': anchor_id or None,
+        'saved_at': datetime.now().isoformat(),
+        'source': 'lyric-sphere-v2',
+        'payload': payload
+    }
+    with open(backup_path, 'w', encoding='utf-8') as f:
+        json.dump(envelope, f, ensure_ascii=False, indent=2)
+
+    try:
+        if anchor_id:
+            public_path = build_public_url('backups', f"anchors/{anchor_id}.json")
+        else:
+            public_path = build_public_url('backups', f"clients/{client_id}.json")
+    except Exception:
+        public_path = str(backup_path)
+
+    return jsonify({
+        'status': 'success',
+        'message': '备份已保存',
+        'path': public_path,
+        'anchorId': anchor_id or None
+    })
+
+
+@app.route('/anchor_backup', methods=['POST'])
+def anchor_backup():
+    if not is_request_allowed():
+        return abort(403)
+    payload = request.get_json(silent=True) or {}
+    account = str(payload.get('account') or '').strip()
+    password = str(payload.get('password') or '').strip()
+    if not account or not password:
+        return jsonify({'status': 'error', 'message': '缺少账号或密码'}), 400
+
+    anchor_id = _build_anchor_id(account, password)
+    return jsonify({'status': 'success', 'anchorId': anchor_id})
+
+
+@app.route('/download_client_backup', methods=['GET'])
+def download_client_backup():
+    if not is_request_allowed():
+        return abort(403)
+
+    raw_id = request.args.get('client_id') or ''
+    client_id = _sanitize_client_id(raw_id)
+    if not client_id:
+        return jsonify({'status': 'error', 'message': '缺少 client_id'}), 400
+
+    backup_path = BACKUP_DIR / 'clients' / f"{client_id}.json"
+    if not backup_path.exists():
+        return jsonify({'status': 'error', 'message': '备份文件不存在'}), 404
+
+    return send_file(
+        backup_path,
+        as_attachment=True,
+        download_name=f"lyric-sphere-backup-{client_id}.json",
+        mimetype='application/json'
+    )
+
+
+@app.route('/download_anchor_backup', methods=['GET'])
+def download_anchor_backup():
+    if not is_request_allowed():
+        return abort(403)
+
+    raw_id = request.args.get('anchor_id') or ''
+    anchor_id = _sanitize_client_id(raw_id)
+    if not anchor_id:
+        return jsonify({'status': 'error', 'message': '缺少 anchor_id'}), 400
+
+    backup_path = BACKUP_DIR / 'anchors' / f"{anchor_id}.json"
+    if not backup_path.exists():
+        return jsonify({'status': 'error', 'message': '备份文件不存在'}), 404
+
+    return send_file(
+        backup_path,
+        as_attachment=True,
+        download_name=f"lyric-sphere-backup-{anchor_id}.json",
+        mimetype='application/json'
+    )
+
+
+@app.route('/get_anchor_backup', methods=['GET'])
+def get_anchor_backup():
+    if not is_request_allowed():
+        return abort(403)
+
+    raw_id = request.args.get('anchor_id') or ''
+    anchor_id = _sanitize_client_id(raw_id)
+    if not anchor_id:
+        return jsonify({'status': 'error', 'message': '缺少 anchor_id'}), 400
+
+    backup_path = BACKUP_DIR / 'anchors' / f"{anchor_id}.json"
+    if not backup_path.exists():
+        return jsonify({'status': 'error', 'message': '备份文件不存在'}), 404
+
+    try:
+        with open(backup_path, 'r', encoding='utf-8') as f:
+            content = json.load(f)
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': f'备份文件读取失败: {exc}'}), 500
+
+    payload = content.get('payload', {}) if isinstance(content, dict) else {}
+    data = payload.get('data', {}) if isinstance(payload, dict) else {}
+
+    return jsonify({
+        'status': 'success',
+        'anchorId': anchor_id,
+        'savedAt': content.get('saved_at'),
+        'data': data
+    })
 
 
 @app.route('/delete_json', methods=['POST'])
@@ -1857,9 +2639,6 @@ def export_static_bundle():
 def import_static_bundle():
     if not is_request_allowed():
         return abort(403)
-    locked_response = require_unlocked_device('导入歌曲')
-    if locked_response:
-        return locked_response
 
     upload = request.files.get('file')
     if not upload or not upload.filename:
@@ -1872,9 +2651,14 @@ def import_static_bundle():
     buffer = BytesIO(file_bytes)
     imported_jsons: List[str] = []
     imported_assets = 0
+    renamed_files: List[str] = []
 
     try:
         with zipfile.ZipFile(buffer) as archive:
+            entries: List[Tuple[zipfile.ZipInfo, str, Path, bool]] = []
+            reserved_paths: Set[str] = set()
+            rename_map: Dict[str, str] = {}
+
             for info in archive.infolist():
                 if info.is_dir():
                     continue
@@ -1906,21 +2690,33 @@ def import_static_bundle():
                     continue
 
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-
                 is_json_file = target_path.suffix.lower() == '.json'
+                resolved_path, renamed = _resolve_import_target(target_path, reserved_paths)
+                resolved_relative = str(resolved_path.relative_to(STATIC_DIR)).replace('\\', '/')
+                if renamed:
+                    rename_map[relative_path] = resolved_relative
+                    renamed_files.append(resolved_relative)
 
-                if is_json_file and target_path.exists():
-                    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-                    backup_path = build_backup_path(target_path)
-                    shutil.copy2(target_path, backup_path)
+                entries.append((info, relative_path, resolved_path, is_json_file))
 
-                with archive.open(info) as source, open(target_path, 'wb') as destination:
-                    shutil.copyfileobj(source, destination)
-
-                if is_json_file:
-                    imported_jsons.append(target_path.name)
-                else:
-                    imported_assets += 1
+            for info, relative_path, target_path, is_json_file in entries:
+                with archive.open(info) as source:
+                    if is_json_file:
+                        raw = source.read()
+                        try:
+                            payload = json.loads(raw.decode('utf-8'))
+                            if rename_map:
+                                payload = _replace_import_paths(payload, rename_map)
+                            with open(target_path, 'w', encoding='utf-8') as destination:
+                                json.dump(payload, destination, ensure_ascii=False, indent=2)
+                        except Exception:
+                            with open(target_path, 'wb') as destination:
+                                destination.write(raw)
+                        imported_jsons.append(target_path.name)
+                    else:
+                        with open(target_path, 'wb') as destination:
+                            shutil.copyfileobj(source, destination)
+                        imported_assets += 1
 
     except zipfile.BadZipFile:
         return jsonify({'status': 'error', 'message': '文件不是有效的 ZIP 压缩包'}), 400
@@ -1928,10 +2724,15 @@ def import_static_bundle():
     if not imported_jsons:
         return jsonify({'status': 'error', 'message': '压缩包中未发现 JSON 文件'}), 400
 
+    message = f'导入完成。JSON: {len(imported_jsons)} 个，资源文件: {imported_assets} 个'
+    if renamed_files:
+        message += f'，重名处理: {len(renamed_files)} 个'
+
     return jsonify({
         'status': 'success',
-        'message': f'导入完成。JSON: {len(imported_jsons)} 个，资源文件: {imported_assets} 个',
-        'jsonFiles': imported_jsons
+        'message': message,
+        'jsonFiles': imported_jsons,
+        'renamed': renamed_files
     })
 
 
@@ -2413,9 +3214,7 @@ def list_song_summaries():
     """返回精简的歌曲列表信息，避免前端批量读取静态资源。"""
     if not is_request_allowed():
         return abort(403)
-    locked_response = require_unlocked_device('查看歌曲列表')
-    if locked_response:
-        return locked_response
+    # 只读列表不要求解锁
 
     summaries: List[Dict[str, Any]] = []
     for file in STATIC_DIR.glob('*.json'):
@@ -2521,7 +3320,7 @@ def get_backups():
 
 
 @app.route('/upload_music', methods=['POST'])
-def upload_music():
+async def upload_music():
     if not is_request_allowed():
         return abort(403)
     try:
@@ -2542,7 +3341,7 @@ def upload_music():
         save_path = SONGS_DIR / clean_name
 
         # 如果文件已存在则覆盖
-        file.save(save_path)
+        await save_upload_file(file, save_path)
 
         return jsonify({'status': 'success', 'filename': clean_name})
 
@@ -2551,7 +3350,7 @@ def upload_music():
 
 
 @app.route('/upload_image', methods=['POST'])
-def upload_image():
+async def upload_image():
     if not is_request_allowed():
         return abort(403)
     try:
@@ -2578,7 +3377,7 @@ def upload_image():
         save_path = SONGS_DIR / clean_name
 
         # 如果文件已存在则覆盖
-        file.save(save_path)
+        await save_upload_file(file, save_path)
 
         return jsonify({'status': 'success', 'filename': clean_name})
 
@@ -2587,7 +3386,7 @@ def upload_image():
 
 
 @app.route('/upload_lyrics', methods=['POST'])
-def upload_lyrics():
+async def upload_lyrics():
     if not is_request_allowed():
         return abort(403)
     client_ip = request.remote_addr
@@ -2621,19 +3420,8 @@ def upload_lyrics():
             return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
-        # 记录上传开始
-        app.logger.info(
-            f'[{client_ip}] {username} 开始上传歌词: {clean_name} | 大小: {len(file.read())}字节'
-        )
-        file.seek(0)  # 重置文件指针
-
-        # 如果文件已存在则覆盖
-        file.save(save_path)
-
-        # 获取文件元信息
-        file_size = save_path.stat().st_size
-        checksum = hashlib.md5(file.read()).hexdigest()
-        file.seek(0)
+        # 保存文件并计算大小/校验
+        file_size, checksum = await save_upload_file_with_meta(file, save_path)
 
         app.logger.info(
             f'[{client_ip}] {username} 上传成功: {clean_name} | 大小: {file_size}字节 | MD5: {checksum}'
@@ -2648,7 +3436,7 @@ def upload_lyrics():
 
 
 @app.route('/upload_translation', methods=['POST'])
-def upload_translation():
+async def upload_translation():
     if not is_request_allowed():
         return abort(403)
     client_ip = request.remote_addr
@@ -2682,19 +3470,8 @@ def upload_translation():
             return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
         save_path = SONGS_DIR / clean_name
 
-        # 记录上传开始
-        app.logger.info(
-            f'[{client_ip}] {username} 开始上传翻译: {clean_name} | 大小: {len(file.read())}字节'
-        )
-        file.seek(0)
-
-        # 保存文件
-        file.save(save_path)
-
-        # 获取文件元信息
-        file_size = save_path.stat().st_size
-        checksum = hashlib.md5(file.read()).hexdigest()
-        file.seek(0)
+        # 保存文件并计算大小/校验
+        file_size, checksum = await save_upload_file_with_meta(file, save_path)
 
         app.logger.info(
             f'[{client_ip}] {username} 翻译上传成功: {clean_name} | 大小: {file_size}字节 | MD5: {checksum}'
@@ -4992,7 +5769,7 @@ def translate_lyrics():
                 app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
                 app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}, compat_mode: {compat_mode}")
 
-        return Response(generate(), mimetype='text/event-stream')
+        return StreamingResponse(generate(), media_type='text/event-stream')
 
     except Exception as e:
         error_type = type(e).__name__
@@ -5059,7 +5836,7 @@ def lyrics_animate():
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
     else:  # 默认为 'Kok' 或其他值
-        return render_template('Lyrics-style.HTML-COK.HTML')
+        return render_template('Lyrics-style.HTML-COK-up.HTML')
 
 @app.route('/lyrics')
 def get_lyrics():
@@ -5465,6 +6242,21 @@ def is_request_allowed():
     # 样式预览接口在安全模式下也需放行，便于未授权用户查看歌词样式
     if is_style_preview_path(request.path):
         return True
+    # 允许远程查看只读歌曲列表
+    if request.path == '/songs/summary':
+        return True
+    # 允许远程快速导入 static.zip
+    if request.path == '/import_static':
+        return True
+    # 允许远程备份与下载客户端备份
+    if request.path in (
+        '/backup_client_state',
+        '/download_client_backup',
+        '/anchor_backup',
+        '/download_anchor_backup',
+        '/get_anchor_backup'
+    ):
+        return True
 
     # 获取安全配置
     security_config = get_security_config()
@@ -5790,10 +6582,12 @@ def api_switch_port():
             # 记录端口切换审计日志
             app.logger.info(f"端口切换 - 操作IP: {request.remote_addr}, 切换到随机端口: {port}")
             # 重启到新端口
-            import sys, os
-            import webbrowser
-            webbrowser.open(f'http://127.0.0.1:{port}')
-            os.execv(sys.executable, [sys.executable, __file__, str(port)])
+            import threading
+            threading.Thread(
+                target=restart_on_port,
+                args=(port, f'http://127.0.0.1:{port}'),
+                daemon=True
+            ).start()
             return jsonify({'status': 'success', 'port': port})
     return jsonify({'status': 'fail', 'message': '无法找到可用端口'}), 500
 
@@ -5808,17 +6602,31 @@ def api_restore_port():
     print(f'[端口恢复] 已写入 port_status.json: mode=normal, port=5000')
     # 记录端口恢复审计日志
     app.logger.info(f"端口恢复 - 操作IP: {request.remote_addr}, 恢复到默认端口: 5000")
-    import sys, os
-    import webbrowser
-    webbrowser.open('http://127.0.0.1:5000')
-    os.execv(sys.executable, [sys.executable, __file__, '5000'])
+    import threading
+    threading.Thread(
+        target=restart_on_port,
+        args=(5000, 'http://127.0.0.1:5000'),
+        daemon=True
+    ).start()
     return jsonify({'status': 'success'})
 
-def restart_on_port(port):
+def restart_on_port(port, open_url=None):
     import time
-    time.sleep(1)  # 给前端响应时间
-    python = sys.executable
-    os.execv(python, [python, __file__, str(port)])
+    import subprocess
+    import webbrowser
+    time.sleep(1)  # Give the client time to receive the response.
+    if open_url:
+        try:
+            webbrowser.open(open_url)
+        except Exception:
+            pass
+    executable = sys.executable
+    if getattr(sys, 'frozen', False):
+        args = [executable, str(port)]
+    else:
+        args = [executable, __file__, str(port)]
+    subprocess.Popen(args, close_fds=True)
+    os._exit(0)
 
 @app.route('/get_my_ip')
 def get_my_ip():
@@ -5869,7 +6677,7 @@ def amll_stream_api():
             except queue.Empty:
                 # 心跳：防止 Nginx/浏览器断流
                 yield ": keep-alive\n\n"
-    return Response(_gen(), mimetype="text/event-stream")
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 @app.route('/lyrics-amll')
 def lyrics_amll_page():
@@ -5967,6 +6775,9 @@ def amll_create_song():
     except Exception as exc:
         app.logger.error(f"AMLL 创建歌曲失败: {exc}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'创建失败: {exc}'})
+
+# Mount static directory at root to mirror Flask static_url_path=''
+app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ===== AMLL CSV 导出功能 =====
 def norm_type(t):
@@ -7033,7 +7844,7 @@ def _run_ws_loop():
     asyncio.run(_ws_main())
 
 def start_ws_server_once():
-    # 避免 Flask Debug reloader 启两遍
+    # Avoid double start when a reloader is enabled
     if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
         t = threading.Thread(target=_run_ws_loop, name="WS-Server", daemon=True)
         t.start()
@@ -7066,22 +7877,19 @@ if __name__ == '__main__':
                 f.write(startup_cmd)
             with open(BASE_PATH / 'last_startup.txt', 'w', encoding='utf-8') as f:
                 f.write(startup_cmd)
-            # 检查是否用waitress启动
-            if os.environ.get('USE_WAITRESS', '0') == '1':
-                from waitress import serve
-                # 标准化的 Waitress 配置参数
-                serve(
-                    app,
-                    host='0.0.0.0',
-                    port=port,
-                    threads=int(os.getenv('WT_THREADS', 8)),             # 线程数
-                    connection_limit=int(os.getenv('WT_CONN_LIMIT', 200)),# 并发连接上限
-                    channel_timeout=int(os.getenv('WT_TIMEOUT', 30)),     # 空闲通道超时（秒）
-                    backlog=int(os.getenv('WT_BACKLOG', 512)),            # 半连接队列
-                    ident=None                                           # 服务器标识
-                )
-            else:
-                app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+            use_waitress = os.environ.get('USE_WAITRESS', '0') == '1'
+            if use_waitress:
+                app.logger.info("USE_WAITRESS=1 detected; FastAPI will use uvicorn instead of waitress.")
+            import uvicorn
+            uvicorn.run(
+                app,
+                host='0.0.0.0',
+                port=port,
+                log_level=os.getenv('UVICORN_LOG_LEVEL', 'info'),
+                reload=False,
+                workers=int(os.getenv('UVICORN_WORKERS', '1')),
+                use_colors=False
+            )
             return True
         except OSError as e:
             print(f'[启动] 端口 {port} 启动失败: {e}')
@@ -7108,7 +7916,7 @@ if __name__ == '__main__':
     
     print(f'[主进程启动] sys.argv: {sys.argv}, 最终启动端口: {port}')
 
-    # 先起 WS，再起 Flask
+    # Start WS first, then FastAPI
     ws_thread = start_ws_server_once()
 
     if not try_run(port):

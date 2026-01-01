@@ -1,0 +1,717 @@
+{
+ "version": "auto-py-to-exe-configuration_v1",
+ "pyinstallerOptions": [
+  {
+   "optionDest": "noconfirm",
+   "value": true
+  },
+  {
+   "optionDest": "filenames",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/backend.py"
+  },
+  {
+   "optionDest": "onefile",
+   "value": true
+  },
+  {
+   "optionDest": "console",
+   "value": true
+  },
+  {
+   "optionDest": "clean_build",
+   "value": false
+  },
+  {
+   "optionDest": "strip",
+   "value": false
+  },
+  {
+   "optionDest": "noupx",
+   "value": false
+  },
+  {
+   "optionDest": "disable_windowed_traceback",
+   "value": false
+  },
+  {
+   "optionDest": "uac_admin",
+   "value": false
+  },
+  {
+   "optionDest": "uac_uiaccess",
+   "value": false
+  },
+  {
+   "optionDest": "argv_emulation",
+   "value": false
+  },
+  {
+   "optionDest": "bootloader_ignore_signals",
+   "value": false
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/backend.py;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/logs;logs/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static;static/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates;templates/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/logs/upload.log;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/amll_web_player.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/LyricSphere.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/assets;assets/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/backups;backups/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/icons;icons/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/public;public/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/songs;songs/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/public/icons;icons/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyrics_quick_editor.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML-AMLL-v1.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets;assets/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/basic-languages;basic-languages/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/editor;editor/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/css;css/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/html;html/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/json;json/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/typescript;typescript/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/_commonjsHelpers-CT9FvmAN.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/abap-D-t0cyap.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/apex-CcIm7xu6.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/azcli-BA0tQDCg.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/bat-C397hTD6.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/bicep-DF5aW17k.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/cameligo-plsz8qhj.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/clojure-Y2auQMzK.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/coffee-Bu45yuWE.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/cpp-CkKPQIni.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/csharp-CX28MZyh.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/csp-D8uWnyxW.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/css-CaeNmE3S.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/cssMode-CjiAH6dQ.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/cypher-DVThT8BS.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/dart-CmGfCvrO.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/dockerfile-CZqqYdch.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/ecl-30fUercY.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/editor.api-CalNCsUg.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/elixir-xjPaIfzF.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/flow9-DqtmStfK.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/freemarker2-Cz_sV6Md.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/fsharp-BOMdg4U1.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/go-D_hbi-Jt.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/graphql-CKUU4kLG.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/handlebars-OwglfO-1.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/hcl-DTaboeZW.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/htmlMode-Bz67EXwp.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/html-Pa1xEWsY.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/ini-CsNwO04R.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/java-CI4ZMsH9.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/javascript-PczUCGdz.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/jsonMode-DULH5oaX.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/julia-BwzEvaQw.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/kotlin-IUYPiTV8.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/less-C0eDYdqa.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/lexon-iON-Kj97.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/liquid-DqKjdPGy.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/loader.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/lspLanguageFeatures-kM9O9rjY.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/lua-DtygF91M.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/m3-CsR4AuFi.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/markdown-C_rD0bIw.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/mdx-DEWtB1K5.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/mips-CiYP61RB.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/monaco.contribution-D2OdxNBt.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/monaco.contribution-DO3azKX8.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/monaco.contribution-EcChJV6a.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/monaco.contribution-qLAYrEOP.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/msdax-C38-sJlp.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/mysql-CdtbpvbG.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.cs.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.de.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.es.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.fr.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.it.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.ja.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.ko.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.pl.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.pt-br.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.ru.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.tr.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.zh-cn.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages.zh-tw.js.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/nls.messages-loader.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/objective-c-CntZFaHX.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/pascaligo-BiXoTmXh.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/pascal-r6kuqfl_.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/perl-DABw_TcH.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/pgsql-me_jFXeX.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/php-D_kh-9LK.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/pla-VfZjczW0.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/postiats-BBSzz8Pk.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/powerquery-Dt-g_2cc.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/powershell-B-7ap1zc.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/protobuf-BmtuEB1A.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/pug-BRpRNeEb.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/python-Cr0UkIbn.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/qsharp-BzsFaUU9.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/razor-BYAHOTkz.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/redis-fvZQY4PI.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/redshift-45Et0LQi.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/restructuredtext-C7UUFKFD.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/r-f8dDdrp4.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/ruby-CZO8zYTz.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/rust-Bfetafyc.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/sb-3GYllVck.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/scala-foMgrKo1.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/scheme-CHdMtr7p.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/scss-C1cmLt9V.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/shell-ClXCKCEW.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/solidity-MZ6ExpPy.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/sophia-DWkuSsPQ.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/sparql-AUGFYSyk.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/sql-32GpJSV2.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/st-CuDFIVZ_.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/swift-n-2HociN.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/systemverilog-Ch4vA8Yt.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/tcl-D74tq1nH.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/tsMode-CZz1Umrk.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/twig-C6taOxMV.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/typescript-DfOrAzoV.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/typespec-D-PIh9Xw.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/vb-Dyb2648j.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/wgsl-BhLXMOR0.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/workers-DcJshg-q.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/xml-CdsdnY8S.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/yaml-DYGvmE88.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets/css.worker-HnVq6Ewq.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets/editor.worker-Be8ye1pW.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets/html.worker-B51mlPHg.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets/json.worker-DKiEKt88.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/assets/ts.worker-CMbG-7ft.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/basic-languages/monaco.contribution.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/editor/editor.main.css;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/editor/editor.main.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/css/monaco.contribution.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/html/monaco.contribution.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/json/monaco.contribution.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/static/monaco/vs/language/typescript/monaco.contribution.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/editor_amll.svg;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/Lyrics-style.HTML-COK-up.HTML;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2;lyric-sphere-v2/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist;dist/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist/index.html;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist/vite.svg;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist/assets;assets/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist/assets/index-DcmsB7vA.css;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/dist/assets/index-zFtF52pj.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/public;public/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/public/vite.svg;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src;src/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/api.js;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/App.css;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/App.jsx;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/index.css;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/lyrics-player.css;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/main.jsx;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/assets;assets/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/src/assets/react.svg;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "D:/\u7f16\u7a0b/\u5e38\u7528\u7684python\u811a\u672c/LyricSphere/templates/lyric-sphere-v2/index.html;."
+  }
+ ],
+ "nonPyinstallerOptions": {
+  "increaseRecursionLimit": true,
+  "manualArguments": ""
+ }
+}

@@ -177,14 +177,17 @@
 
         .lyric-line.left-aligned {
             justify-content: flex-start;
+            text-align: left;
         }
 
         .lyric-line.center-aligned {
             justify-content: center;
+            text-align: center;
         }
 
         .lyric-line.right-aligned {
             justify-content: flex-end;
+            text-align: right;
         }
 
         .lyric-line.small-font {
@@ -250,6 +253,45 @@
         .lyric-line.active {
             /*background: rgba(255,255,255,0.08);  可选：高亮当前行 */
             border-radius: 0.2em;
+        }
+
+        .amll-main-line {
+            margin: -1em;
+            padding: 1em;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.35);
+        }
+
+        .amll-main-line span {
+            display: inline-block;
+        }
+
+        .amll-main-line > span,
+        .amll-emphasize-wrapper {
+            white-space: pre-wrap;
+            display: inline-block;
+            padding: 1em;
+            margin: -1em;
+            will-change: transform;
+        }
+
+        .amll-emphasize,
+        .amll-emphasize-wrapper span.amll-emphasize {
+            padding: 1em;
+            margin: -1em;
+            backface-visibility: hidden;
+        }
+
+        .amll-emphasize > span {
+            padding: 1em;
+            margin: -1em;
+            will-change: transform;
+            backface-visibility: hidden;
+        }
+
+        .amll-roman-word {
+            font-size: 0.5em;
+            line-height: 1em;
         }
         /* 新增：翻译行对齐样式 */
         .translation-line.left-aligned {
@@ -1447,128 +1489,638 @@
                 moveTransitionCleanup.set(element, record);
             }
 
-            function generateBackgroundFadeStyle(elementWidth, elementHeight, fadeRatio) {
-                            const fadeWidth = elementHeight * fadeRatio;
-                            const widthRatio = elementWidth === 0 ? 0 : fadeWidth / elementWidth;
+            const SUPPORT_MASK_IMAGE =
+                (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('mask-image', 'none'))
+                || (typeof CSS !== 'undefined' && CSS.supports && CSS.supports('-webkit-mask-image', 'none'));
+            const ANIMATION_FRAME_QUANTITY = 32;
+            const EMP_EASING_MID = 0.5;
 
-                            const totalAspect = 2 + widthRatio;
-                            const widthInTotal = totalAspect === 0 ? 0 : widthRatio / totalAspect;
-                            const leftPos = (1 - widthInTotal) / 2;
+            function bezierEasing(mX1, mY1, mX2, mY2) {
+                if (mX1 === mY1 && mX2 === mY2) {
+                    return (x) => x;
+                }
+                const NEWTON_ITERATIONS = 4;
+                const NEWTON_MIN_SLOPE = 0.001;
+                const SUBDIVISION_PRECISION = 0.0000001;
+                const SUBDIVISION_MAX_ITERATIONS = 10;
+                const kSplineTableSize = 11;
+                const kSampleStepSize = 1.0 / (kSplineTableSize - 1.0);
+                const sampleValues = new Float32Array(kSplineTableSize);
 
-                            const from = leftPos * 100;
-                            const to = (leftPos + widthInTotal) * 100;
+                const A = (a1, a2) => 1.0 - 3.0 * a2 + 3.0 * a1;
+                const B = (a1, a2) => 3.0 * a2 - 6.0 * a1;
+                const C = (a1) => 3.0 * a1;
+                const calcBezier = (t, a1, a2) => ((A(a1, a2) * t + B(a1, a2)) * t + C(a1)) * t;
+                const getSlope = (t, a1, a2) => 3.0 * A(a1, a2) * t * t + 2.0 * B(a1, a2) * t + C(a1);
 
-                            const backgroundImage = `linear-gradient(to right, rgba(255, 255, 255, var(--rcolor)) ${from}%, rgba(255, 255, 255, var(--color)) ${to}%)`;
-                            const backgroundSize = `${totalAspect * 100}% 100%`;
-                            const totalPxWidth = -(elementWidth + fadeWidth);
-                            return { backgroundImage, backgroundSize, totalPxWidth };
+                for (let i = 0; i < kSplineTableSize; ++i) {
+                    sampleValues[i] = calcBezier(i * kSampleStepSize, mX1, mX2);
+                }
+
+                const binarySubdivide = (x, a, b) => {
+                    let currentX, currentT, i = 0;
+                    do {
+                        currentT = a + (b - a) / 2.0;
+                        currentX = calcBezier(currentT, mX1, mX2) - x;
+                        if (currentX > 0.0) {
+                            b = currentT;
+                        } else {
+                            a = currentT;
                         }
+                    } while (Math.abs(currentX) > SUBDIVISION_PRECISION && ++i < SUBDIVISION_MAX_ITERATIONS);
+                    return currentT;
+                };
 
-                        function createKaraokeFrames(blocks, index, lineDuration, fadeRatio) {
-                            const frames = [];
-                            if (!blocks[index]) return frames;
+                const newtonRaphsonIterate = (x, guessT) => {
+                    for (let i = 0; i < NEWTON_ITERATIONS; ++i) {
+                        const currentSlope = getSlope(guessT, mX1, mX2);
+                        if (currentSlope === 0.0) return guessT;
+                        const currentX = calcBezier(guessT, mX1, mX2) - x;
+                        guessT -= currentX / currentSlope;
+                    }
+                    return guessT;
+                };
 
-                            const element = blocks[index].ele;
-                            const elementWidth = element.offsetWidth;
-                            const computed = getComputedStyle(element);
-                            const elementHeight = element.offsetHeight || parseFloat(computed.fontSize) || 0;
-                            const fadeWidth = elementHeight * fadeRatio;
-                            const fullBlockWidth = elementWidth + fadeWidth - 2;
+                const getTForX = (x) => {
+                    let intervalStart = 0.0;
+                    let currentSample = 1;
+                    const lastSample = kSplineTableSize - 1;
 
-                            let totalDuration = Math.max(1, lineDuration);
-                            if (blocks.length > 0) {
-                                const lastBlockEnd = blocks[blocks.length - 1].endTime;
-                                const firstBlockStart = blocks[0].startTime;
-                                totalDuration = Math.max(1, lastBlockEnd - firstBlockStart);
-                            }
+                    for (; currentSample !== lastSample && sampleValues[currentSample] <= x; ++currentSample) {
+                        intervalStart += kSampleStepSize;
+                    }
+                    --currentSample;
+                    const dist = (x - sampleValues[currentSample]) /
+                        (sampleValues[currentSample + 1] - sampleValues[currentSample]);
+                    const guessT = intervalStart + dist * kSampleStepSize;
+                    const initialSlope = getSlope(guessT, mX1, mX2);
+                    if (initialSlope >= NEWTON_MIN_SLOPE) {
+                        return newtonRaphsonIterate(x, guessT);
+                    }
+                    if (initialSlope === 0.0) {
+                        return guessT;
+                    }
+                    return binarySubdivide(x, intervalStart, intervalStart + kSampleStepSize);
+                };
 
-                            let widthBeforeSelf = 0;
-                            for (let i = 0; i < index; i++) {
-                                widthBeforeSelf += blocks[i].ele.offsetWidth;
-                            }
-                            if (index > 0) {
-                                widthBeforeSelf += fadeWidth;
-                            }
+                return (x) => {
+                    if (x === 0 || x === 1) return x;
+                    return calcBezier(getTForX(x), mY1, mY2);
+                };
+            }
 
-                            const minOffset = -(fullBlockWidth);
-                            const clampOffset = (value) => Math.max(minOffset, Math.min(0, value));
+            const bezIn = bezierEasing(0.2, 0.4, 0.58, 1.0);
+            const bezOut = bezierEasing(0.3, 0.0, 0.58, 1.0);
+            const norNum = (min, max) => (x) => Math.min(1, Math.max(0, (x - min) / (max - min)));
+            const beginNum = norNum(0, EMP_EASING_MID);
+            const endNum = norNum(EMP_EASING_MID, 1);
+            const makeEmpEasing = (mid) => {
+                return (x) => (x < mid ? bezIn(beginNum(x)) : 1 - bezOut(endNum(x)));
+            };
 
-                            let currentPos = -widthBeforeSelf - elementWidth - fadeWidth;
-                            let timeOffset = 0;
-                            let lastPos = currentPos;
-                            let lastTime = 0;
-                            let lastTimestamp = blocks[0].startTime;
+            function createMatrix4() {
+                return [
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, 0, 1
+                ];
+            }
 
-                            const pushFrame = () => {
-                                let time = Math.max(0, Math.min(1, timeOffset));
-                                time = Math.round(time * 1e9) / 1e9;
-                                if (time < lastTime) {
-                                    time = lastTime;
-                                }
+            function scaleMatrix4(m, scale = 1) {
+                return [
+                    m[0] * scale, m[1] * scale, m[2] * scale, m[3],
+                    m[4] * scale, m[5] * scale, m[6] * scale, m[7],
+                    m[8] * scale, m[9] * scale, m[10] * scale, m[11],
+                    m[12], m[13], m[14], m[15]
+                ];
+            }
 
-                                const deltaTime = time - lastTime;
-                                const moveOffset = currentPos - lastPos;
-                                const ratio = moveOffset !== 0 ? Math.abs(deltaTime / moveOffset) : 0;
+            function matrix4ToCSS(m, fractionDigits = 4) {
+                const format = (n) => n.toFixed(fractionDigits);
+                return `matrix3d(${m.map(format).join(", ")})`;
+            }
 
-                                if (currentPos > minOffset && lastPos < minOffset) {
-                                    const staticTime = Math.abs(lastPos - minOffset) * ratio;
-                                    frames.push({
-                                        backgroundPosition: `${clampOffset(lastPos)}px 0`,
-                                        offset: lastTime + staticTime
-                                    });
-                                }
+            function isCJK(text) {
+                return /^[\p{Unified_Ideograph}\u0800-\u9FFC]+$/u.test(text || '');
+            }
 
-                                if (currentPos > 0 && lastPos < 0) {
-                                    const staticTime = Math.abs(lastPos) * ratio;
-                                    frames.push({
-                                        backgroundPosition: `${clampOffset(currentPos)}px 0`,
-                                        offset: lastTime + staticTime
-                                    });
-                                }
+            function shouldEmphasize(word) {
+                if (!word || !word.word) return false;
+                const duration = word.endTime - word.startTime;
+                if (isCJK(word.word)) return duration >= 1000;
+                const trimmed = word.word.trim();
+                return duration >= 1000 && trimmed.length <= 7 && trimmed.length > 1;
+            }
 
-                                frames.push({
-                                    backgroundPosition: `${clampOffset(currentPos)}px 0`,
-                                    offset: time
-                                });
-
-                                lastPos = currentPos;
-                                lastTime = time;
-                            };
-
-                            pushFrame();
-
-                            blocks.forEach((block, i) => {
-                                const absoluteStart = block.startTime;
-                                const absoluteEnd = block.endTime;
-
-                                const staticDuration = absoluteStart - lastTimestamp;
-                                if (staticDuration > 0) {
-                                    timeOffset += staticDuration / totalDuration;
-                                    pushFrame();
-                                    lastTimestamp = absoluteStart;
-                                }
-
-                                const moveDuration = Math.max(0, absoluteEnd - absoluteStart);
-                                if (moveDuration > 0) {
-                                    timeOffset += moveDuration / totalDuration;
-                                    currentPos += block.ele.offsetWidth;
-                                    if (i === 0) {
-                                        currentPos += fadeWidth * 1.5;
-                                    }
-                                    if (i === blocks.length - 1) {
-                                        currentPos += fadeWidth * 0.5;
-                                    }
-                                    pushFrame();
-                                    lastTimestamp = absoluteEnd;
-                                }
+            function chunkAndSplitLyricWords(words) {
+                const resplitedWords = [];
+                for (const w of words) {
+                    const realLength = (w.word || '').replace(/\s/g, '').length || 1;
+                    const splited = (w.word || '').split(' ').filter((v) => v.trim().length > 0);
+                    if (splited.length > 1) {
+                        if (w.word.startsWith(' ')) {
+                            resplitedWords.push({
+                                word: ' ',
+                                romanWord: '',
+                                startTime: 0,
+                                endTime: 0,
+                                obscene: false,
+                                fontFamily: w.fontFamily,
+                                fontClass: w.fontClass
                             });
-
-                            if (frames.length > 0) {
-                                frames[frames.length - 1].offset = 1;
-                            }
-
-                            return frames;
                         }
+                        let charPos = 0;
+                        for (const s of splited) {
+                            resplitedWords.push({
+                                word: s,
+                                romanWord: '',
+                                obscene: w.obscene,
+                                startTime: w.startTime + (charPos / realLength) * (w.endTime - w.startTime),
+                                endTime: w.startTime + ((charPos + s.length) / realLength) * (w.endTime - w.startTime),
+                                fontFamily: w.fontFamily,
+                                fontClass: w.fontClass
+                            });
+                            resplitedWords.push({
+                                word: ' ',
+                                romanWord: '',
+                                startTime: 0,
+                                endTime: 0,
+                                obscene: false,
+                                fontFamily: w.fontFamily,
+                                fontClass: w.fontClass
+                            });
+                            charPos += s.length;
+                        }
+                        if (!w.word.endsWith(' ')) {
+                            resplitedWords.pop();
+                        }
+                    } else {
+                        resplitedWords.push({ ...w });
+                    }
+                }
+
+                let wordChunk = [];
+                let wChunk = [];
+                const result = [];
+
+                const CJKEXP = /^[\p{Unified_Ideograph}\u0800-\u9FFC]+$/u;
+
+                for (const w of resplitedWords) {
+                    const word = w.word;
+                    wordChunk.push(word);
+                    wChunk.push(w);
+                    if (word.length > 0 && word.trim().length === 0) {
+                        wordChunk.pop();
+                        wChunk.pop();
+                        if (wChunk.length === 1) {
+                            result.push(wChunk[0]);
+                        } else if (wChunk.length > 1) {
+                            result.push(wChunk);
+                        }
+                        result.push(w);
+                        wordChunk = [];
+                        wChunk = [];
+                    } else if (!/^\s*[^\s]*\s*$/.test(wordChunk.join('')) || CJKEXP.test(word)) {
+                        wordChunk.pop();
+                        wChunk.pop();
+                        if (wChunk.length === 1) {
+                            result.push(wChunk[0]);
+                        } else if (wChunk.length > 1) {
+                            result.push(wChunk);
+                        }
+                        wordChunk = [word];
+                        wChunk = [w];
+                    }
+                }
+
+                if (wChunk.length === 1) {
+                    result.push(wChunk[0]);
+                } else if (wChunk.length > 1) {
+                    result.push(wChunk);
+                }
+
+                return result;
+            }
+
+            function generateFadeGradient(width, padding = 0, bright = 'rgba(0,0,0,var(--rcolor))', dark = 'rgba(0,0,0,var(--color))') {
+                const totalAspect = 2 + width + padding;
+                const widthInTotal = width / totalAspect;
+                const leftPos = (1 - widthInTotal) / 2;
+                return [
+                    `linear-gradient(to right,${bright} ${leftPos * 100}%,${dark} ${(leftPos + widthInTotal) * 100}%)`,
+                    totalAspect
+                ];
+            }
+
+            const NORMAL_FLOAT_UP_EM = 0.1;
+            const EMPHASIZE_FLOAT_UP_EM = 0.05;
+
+            function initFloatAnimation(word, wordEl, lineStartMs, isBg, upEm) {
+                const delay = word.startTime - lineStartMs;
+                const duration = Math.max(1000, word.endTime - word.startTime);
+                let up = Number.isFinite(upEm) ? upEm : NORMAL_FLOAT_UP_EM;
+                if (isBg) {
+                    up *= 2;
+                }
+                const a = wordEl.animate([
+                    { transform: 'translateY(0px)' },
+                    { transform: `translateY(${-up}em)` }
+                ], {
+                    duration: Number.isFinite(duration) ? duration : 0,
+                    delay: Number.isFinite(delay) ? delay : 0,
+                    id: 'float-word',
+                    composite: 'add',
+                    fill: 'both',
+                    easing: 'ease-out'
+                });
+                a.pause();
+                return a;
+            }
+
+            function initEmphasizeAnimation(word, characterElements, duration, delay, isBg, lineWords) {
+                const de = Math.max(0, delay);
+                let du = Math.max(1000, duration);
+                let amount = du / 2000;
+                amount = amount > 1 ? Math.sqrt(amount) : amount ** 3;
+                let blur = du / 3000;
+                blur = blur > 1 ? Math.sqrt(blur) : blur ** 3;
+                amount *= 0.6;
+                blur *= 0.5;
+                if (lineWords && lineWords.length > 0 && word.word.includes(lineWords[lineWords.length - 1].word)) {
+                    amount *= 1.6;
+                    blur *= 1.5;
+                    du *= 1.2;
+                }
+                amount = Math.min(1.2, amount);
+                blur = Math.min(0.8, blur);
+
+                const animateDu = Number.isFinite(du) ? du : 0;
+                const empEasing = makeEmpEasing(EMP_EASING_MID);
+
+                return characterElements.flatMap((el, i, arr) => {
+                    const wordDe = de + (du / 2.5 / arr.length) * i;
+                    const frames = new Array(ANIMATION_FRAME_QUANTITY).fill(0).map((_, j) => {
+                        const x = (j + 1) / ANIMATION_FRAME_QUANTITY;
+                        const transX = empEasing(x);
+                        const glowLevel = empEasing(x) * blur;
+                        const mat = scaleMatrix4(createMatrix4(), 1 + transX * 0.1 * amount);
+                        const offsetX = -transX * 0.03 * amount * (arr.length / 2 - i);
+                        const offsetY = -transX * 0.025 * amount;
+                        return {
+                            offset: x,
+                            transform: `${matrix4ToCSS(mat, 4)} translate(${offsetX}em, ${offsetY}em)`,
+                            textShadow: `0 0 ${Math.min(0.3, blur * 0.3)}em rgba(255, 255, 255, ${glowLevel})`
+                        };
+                    });
+
+                    const glow = el.animate(frames, {
+                        duration: animateDu,
+                        delay: Number.isFinite(wordDe) ? wordDe : 0,
+                        id: `emphasize-word-${el.innerText}-${i}`,
+                        iterations: 1,
+                        composite: 'replace',
+                        fill: 'both'
+                    });
+                    glow.onfinish = () => {
+                        glow.pause();
+                    };
+                    glow.pause();
+
+                    const floatFrames = new Array(ANIMATION_FRAME_QUANTITY).fill(0).map((_, j) => {
+                        const x = (j + 1) / ANIMATION_FRAME_QUANTITY;
+                        let y = Math.sin(x * Math.PI);
+                        if (isBg) {
+                            y *= 2;
+                        }
+                        return {
+                            offset: x,
+                            transform: `translateY(${-y * EMPHASIZE_FLOAT_UP_EM}em)`
+                        };
+                    });
+                    const float = el.animate(floatFrames, {
+                        duration: animateDu * 1.4,
+                        delay: Number.isFinite(wordDe) ? wordDe - 400 : 0,
+                        id: 'emphasize-word-float',
+                        iterations: 1,
+                        composite: 'add',
+                        fill: 'both'
+                    });
+                    float.onfinish = () => {
+                        float.pause();
+                    };
+                    float.pause();
+
+                    return [glow, float];
+                });
+            }
+
+            function buildAmllWords(line, mainEl, fontMeta) {
+                const syllables = Array.isArray(line.syllables) ? line.syllables : [];
+                if (syllables.length === 0) {
+                    return { realWords: [], lineStartMs: 0, lineEndMs: 0 };
+                }
+                const lineStartMs = Math.round(parseFloat(syllables[0].startTime) * 1000);
+                const lastSyllable = syllables[syllables.length - 1];
+                const lineEndMs = Math.round((parseFloat(lastSyllable.startTime) + parseFloat(lastSyllable.duration)) * 1000);
+                const isBgLine = Boolean(line.isBackground || line.isBG || line.is_background || line.isbg);
+
+                const words = syllables.map((syllable) => {
+                    const startMs = Math.round(parseFloat(syllable.startTime) * 1000);
+                    const durationMs = Math.round(parseFloat(syllable.duration) * 1000);
+                    const endMs = startMs + durationMs;
+                    const fontFamily = syllable.fontFamily || '';
+                    const fontClass = fontFamily ? ensureFontClass(fontFamily, buildFontValue(fontFamily, fontMeta.aliases, fontMeta.bodyFont, true)) : '';
+                    return {
+                        word: syllable.text || '',
+                        romanWord: '',
+                        startTime: startMs,
+                        endTime: endMs,
+                        obscene: false,
+                        fontFamily,
+                        fontClass
+                    };
+                });
+
+                const chunked = chunkAndSplitLyricWords(words);
+                mainEl.innerHTML = '';
+                const realWords = [];
+
+                const applyWordFont = (el, word) => {
+                    if (!word) return;
+                    if (word.fontFamily) {
+                        el.style.fontFamily = buildFontValue(word.fontFamily, fontMeta.aliases, fontMeta.bodyFont, true);
+                    }
+                    if (word.fontClass) {
+                        el.classList.add(word.fontClass);
+                    }
+                };
+
+                const buildChunkGroup = (chunk) => {
+                    const merged = chunk.reduce((a, b) => {
+                        a.endTime = Math.max(a.endTime, b.endTime);
+                        a.startTime = Math.min(a.startTime, b.startTime);
+                        a.word += b.word;
+                        return a;
+                    }, {
+                        word: '',
+                        romanWord: '',
+                        startTime: Number.POSITIVE_INFINITY,
+                        endTime: Number.NEGATIVE_INFINITY,
+                        obscene: false
+                    });
+
+                    const emp = chunk.map((word) => shouldEmphasize(word)).reduce((a, b) => a || b, shouldEmphasize(merged));
+                    const wrapperWordEl = document.createElement('span');
+                    wrapperWordEl.classList.add('amll-emphasize-wrapper');
+
+                    const characterElements = [];
+                    chunk.forEach((word) => {
+                        const mainWordEl = document.createElement('span');
+                        if (emp) {
+                            mainWordEl.classList.add('amll-emphasize');
+                            const charEls = [];
+                            for (const char of (word.word || '').trim()) {
+                                const charEl = document.createElement('span');
+                                charEl.innerText = char;
+                                charEls.push(charEl);
+                                characterElements.push(charEl);
+                                mainWordEl.appendChild(charEl);
+                            }
+                            applyWordFont(mainWordEl, word);
+                            realWords.push({
+                                ...word,
+                                mainElement: mainWordEl,
+                                subElements: charEls,
+                                elementAnimations: [initFloatAnimation(word, mainWordEl, lineStartMs, isBgLine, NORMAL_FLOAT_UP_EM)],
+                                maskAnimations: [],
+                                width: 0,
+                                height: 0,
+                                padding: 0,
+                                shouldEmphasize: emp
+                            });
+                        } else {
+                            mainWordEl.innerText = word.word || '';
+                            applyWordFont(mainWordEl, word);
+                            realWords.push({
+                                ...word,
+                                mainElement: mainWordEl,
+                                subElements: [],
+                                elementAnimations: [initFloatAnimation(word, mainWordEl, lineStartMs, isBgLine, NORMAL_FLOAT_UP_EM)],
+                                maskAnimations: [],
+                                width: 0,
+                                height: 0,
+                                padding: 0,
+                                shouldEmphasize: emp
+                            });
+                        }
+                        wrapperWordEl.appendChild(mainWordEl);
+                    });
+
+                    if (emp && realWords.length > 0) {
+                        realWords[realWords.length - 1].elementAnimations.push(
+                            ...initEmphasizeAnimation(merged, characterElements, merged.endTime - merged.startTime, merged.startTime - lineStartMs, isBgLine, words)
+                        );
+                    }
+
+                    if (merged.word.trimStart() !== merged.word) {
+                        mainEl.appendChild(document.createTextNode(' '));
+                    }
+                    mainEl.appendChild(wrapperWordEl);
+                    if (merged.word.trimEnd() !== merged.word && shouldEmphasize(merged)) {
+                        mainEl.appendChild(document.createTextNode(' '));
+                    }
+                };
+
+                const buildSingleWord = (chunk) => {
+                    const emp = shouldEmphasize(chunk);
+                    const mainWordEl = document.createElement('span');
+                    const realWord = {
+                        ...chunk,
+                        mainElement: mainWordEl,
+                        subElements: [],
+                        elementAnimations: [initFloatAnimation(chunk, mainWordEl, lineStartMs, isBgLine, NORMAL_FLOAT_UP_EM)],
+                        maskAnimations: [],
+                        width: 0,
+                        height: 0,
+                        padding: 0,
+                        shouldEmphasize: emp
+                    };
+
+                    if (emp) {
+                        mainWordEl.classList.add('amll-emphasize');
+                        const charEls = [];
+                        for (const char of (chunk.word || '').trim()) {
+                            const charEl = document.createElement('span');
+                            charEl.innerText = char;
+                            charEls.push(charEl);
+                            mainWordEl.appendChild(charEl);
+                        }
+                        realWord.subElements = charEls;
+                        const duration = Math.abs(realWord.endTime - realWord.startTime);
+                        realWord.elementAnimations.push(
+                            ...initEmphasizeAnimation(chunk, charEls, duration, realWord.startTime - lineStartMs, isBgLine, words)
+                        );
+                    } else {
+                        mainWordEl.innerText = (chunk.word || '').trim();
+                    }
+
+                    applyWordFont(mainWordEl, chunk);
+
+                    if (chunk.word.trimStart() !== chunk.word) {
+                        mainEl.appendChild(document.createTextNode(' '));
+                    }
+                    mainEl.appendChild(mainWordEl);
+                    if (chunk.word.trimEnd() !== chunk.word) {
+                        mainEl.appendChild(document.createTextNode(' '));
+                    }
+                    realWords.push(realWord);
+                };
+
+                chunked.forEach((chunk) => {
+                    if (Array.isArray(chunk)) {
+                        if (chunk.length === 0) return;
+                        buildChunkGroup(chunk);
+                    } else if (chunk.word.trim().length === 0) {
+                        mainEl.appendChild(document.createTextNode(' '));
+                    } else {
+                        buildSingleWord(chunk);
+                    }
+                });
+
+                return { realWords, lineStartMs, lineEndMs };
+            }
+
+            function updateWordMetrics(realWords) {
+                realWords.forEach((word) => {
+                    const el = word.mainElement;
+                    if (el) {
+                        word.padding = Number.parseFloat(getComputedStyle(el).paddingLeft) || 0;
+                        word.width = el.clientWidth - word.padding * 2;
+                        word.height = el.clientHeight - word.padding * 2;
+                    } else {
+                        word.width = 0;
+                        word.height = 0;
+                        word.padding = 0;
+                    }
+                });
+            }
+
+            function generateCalcBasedMaskImage(realWords, lineStartMs) {
+                realWords.forEach((word) => {
+                    const wordEl = word.mainElement;
+                    if (!wordEl) return;
+                    const fadeWidth = word.height * (SYLLABLE_FADE_RATIO || 0.3);
+                    const [maskImage, totalAspect] = generateFadeGradient(fadeWidth / Math.max(1, word.width));
+                    const totalAspectStr = `${totalAspect * 100}% 100%`;
+                    wordEl.style.maskImage = maskImage;
+                    wordEl.style.maskRepeat = 'no-repeat';
+                    wordEl.style.maskOrigin = 'left';
+                    wordEl.style.maskSize = totalAspectStr;
+                    wordEl.style.webkitMaskImage = maskImage;
+                    wordEl.style.webkitMaskRepeat = 'no-repeat';
+                    wordEl.style.webkitMaskOrigin = 'left';
+                    wordEl.style.webkitMaskSize = totalAspectStr;
+                    const w = word.width + fadeWidth;
+                    const maskPos = `clamp(${-w}px,calc(${-w}px + (var(--amll-player-time) - ${word.startTime - lineStartMs})*${w / Math.max(1, Math.abs(word.endTime - word.startTime))}px),0px) 0px`;
+                    wordEl.style.maskPosition = maskPos;
+                    wordEl.style.webkitMaskPosition = maskPos;
+                });
+            }
+
+            function generateWebAnimationBasedMaskImage(realWords, lineStartMs, lineEndMs) {
+                const totalFadeDuration = Math.max(
+                    realWords.reduce((pv, w) => Math.max(w.endTime, pv), 0),
+                    lineEndMs
+                ) - lineStartMs;
+
+                realWords.forEach((word, i) => {
+                    const wordEl = word.mainElement;
+                    if (!wordEl) return;
+                    const fadeWidth = word.height * (SYLLABLE_FADE_RATIO || 0.3);
+                    const [maskImage, totalAspect] = generateFadeGradient(
+                        fadeWidth / Math.max(1, word.width + word.padding * 2)
+                    );
+                    const totalAspectStr = `${totalAspect * 100}% 100%`;
+                    wordEl.style.maskImage = maskImage;
+                    wordEl.style.maskRepeat = 'no-repeat';
+                    wordEl.style.maskOrigin = 'left';
+                    wordEl.style.maskSize = totalAspectStr;
+                    wordEl.style.webkitMaskImage = maskImage;
+                    wordEl.style.webkitMaskRepeat = 'no-repeat';
+                    wordEl.style.webkitMaskOrigin = 'left';
+                    wordEl.style.webkitMaskSize = totalAspectStr;
+
+                    const widthBeforeSelf =
+                        realWords.slice(0, i).reduce((a, b) => a + b.width, 0) +
+                        (realWords[0] ? fadeWidth : 0);
+                    const minOffset = -(word.width + word.padding * 2 + fadeWidth);
+                    const clampOffset = (x) => Math.max(minOffset, Math.min(0, x));
+                    let curPos = -widthBeforeSelf - word.width - word.padding - fadeWidth;
+                    let timeOffset = 0;
+                    const frames = [];
+                    let lastPos = curPos;
+                    let lastTime = 0;
+
+                    const pushFrame = () => {
+                        const moveOffset = curPos - lastPos;
+                        const time = Math.max(0, Math.min(1, timeOffset));
+                        const duration = time - lastTime;
+                        const d = Math.abs(duration / (moveOffset || 1));
+                        if (curPos > minOffset && lastPos < minOffset) {
+                            const staticTime = Math.abs(lastPos - minOffset) * d;
+                            const value = `${clampOffset(lastPos)}px 0`;
+                            frames.push({ offset: lastTime + staticTime, maskPosition: value, webkitMaskPosition: value });
+                        }
+                        if (curPos > 0 && lastPos < 0) {
+                            const staticTime = Math.abs(lastPos) * d;
+                            const value = `${clampOffset(curPos)}px 0`;
+                            frames.push({ offset: lastTime + staticTime, maskPosition: value, webkitMaskPosition: value });
+                        }
+                        const value = `${clampOffset(curPos)}px 0`;
+                        frames.push({ offset: time, maskPosition: value, webkitMaskPosition: value });
+                        lastPos = curPos;
+                        lastTime = time;
+                    };
+
+                    pushFrame();
+                    let lastTimeStamp = 0;
+                    realWords.forEach((otherWord, j) => {
+                        const curTimeStamp = otherWord.startTime - lineStartMs;
+                        const staticDuration = curTimeStamp - lastTimeStamp;
+                        timeOffset += staticDuration / Math.max(1, totalFadeDuration);
+                        if (staticDuration > 0) pushFrame();
+                        lastTimeStamp = curTimeStamp;
+
+                        const fadeDuration = otherWord.endTime - otherWord.startTime;
+                        timeOffset += fadeDuration / Math.max(1, totalFadeDuration);
+                        curPos += otherWord.width;
+                        if (j === 0) {
+                            curPos += fadeWidth * 1.5;
+                        }
+                        if (j === realWords.length - 1) {
+                            curPos += fadeWidth * 0.5;
+                        }
+                        if (fadeDuration > 0) pushFrame();
+                        lastTimeStamp += fadeDuration;
+                    });
+
+                    word.maskAnimations.forEach((a) => a.cancel());
+                    try {
+                        const ani = wordEl.animate(frames, {
+                            duration: totalFadeDuration || 1,
+                            id: `fade-word-${word.word}-${i}`,
+                            fill: 'both'
+                        });
+                        ani.pause();
+                        word.maskAnimations = [ani];
+                    } catch (err) {
+                        console.warn('mask animation failed', frames, totalFadeDuration, err);
+                    }
+                });
+
+                return totalFadeDuration;
+            }
 
                         function cancelLineAnimations(lineInfo, { commit } = {}) {
                             if (!lineInfo || !lineInfo.animations) return;
@@ -1592,6 +2144,9 @@
                             const duration = Math.max(1, lineInfo.lineDuration ?? 0);
                             const localTime = currentMs - lineStart;
                             const clampedTime = Math.max(0, Math.min(duration, localTime));
+                            if (!SUPPORT_MASK_IMAGE && lineInfo.element) {
+                                lineInfo.element.style.setProperty('--amll-player-time', `${clampedTime}`);
+                            }
                             lineInfo.animations.forEach(animation => {
                                 try {
                                     const mapper = animation && animation.__mapTime;
@@ -1602,185 +2157,56 @@
                         }
 
             function prepareSyllableAnimations(lineIndex, lineEl, lineInfo, lineData) {
-                if (!lineInfo || !lineEl || !lineData || !Array.isArray(lineData.syllables) || lineData.syllables.length === 0) return;
-
-                const spans = Array.from(lineEl.querySelectorAll('.syllable'));
-                if (spans.length === 0) return;
-                const isSpecialFont = lineEl.dataset.specialFont === '1';
-                const opacityOnly = isSpecialFont;
+                if (!lineInfo || !lineEl) return;
+                const amllData = lineEl.__amllData;
+                if (!amllData || !Array.isArray(amllData.realWords) || amllData.realWords.length === 0) {
+                    return;
+                }
 
                 cancelLineAnimations(lineInfo);
+                updateWordMetrics(amllData.realWords);
 
-                            const blocks = [];
-                            for (let i = 0; i < lineData.syllables.length; i++) {
-                                const syllable = lineData.syllables[i];
-                                const span = spans[i];
-                                if (!span || !syllable) continue;
-                                const startMs = Math.round(parseFloat(syllable.startTime) * 1000);
-                                const durationMs = Math.round(parseFloat(syllable.duration) * 1000);
-                                const endMs = startMs + durationMs;
-                                blocks.push({
-                                    ele: span,
-                                    startTime: startMs,
-                                    endTime: endMs,
-                                    // 特殊字体不再基于时长限制上浮，统一允许；非特殊字体沿用默认行为
-                                    allowFloat: true
-                                });
-                            }
+                let totalFadeDuration = Math.max(1, amllData.lineEndMs - amllData.lineStartMs);
+                if (SUPPORT_MASK_IMAGE) {
+                    totalFadeDuration = generateWebAnimationBasedMaskImage(
+                        amllData.realWords,
+                        amllData.lineStartMs,
+                        amllData.lineEndMs
+                    );
+                } else {
+                    generateCalcBasedMaskImage(amllData.realWords, amllData.lineStartMs);
+                }
 
-                            if (blocks.length === 0) return;
-
-                            const firstStart = blocks.reduce((min, block) => Math.min(min, block.startTime), Number.MAX_SAFE_INTEGER);
-                            const lastEnd = blocks.reduce((max, block) => Math.max(max, block.endTime), 0);
-                            const originalLineDuration = Math.max(1, lastEnd - firstStart);
-                            let extendedLineDuration = originalLineDuration;
-                            const blockMetrics = [];
-
-                            blocks.forEach((block) => {
-                                const span = block.ele;
-                                const computedStyle = getComputedStyle(span);
-                                const spanWidth = span.offsetWidth || parseFloat(computedStyle.width) || 0;
-                                const spanHeight = span.offsetHeight || parseFloat(computedStyle.fontSize) || 0;
-                                const fadeStyle = opacityOnly
-                                    ? { backgroundImage: 'none', backgroundSize: '', totalPxWidth: 0 }
-                                    : generateBackgroundFadeStyle(spanWidth, spanHeight, SYLLABLE_FADE_RATIO);
-                                const { backgroundImage, backgroundSize, totalPxWidth } = fadeStyle;
-                                const allowFloat = Boolean(block.allowFloat);
-                                const floatDistance = allowFloat ? Math.max(1, spanHeight * 0.1) : 0;
-                                const floatOffset = allowFloat ? -(Math.round(floatDistance * 100) / 100) : 0;
-                                const syllableDurationMs = Math.max(1, block.endTime - block.startTime);
-                                const ascendStartMs = block.startTime;
-                                const requiredAscendMs = allowFloat ? Math.max(syllableDurationMs, floatDistance / SYLLABLE_FLOAT_MAX_SPEED) : syllableDurationMs;
-                                const ascendEndMs = ascendStartMs + requiredAscendMs;
-                                const settleTailMs = allowFloat
-                                    ? Math.max(
-                                        SYLLABLE_FLOAT_SETTLE_TAIL_MS,
-                                        Math.min(requiredAscendMs * 0.35, 600)
-                                    )
-                                    : 0;
-                                const settleEndMs = ascendEndMs + settleTailMs;
-
-                                extendedLineDuration = Math.max(extendedLineDuration, settleEndMs - firstStart);
-
-                                blockMetrics.push({
-                                    span,
-                                    block,
-                                    spanWidth,
-                                    spanHeight,
-                                    backgroundImage,
-                                    backgroundSize,
-                                    totalPxWidth,
-                                    floatDistance,
-                                    floatOffset,
-                                    ascendStartMs,
-                                    ascendEndMs,
-                                    settleEndMs
-                                });
-                            });
-
-                            lineInfo.lineStartMs = firstStart;
-                            lineInfo.lineDuration = extendedLineDuration;
-                            lineInfo.originalLineDuration = originalLineDuration;
-                            lineInfo.animations = [];
-
-                            blockMetrics.forEach((metric, idx) => {
-                                const span = metric.span;
-                                const block = metric.block;
-                                const spanWidth = metric.spanWidth;
-                                const spanHeight = metric.spanHeight;
-                                const backgroundImage = metric.backgroundImage;
-                                const backgroundSize = metric.backgroundSize;
-                                const totalPxWidth = metric.totalPxWidth;
-
-                                span.style.backgroundImage = backgroundImage;
-                                span.style.backgroundSize = backgroundSize;
-                                span.style.backgroundPosition = `${totalPxWidth}px 0`;
-                                span.style.backgroundRepeat = 'no-repeat';
-                                span.style.transform = 'translateY(0)';
-                                if (opacityOnly) {
-                                    span.style.color = 'rgba(255,255,255,0.95)';
-                                    span.style.webkitTextFillColor = 'rgba(255,255,255,0.95)';
-                                    span.style.opacity = '0.25';
-                                }
-
-                                const frames = opacityOnly
-                                    ? (() => {
-                                        const startRel = Math.max(0, Math.min(1, (block.startTime - firstStart) / originalLineDuration));
-                                        const endRel = Math.max(startRel, Math.min(1, (block.endTime - firstStart) / originalLineDuration));
-                                        return [
-                                            { offset: 0, opacity: 0.25 },
-                                            { offset: startRel, opacity: 0.25 },
-                                            { offset: endRel, opacity: 1 },
-                                            { offset: 1, opacity: 1 }
-                                        ];
-                                    })()
-                                    : createKaraokeFrames(blocks, idx, originalLineDuration, SYLLABLE_FADE_RATIO);
-                                const animation = span.animate(frames, {
-                                    duration: originalLineDuration,
-                                    easing: 'linear',
-                                    fill: 'both'
-                                });
-                                animation.pause();
-                                animation.__mapTime = (time) => Math.min(time, originalLineDuration);
-                                lineInfo.animations.push(animation);
-
-                                if (metric.floatDistance > 0) {
-                                    const floatDistance = metric.floatDistance;
-                                    const floatOffset = metric.floatOffset;
-                                    const ascendStartOffset = Math.max(0, Math.min(1, (metric.ascendStartMs - firstStart) / extendedLineDuration));
-                                    const ascendEndOffset = Math.max(
-                                        ascendStartOffset,
-                                        Math.min(1, (metric.ascendEndMs - firstStart) / extendedLineDuration)
-                                    );
-                                    const settleEndOffset = Math.max(
-                                        ascendEndOffset,
-                                        Math.min(1, (metric.settleEndMs - firstStart) / extendedLineDuration)
-                                    );
-
-                                    const floatFrames = [];
-                                    floatFrames.push({ offset: 0, transform: 'translateY(0)' });
-                                    if (ascendStartOffset > 0) {
-                                        floatFrames.push({ offset: ascendStartOffset, transform: 'translateY(0)' });
-                                    }
-                                    floatFrames.push({
-                                        offset: ascendEndOffset,
-                                        transform: `translateY(${floatOffset}px)`,
-                                        easing: SYLLABLE_FLOAT_ASCEND_EASING
-                                    });
-                                    if (settleEndOffset > ascendEndOffset) {
-                                        floatFrames.push({
-                                            offset: settleEndOffset,
-                                            transform: `translateY(${floatOffset}px)`,
-                                            easing: SYLLABLE_FLOAT_SETTLE_EASING
-                                        });
-                                        if (settleEndOffset < 1) {
-                                            floatFrames.push({
-                                                offset: 1,
-                                                transform: `translateY(${floatOffset}px)`
-                                            });
-                                        }
-                                    } else if (ascendEndOffset < 1) {
-                                        floatFrames.push({
-                                            offset: 1,
-                                            transform: `translateY(${floatOffset}px)`,
-                                            easing: SYLLABLE_FLOAT_SETTLE_EASING
-                                        });
-                                    } else {
-                                        const lastFrame = floatFrames[floatFrames.length - 1];
-                                        lastFrame.easing = SYLLABLE_FLOAT_SETTLE_EASING;
-                                    }
-                                    const floatAnimation = span.animate(floatFrames, {
-                                        duration: extendedLineDuration,
-                                        easing: 'linear',
-                                        fill: 'both'
-                                    });
-                                    floatAnimation.pause();
-                                    lineInfo.animations.push(floatAnimation);
-                                }
-                            });
-
-                            syncLineAnimations(lineInfo);
+                const animations = [];
+                let maxAnimationEnd = 0;
+                amllData.realWords.forEach((word) => {
+                    (word.elementAnimations || []).forEach((ani) => {
+                        animations.push(ani);
+                        const timing = ani.effect && typeof ani.effect.getTiming === 'function' ? ani.effect.getTiming() : null;
+                        if (timing && typeof timing.duration === 'number') {
+                            const delay = Number.isFinite(timing.delay) ? timing.delay : 0;
+                            const end = Math.max(0, delay) + Math.max(0, timing.duration);
+                            maxAnimationEnd = Math.max(maxAnimationEnd, end);
                         }
+                    });
+                    (word.maskAnimations || []).forEach((ani) => {
+                        animations.push(ani);
+                        const timing = ani.effect && typeof ani.effect.getTiming === 'function' ? ani.effect.getTiming() : null;
+                        if (timing && typeof timing.duration === 'number') {
+                            const delay = Number.isFinite(timing.delay) ? timing.delay : 0;
+                            const end = Math.max(0, delay) + Math.max(0, timing.duration);
+                            maxAnimationEnd = Math.max(maxAnimationEnd, end);
+                        }
+                    });
+                });
+
+                lineInfo.lineStartMs = amllData.lineStartMs;
+                lineInfo.originalLineDuration = Math.max(1, amllData.lineEndMs - amllData.lineStartMs);
+                lineInfo.lineDuration = Math.max(totalFadeDuration, maxAnimationEnd, lineInfo.originalLineDuration);
+                lineInfo.animations = animations;
+
+                syncLineAnimations(lineInfo);
+            }
 
             // 卡拉OK进度更新函数 - 只更新当前活跃行
             function updateKaraokeProgress() {
@@ -2246,32 +2672,13 @@
                     lineEl.appendChild(blurLayer);
                 }
                 
-                line.syllables.forEach((syllable) => {
-                    const syllableEl = document.createElement('span');
-                    syllableEl.classList.add('syllable');
-                    syllableEl.textContent = syllable.text;
-                    syllableEl.dataset.startTime = syllable.startTime;
-                    syllableEl.dataset.duration = syllable.duration;
-                    const hasPresetFont = Object.prototype.hasOwnProperty.call(syllable, 'fontFamily');
-                    const presetFont = hasPresetFont ? (syllable.fontFamily || '') : '';
-                    const chosenFont = hasPresetFont ? presetFont : '';
-                    const allowFallback = Boolean(chosenFont);
-                    const syllableFontValue = buildFontValue(chosenFont, dedupAliases, bodyFont, allowFallback);
-                    if (syllableFontValue) {
-                        syllableEl.style.fontFamily = syllableFontValue;
-                        const chosenClass = chosenFont ? ensureFontClass(chosenFont, syllableFontValue) : '';
-                        if (chosenClass) syllableEl.classList.add(chosenClass);
-                    }
-                    // 如果音节内容包含空格，则加右边距
-                    if (syllable.text && syllable.text.includes(' ')) {
-                        // 使用 em 单位，使其可以随字体大小等比缩放
-                        syllableEl.style.marginRight = '0.28em';
-                    }
-                    lineEl.appendChild(syllableEl);
-                });
+                const mainLineEl = document.createElement('div');
+                mainLineEl.className = 'amll-main-line';
+                lineEl.appendChild(mainLineEl);
+                const amllMeta = buildAmllWords(line, mainLineEl, { aliases: dedupAliases, bodyFont });
+                lineEl.__amllData = amllMeta;
 
                 groupSyllablesIntoWords(blurLayer, 'blur-text');
-                groupSyllablesIntoWords(lineEl);
 
                 // 翻译渲染：在歌词行下方插入翻译
                 if (translationData.length > 0 && line.syllables && line.syllables.length > 0) {
@@ -2451,6 +2858,9 @@
                 fadeLine.style.fontSize = computedStyle.fontSize;
                 fadeLine.style.lineHeight = computedStyle.lineHeight;
                 fadeLine.style.fontWeight = computedStyle.fontWeight;
+                fadeLine.style.textAlign = computedStyle.textAlign;
+                fadeLine.style.justifyContent = computedStyle.justifyContent;
+                fadeLine.style.alignItems = computedStyle.alignItems;
                 if (lyricScale) {
                     fadeLine.style.setProperty('--lyric-scale', lyricScale.trim());
                 }

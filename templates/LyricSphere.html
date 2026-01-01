@@ -102,6 +102,15 @@
             animation: spin 0.8s linear infinite;
         }
 
+        .auth-status {
+            padding: 10px;
+            border-radius: 8px;
+            background: var(--tag-bg);
+            color: var(--text-color);
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+
         @keyframes spin {
             from {
                 transform: rotate(0deg);
@@ -1402,7 +1411,15 @@
         <div class="search-wrapper">
             <div class="search-tools">
                 <div class="search-row search-row--focus">
-                    <input type="text" class="search-box" id="searchBox" placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
+                    <input type="text" name="fake_username" autocomplete="username"
+                           style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
+                    <input type="password" name="fake_password" autocomplete="new-password"
+                           style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
+                    <input type="search" class="search-box" id="songSearchInput"
+                           name="song_search_input"
+                           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="search"
+                           readonly
+                           placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
                     <div class="search-options">
                         <label class="search-toggle">
                             <input type="checkbox" id="fuzzySearchToggle">
@@ -1418,6 +1435,7 @@
                     <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
                     <button class="action-button" onclick="triggerStaticImport()" title="选择 static.zip 快速导入">快速导入</button>
                     <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
+                    <a class="action-button" href="/lyric-sphere-v2/" target="_blank" rel="noopener">LyricSphere v2</a>
                     <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
                     <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
                 </div>
@@ -1721,7 +1739,7 @@
         <div class="modal-content" style="max-width: 400px;">
             <h2>🔑 设备认证</h2>
             <div style="display: flex; flex-direction: column; gap: 15px;">
-                <div id="authStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center;">
+                <div id="authStatus" class="auth-status">
                     正在检查设备状态...
                 </div>
                 <div id="authForm" style="display: none;">
@@ -2225,7 +2243,15 @@
         }
 
         // 搜索功能
-        const searchBox = document.getElementById('searchBox')
+        const searchBox = document.getElementById('songSearchInput')
+        if (searchBox) {
+            const unlock = () => {
+                searchBox.removeAttribute('readonly')
+            }
+            searchBox.addEventListener('focus', unlock, { once: true })
+            searchBox.addEventListener('pointerdown', unlock, { once: true })
+            setTimeout(unlock, 200)
+        }
         const fuzzySearchToggle = document.getElementById('fuzzySearchToggle')
         const jsonList = document.getElementById('jsonList')
         const jsonListStatus = document.getElementById('jsonListStatus')
@@ -2448,6 +2474,18 @@
             return normalized
         }
 
+        function resolveBackgroundImageUrl(raw) {
+            if (!raw || raw === '!') {
+                return ''
+            }
+            const normalized = normalizeSongsUrl(raw)
+            const checkTarget = stripQueryHash(normalized)
+            if (!hasValidImageExtension(checkTarget)) {
+                return ''
+            }
+            return normalized
+        }
+
         function captureVideoMiddleFrame(videoUrl) {
             if (videoCoverCache.has(videoUrl)) {
                 return videoCoverCache.get(videoUrl)
@@ -2572,15 +2610,18 @@
             fileNameText.textContent = displayName
             fileNameDiv.appendChild(fileNameText)
             const coverUrl = summary.albumImgSrc ? resolveCoverUrl(summary.albumImgSrc) : ''
-            const backgroundVideoUrl = coverUrl ? '' : resolveBackgroundVideoUrl(summary.backgroundImage || '')
-            if (coverUrl || backgroundVideoUrl) {
+            const backgroundImageUrl = coverUrl ? '' : resolveBackgroundImageUrl(summary.backgroundImage || '')
+            const backgroundVideoUrl = (coverUrl || backgroundImageUrl)
+                ? ''
+                : resolveBackgroundVideoUrl(summary.backgroundImage || '')
+            if (coverUrl || backgroundImageUrl || backgroundVideoUrl) {
                 fileNameDiv.classList.add('has-cover')
                 const coverImg = document.createElement('img')
                 coverImg.className = 'album-cover'
                 coverImg.alt = 'album cover'
                 coverImg.loading = 'lazy'
-                if (coverUrl) {
-                    coverImg.setAttribute('data-src', coverUrl)
+                if (coverUrl || backgroundImageUrl) {
+                    coverImg.setAttribute('data-src', coverUrl || backgroundImageUrl)
                 } else {
                     coverImg.setAttribute('data-video-src', backgroundVideoUrl)
                 }
@@ -2594,8 +2635,8 @@
                 ensureAlbumCoverObserver()
                 if (albumCoverObserver) {
                     albumCoverObserver.observe(coverImg)
-                } else if (coverUrl) {
-                    coverImg.src = coverUrl
+                } else if (coverUrl || backgroundImageUrl) {
+                    coverImg.src = coverUrl || backgroundImageUrl
                 } else if (backgroundVideoUrl) {
                     captureVideoMiddleFrame(backgroundVideoUrl).then(dataUrl => {
                         if (!dataUrl) {
@@ -2647,16 +2688,16 @@
             brightBtn.textContent = '亮起'
             brightBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, '亮起'))
 
-            const kokBtn = document.createElement('button')
-            kokBtn.className = 'action-button'
-            kokBtn.textContent = 'Kok'
-            kokBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, 'Kok'))
+            const C_okBtn = document.createElement('button')
+            C_okBtn.className = 'action-button'
+            C_okBtn.textContent = 'C_ok'
+            C_okBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, 'C_ok'))
 
             styleButtons.appendChild(fsBtn)
             styleButtons.appendChild(fslrBtn)
             styleButtons.appendChild(amllBtn)
             styleButtons.appendChild(brightBtn)
-            styleButtons.appendChild(kokBtn)
+            styleButtons.appendChild(C_okBtn)
 
             const fileActions = document.createElement('div')
             fileActions.className = 'file-actions'
@@ -3587,6 +3628,17 @@
         function resolveCoverUrl(raw) {
             if (!raw || raw === '!') return DEFAULT_AMLL_COVER;
             if (raw.startsWith('data:')) return raw;
+            let isSongsResource = false;
+            try {
+                const parsed = new URL(raw);
+                isSongsResource = parsed.pathname.startsWith(RESOURCE_CONFIG.songs.path);
+            } catch (error) {
+                const normalized = raw.replace(/\\/g, '/');
+                isSongsResource = normalized.startsWith('songs/') || normalized.startsWith('./songs/') || normalized.startsWith('/songs/');
+            }
+            if (isSongsResource) {
+                return normalizeSongsUrl(raw);
+            }
             if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
             if (raw.startsWith('//')) return window.location.protocol + raw;
             if (raw.startsWith('/')) return window.location.origin + raw;
