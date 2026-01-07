@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+starlette
+jinja2
+aiofiles
+openai
+bcrypt
+Pillow
+websockets
+requests
+python-multipart
+numpy
+librosa
+itsdangerous

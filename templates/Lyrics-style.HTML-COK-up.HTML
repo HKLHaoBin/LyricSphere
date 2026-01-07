@@ -34,7 +34,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            z-index: -1;
+            z-index: -2;
             overflow: hidden;
         }
 
@@ -53,6 +53,7 @@
             display: block;
             opacity: 0.45;
         }
+
 
         .player-container {
             width: 90%;
@@ -103,7 +104,7 @@
 
         .lyrics-container {
             min-height: 15em; /* 使用 min-height 保证初始高度 */
-            overflow: hidden; /* 隐藏动画中可能溢出的部分 */
+            overflow: visible; /* 允许高亮动画溢出显示 */
             position: relative; /* 为绝对定位的子元素提供基准 */
             display: -webkit-flex;
             display: flex;
@@ -128,7 +129,7 @@
             width: 100%;
             word-break: keep-all;
             white-space: normal;
-            overflow: hidden;
+            overflow: visible;
             transition:
                 font-size var(--lyric-scale-duration, 360ms) var(--lyric-scale-easing, cubic-bezier(0.32, 0.78, 0.12, 1)),
                 line-height var(--lyric-scale-duration, 360ms) var(--lyric-scale-easing, cubic-bezier(0.32, 0.78, 0.12, 1));
@@ -331,6 +332,34 @@
             transition: opacity 0.3s ease;
             pointer-events: none;
             backdrop-filter: blur(4px);
+        }
+
+        .context-menu {
+            position: fixed;
+            z-index: 9999;
+            min-width: 180px;
+            padding: 6px;
+            background: rgba(20, 20, 20, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            box-shadow: 0 18px 30px rgba(0, 0, 0, 0.35);
+            color: #fff;
+            display: none;
+        }
+
+        .context-menu button {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: inherit;
+            text-align: left;
+            padding: 8px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .context-menu button:hover {
+            background: rgba(255, 255, 255, 0.08);
         }
         
         /* 仅在手机等小屏幕设备上显示滑块 */
@@ -717,6 +746,9 @@
             let backgroundCleanup = null;
             let backgroundVideo = null;
             const VIDEO_SYNC_DRIFT = 0.25;
+            let beatCurvePollTimer = null;
+            let beatCurveRequestInFlight = false;
+            let currentSongInfo = null;
 
             const AMLL_MODULE_URL = "{{ url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
@@ -738,9 +770,757 @@
                 'waveformCanvas'
             ]);
 
+            const contextMenu = document.createElement('div');
+            contextMenu.className = 'context-menu';
+            const beatToggleButton = document.createElement('button');
+            contextMenu.appendChild(beatToggleButton);
+            document.body.appendChild(contextMenu);
+
+            function updateContextMenuLabel() {
+                beatToggleButton.textContent = amllBeatEnabled
+                    ? 'Disable background beat'
+                    : 'Enable background beat';
+            }
+
+            function hideContextMenu() {
+                contextMenu.style.display = 'none';
+            }
+
+            function showContextMenu(x, y) {
+                updateContextMenuLabel();
+                contextMenu.style.display = 'block';
+                const rect = contextMenu.getBoundingClientRect();
+                const maxX = window.innerWidth - rect.width - 8;
+                const maxY = window.innerHeight - rect.height - 8;
+                const clampedX = Math.max(8, Math.min(x, maxX));
+                const clampedY = Math.max(8, Math.min(y, maxY));
+                contextMenu.style.left = `${clampedX}px`;
+                contextMenu.style.top = `${clampedY}px`;
+            }
+
+            beatToggleButton.addEventListener('click', () => {
+                amllBeatEnabled = !amllBeatEnabled;
+                if (!amllBeatEnabled) {
+                    stopAmllPaletteLoop({ clearBackground: false });
+                    if (beatCurvePollTimer) {
+                        clearTimeout(beatCurvePollTimer);
+                        beatCurvePollTimer = null;
+                    }
+                } else if (amllColorState.background) {
+                    attachAmllPaletteDriver(amllColorState.background);
+                    ensureBeatCurveAuto();
+                }
+                hideContextMenu();
+            });
+
+            window.setAmllBeatEnabled = (enabled) => {
+                amllBeatEnabled = Boolean(enabled);
+                if (!amllBeatEnabled) {
+                    stopAmllPaletteLoop({ clearBackground: false });
+                    if (beatCurvePollTimer) {
+                        clearTimeout(beatCurvePollTimer);
+                        beatCurvePollTimer = null;
+                    }
+                } else if (amllColorState.background) {
+                    attachAmllPaletteDriver(amllColorState.background);
+                    ensureBeatCurveAuto();
+                }
+            };
+
+            window.addEventListener('message', (event) => {
+                const data = event && event.data;
+                if (!data || data.type !== 'amll-beat-toggle') return;
+                window.setAmllBeatEnabled(data.enabled);
+            });
+
+            document.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                showContextMenu(event.clientX, event.clientY);
+            });
+
+            document.addEventListener('click', () => {
+                hideContextMenu();
+            });
+
+            window.addEventListener('blur', () => {
+                hideContextMenu();
+            });
+
             function clamp(value, min, max) {
                 return Math.min(Math.max(value, min), max);
             }
+
+            function lerp(a, b, t) {
+                return a + (b - a) * t;
+            }
+
+            const amllColorState = {
+                basePaletteHsl: [],
+                analyser: null,
+                audioContext: null,
+                freqData: null,
+                rafId: null,
+                renderer: null,
+                enabled: false,
+                lastColors: null,
+                smoothing: 0.12,
+                background: null,
+                originalMeshColors: null,
+                originalMeshSize: null,
+                bandStats: [],
+                globalEnergy: 0,
+                beatCurve: null
+            };
+            let amllBeatEnabled = false;
+            const AMLL_PALETTE_PIXELATE = 10;
+            const AMLL_PALETTE_TARGET = 16;
+            const AMLL_LIGHTNESS_MIN_DELTA = -25;
+            const AMLL_LIGHTNESS_MAX_DELTA = 100;
+            const AMLL_NOISE_SCALE = 15;
+            const AMLL_DARKEN_MAX = 40;
+            const AMLL_BEAT_CURVE_MAGIC = 'AMBG';
+            const AMLL_BEAT_CURVE_MAGIC_LEVELS = 'AMBC';
+            const AMLL_GAIN_MIN = 0.6;
+            const AMLL_GAIN_MAX = 3.0;
+
+            function hexToHsl(hex) {
+                if (!hex || typeof hex !== 'string') return null;
+                let normalized = hex.trim().replace('#', '');
+                if (normalized.length === 3) {
+                    normalized = normalized.split('').map((c) => c + c).join('');
+                }
+                if (normalized.length !== 6) return null;
+                const r = parseInt(normalized.slice(0, 2), 16) / 255;
+                const g = parseInt(normalized.slice(2, 4), 16) / 255;
+                const b = parseInt(normalized.slice(4, 6), 16) / 255;
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                let h = 0;
+                let s = 0;
+                const l = (max + min) / 2;
+                const delta = max - min;
+                if (delta !== 0) {
+                    s = delta / (1 - Math.abs(2 * l - 1));
+                    switch (max) {
+                        case r:
+                            h = ((g - b) / delta) % 6;
+                            break;
+                        case g:
+                            h = (b - r) / delta + 2;
+                            break;
+                        default:
+                            h = (r - g) / delta + 4;
+                            break;
+                    }
+                    h *= 60;
+                    if (h < 0) h += 360;
+                }
+                return {
+                    h: Math.round(h),
+                    s: Math.round(s * 100),
+                    l: Math.round(l * 100)
+                };
+            }
+
+            function hslToRgb(h, s, l) {
+                const sat = clamp(s, 0, 100) / 100;
+                const lig = clamp(l, 0, 100) / 100;
+                const c = (1 - Math.abs(2 * lig - 1)) * sat;
+                const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+                const m = lig - c / 2;
+                let r = 0;
+                let g = 0;
+                let b = 0;
+                if (h >= 0 && h < 60) {
+                    r = c;
+                    g = x;
+                } else if (h < 120) {
+                    r = x;
+                    g = c;
+                } else if (h < 180) {
+                    g = c;
+                    b = x;
+                } else if (h < 240) {
+                    g = x;
+                    b = c;
+                } else if (h < 300) {
+                    r = x;
+                    b = c;
+                } else {
+                    r = c;
+                    b = x;
+                }
+                return { r: r + m, g: g + m, b: b + m };
+            }
+
+            function ensureAudioAnalyser() {
+                if (amllColorState.analyser) return;
+                try {
+                    const AudioContextRef = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioContextRef) return;
+                    const audioContext = new AudioContextRef();
+                    const source = audioContext.createMediaElementSource(audioPlayer);
+                    const analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048;
+                    analyser.smoothingTimeConstant = 0.85;
+                    source.connect(analyser);
+                    analyser.connect(audioContext.destination);
+                    amllColorState.audioContext = audioContext;
+                    amllColorState.analyser = analyser;
+                    amllColorState.freqData = new Uint8Array(analyser.frequencyBinCount);
+                } catch (error) {
+                    console.warn('[Flow] 初始化频谱失败', error);
+                }
+            }
+
+            function getBandLevels() {
+                const bandCount = amllColorState.basePaletteHsl.length || 1;
+                const levels = new Array(bandCount).fill(0);
+                const curveSample = sampleBeatCurve(bandCount);
+                if (curveSample && curveSample.mode === 'levels') {
+                    amllColorState.globalEnergy = curveSample.globalEnergy;
+                    return curveSample.levels;
+                }
+                if (!amllColorState.analyser || !amllColorState.freqData) return levels;
+                amllColorState.analyser.getByteFrequencyData(amllColorState.freqData);
+                const totalBins = amllColorState.freqData.length;
+                const nyquist = (amllColorState.audioContext && amllColorState.audioContext.sampleRate)
+                    ? amllColorState.audioContext.sampleRate / 2
+                    : 22050;
+                const minFreq = 40;
+                const maxFreq = 14000;
+                const logMin = Math.log10(minFreq);
+                const logMax = Math.log10(maxFreq);
+                const binForFreq = (freq) => {
+                    const clamped = clamp(freq, minFreq, maxFreq);
+                    const ratio = clamped / nyquist;
+                    return Math.max(0, Math.min(totalBins - 1, Math.round(ratio * (totalBins - 1))));
+                };
+                let sumRaw = 0;
+                for (let i = 0; i < bandCount; i += 1) {
+                    const t0 = bandCount === 1 ? 0 : i / bandCount;
+                    const t1 = bandCount === 1 ? 1 : (i + 1) / bandCount;
+                    const f0 = 10 ** (logMin + (logMax - logMin) * t0);
+                    const f1 = 10 ** (logMin + (logMax - logMin) * t1);
+                    const start = binForFreq(f0);
+                    const end = Math.max(start + 1, binForFreq(f1));
+                    let sumSq = 0;
+                    let peak = 0;
+                    let count = 0;
+                    for (let j = start; j < end; j += 1) {
+                        const v = amllColorState.freqData[j] || 0;
+                        sumSq += v * v;
+                        if (v > peak) peak = v;
+                        count += 1;
+                    }
+                    const rms = Math.sqrt(sumSq / Math.max(1, count)) / 255;
+                    const peakNorm = peak / 255;
+                    const level = 0.7 * rms + 0.3 * peakNorm;
+                    const emphasized = Math.pow(clamp(level, 0, 1), 1.15);
+                    sumRaw += emphasized;
+                    const stats = amllColorState.bandStats[i] || { ema: emphasized, dev: 0.05 };
+                    const emaAlpha = 0.02;
+                    const devAlpha = 0.05;
+                    stats.ema = stats.ema + (emphasized - stats.ema) * emaAlpha;
+                    const deviation = Math.abs(emphasized - stats.ema);
+                    stats.dev = stats.dev + (deviation - stats.dev) * devAlpha;
+                    amllColorState.bandStats[i] = stats;
+                    let gain = null;
+                    if (curveSample && curveSample.mode === 'gain') {
+                        gain = curveSample.gains[i] ?? 1;
+                    }
+                    if (gain == null) {
+                        gain = clamp(0.6 / (stats.dev + 0.02), 0.6, 3.0);
+                    }
+                    const adjusted = clamp(stats.ema + (emphasized - stats.ema) * gain, 0, 1);
+                    levels[i] = adjusted;
+                }
+                amllColorState.globalEnergy = bandCount ? sumRaw / bandCount : 0;
+                if (!Number.isFinite(amllColorState.globalEnergy)) {
+                    amllColorState.globalEnergy = 0;
+                }
+                const lowBandCount = Math.min(3, bandCount);
+                const lowBandThreshold = 0.15;
+                const lowBandGain = 1.2;
+                for (let i = 0; i < lowBandCount; i += 1) {
+                    const value = levels[i];
+                    const normalized = Math.max(0, (value - lowBandThreshold) / Math.max(0.001, 1 - lowBandThreshold));
+                    levels[i] = clamp(normalized * lowBandGain, 0, 1);
+                }
+                return levels;
+            }
+
+            function buildDynamicColors() {
+                const levels = getBandLevels();
+                const globalEnergy = amllColorState.globalEnergy || 0;
+                const darken = clamp(globalEnergy, 0, 1) * AMLL_DARKEN_MAX;
+                return amllColorState.basePaletteHsl.map((base, index) => {
+                    const level = levels[index] || 0;
+                    const delta = AMLL_LIGHTNESS_MIN_DELTA
+                        + level * (AMLL_LIGHTNESS_MAX_DELTA - AMLL_LIGHTNESS_MIN_DELTA)
+                        - darken;
+                    const lightness = clamp(base.l + delta, 0, 100);
+                    const sat = clamp(base.origS ?? (base.baseS + 50), 0, 100);
+                    const rgb = hslToRgb(base.h, sat, lightness);
+                    return { r: rgb.r, g: rgb.g, b: rgb.b };
+                });
+            }
+
+            function getActiveMesh(renderer) {
+                if (!renderer) return null;
+                const states = renderer.meshStates || renderer._meshStates;
+                if (!Array.isArray(states) || states.length === 0) return null;
+                return states[states.length - 1].mesh || null;
+            }
+
+            function getMeshSize(mesh) {
+                const controlPoints = mesh && (mesh._controlPoints || mesh.controlPoints);
+                if (!controlPoints) return null;
+                const width = controlPoints.width ?? controlPoints._width;
+                const height = controlPoints.height ?? controlPoints._height;
+                if (!width || !height) return null;
+                return { width, height };
+            }
+
+            function extractPaletteFromImageData(imageData, targetCount = 16) {
+                if (!imageData || !imageData.width || !imageData.height) return [];
+                const width = imageData.width;
+                const height = imageData.height;
+                const data = imageData.data;
+                const step = Math.max(1, Math.floor(AMLL_PALETTE_PIXELATE));
+                const samples = [];
+                for (let y = 0; y < height; y += step) {
+                    for (let x = 0; x < width; x += step) {
+                        const idx = (y * width + x) * 4;
+                        const alpha = data[idx + 3] ?? 255;
+                        if (alpha < 16) continue;
+                        samples.push({
+                            r: (data[idx] || 0) / 255,
+                            g: (data[idx + 1] || 0) / 255,
+                            b: (data[idx + 2] || 0) / 255
+                        });
+                    }
+                }
+                if (!samples.length) return [];
+                const count = Math.max(1, targetCount);
+                const centers = new Array(count).fill(null).map((_, i) => {
+                    const pos = count === 1 ? 0 : Math.floor((i / (count - 1)) * (samples.length - 1));
+                    const pick = samples[pos] || samples[0];
+                    return { r: pick.r, g: pick.g, b: pick.b };
+                });
+                for (let iter = 0; iter < 8; iter += 1) {
+                    const sums = new Array(count).fill(null).map(() => ({ r: 0, g: 0, b: 0, n: 0 }));
+                    for (const sample of samples) {
+                        let best = 0;
+                        let bestDist = Number.POSITIVE_INFINITY;
+                        for (let i = 0; i < count; i += 1) {
+                            const c = centers[i];
+                            const dr = sample.r - c.r;
+                            const dg = sample.g - c.g;
+                            const db = sample.b - c.b;
+                            const dist = dr * dr + dg * dg + db * db;
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                best = i;
+                            }
+                        }
+                        const sum = sums[best];
+                        sum.r += sample.r;
+                        sum.g += sample.g;
+                        sum.b += sample.b;
+                        sum.n += 1;
+                    }
+                    for (let i = 0; i < count; i += 1) {
+                        const sum = sums[i];
+                        if (sum.n > 0) {
+                            centers[i] = { r: sum.r / sum.n, g: sum.g / sum.n, b: sum.b / sum.n };
+                        } else {
+                            const fallback = samples[(i * 97) % samples.length];
+                            centers[i] = { r: fallback.r, g: fallback.g, b: fallback.b };
+                        }
+                    }
+                }
+                const palette = centers.map((rgb) => {
+                    const hsl = hexToHsl(
+                        `#${Math.round(rgb.r * 255).toString(16).padStart(2, '0')}${Math.round(rgb.g * 255).toString(16).padStart(2, '0')}${Math.round(rgb.b * 255).toString(16).padStart(2, '0')}`
+                    );
+                    if (!hsl) return null;
+                    const origS = clamp(hsl.s, 0, 100);
+                    return { h: hsl.h, l: hsl.l, baseS: clamp(origS - 50, 0, 100), origS };
+                }).filter(Boolean);
+                palette.sort((a, b) => (a.h - b.h) || (a.l - b.l));
+                return palette;
+            }
+
+            function ensureBasePalette() {
+                if (amllColorState.basePaletteHsl.length) return;
+                const renderer = amllColorState.renderer;
+                if (!renderer) return;
+                const imageData = renderer.currentImageData || renderer._currentImageData;
+                const palette = extractPaletteFromImageData(imageData, AMLL_PALETTE_TARGET);
+                if (palette.length) {
+                    amllColorState.basePaletteHsl = palette;
+                }
+            }
+
+            function applyColorsToMesh(mesh, colors) {
+                const size = getMeshSize(mesh);
+                if (!size || !colors.length) return;
+                const width = size.width;
+                const height = size.height;
+                if (!amllColorState.lastColors || amllColorState.lastColors.length !== colors.length) {
+                    amllColorState.lastColors = colors.map((c) => ({ r: c.r, g: c.g, b: c.b }));
+                }
+                const blended = colors.map((target, index) => {
+                    const prev = amllColorState.lastColors[index] || target;
+                    const r = prev.r + (target.r - prev.r) * amllColorState.smoothing;
+                    const g = prev.g + (target.g - prev.g) * amllColorState.smoothing;
+                    const b = prev.b + (target.b - prev.b) * amllColorState.smoothing;
+                    return { r, g, b };
+                });
+                amllColorState.lastColors = blended;
+                const maxIndex = Math.max(1, colors.length - 1);
+                const indexForPoint = (x, y) => {
+                    const scale = Math.max(1, AMLL_NOISE_SCALE);
+                    const nx = (x / Math.max(1, width - 1)) * scale;
+                    const ny = (y / Math.max(1, height - 1)) * scale;
+                    const hash = Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453;
+                    const frac = hash - Math.floor(hash);
+                    return Math.floor(frac * (maxIndex + 1));
+                };
+                for (let x = 0; x < width; x += 1) {
+                    for (let y = 0; y < height; y += 1) {
+                        const colorIndex = indexForPoint(x, y);
+                        const color = blended[colorIndex] || blended[blended.length - 1];
+                        const point = mesh.getControlPoint ? mesh.getControlPoint(x, y) : null;
+                        if (!point || !point.color) continue;
+                        point.color[0] = color.r;
+                        point.color[1] = color.g;
+                        point.color[2] = color.b;
+                    }
+                }
+                if (typeof mesh.updateMesh === 'function') {
+                    mesh.updateMesh();
+                }
+            }
+
+            function applyBasePaletteToMesh(mesh) {
+                const size = getMeshSize(mesh);
+                if (!size || !amllColorState.basePaletteHsl.length) return;
+                const width = size.width;
+                const height = size.height;
+                const maxIndex = Math.max(1, amllColorState.basePaletteHsl.length - 1);
+                const indexForPoint = (x, y) => {
+                    const scale = Math.max(1, AMLL_NOISE_SCALE);
+                    const nx = (x / Math.max(1, width - 1)) * scale;
+                    const ny = (y / Math.max(1, height - 1)) * scale;
+                    const hash = Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453;
+                    const frac = hash - Math.floor(hash);
+                    return Math.floor(frac * (maxIndex + 1));
+                };
+                for (let x = 0; x < width; x += 1) {
+                    for (let y = 0; y < height; y += 1) {
+                        const colorIndex = indexForPoint(x, y);
+                        const base = amllColorState.basePaletteHsl[colorIndex] || amllColorState.basePaletteHsl[amllColorState.basePaletteHsl.length - 1];
+                        const rgb = hslToRgb(base.h, base.origS ?? (base.baseS + 50), base.l);
+                        const point = mesh.getControlPoint ? mesh.getControlPoint(x, y) : null;
+                        if (!point || !point.color) continue;
+                        point.color[0] = rgb.r;
+                        point.color[1] = rgb.g;
+                        point.color[2] = rgb.b;
+                    }
+                }
+                if (typeof mesh.updateMesh === 'function') {
+                    mesh.updateMesh();
+                }
+            }
+
+            function captureMeshColors(mesh) {
+                const size = getMeshSize(mesh);
+                if (!size) return;
+                const width = size.width;
+                const height = size.height;
+                const colors = new Array(width * height);
+                for (let x = 0; x < width; x += 1) {
+                    for (let y = 0; y < height; y += 1) {
+                        const point = mesh.getControlPoint ? mesh.getControlPoint(x, y) : null;
+                        if (!point || !point.color) {
+                            colors[y * width + x] = null;
+                            continue;
+                        }
+                        colors[y * width + x] = [
+                            point.color[0],
+                            point.color[1],
+                            point.color[2]
+                        ];
+                    }
+                }
+                amllColorState.originalMeshColors = colors;
+                amllColorState.originalMeshSize = { width, height };
+            }
+
+            function restoreMeshColors(mesh) {
+                const size = getMeshSize(mesh);
+                const stored = amllColorState.originalMeshColors;
+                const storedSize = amllColorState.originalMeshSize;
+                if (!size || !stored || !storedSize) return false;
+                if (size.width !== storedSize.width || size.height !== storedSize.height) return false;
+                const width = size.width;
+                const height = size.height;
+                for (let x = 0; x < width; x += 1) {
+                    for (let y = 0; y < height; y += 1) {
+                        const point = mesh.getControlPoint ? mesh.getControlPoint(x, y) : null;
+                        const color = stored[y * width + x];
+                        if (!point || !point.color || !color) continue;
+                        point.color[0] = color[0];
+                        point.color[1] = color[1];
+                        point.color[2] = color[2];
+                    }
+                }
+                if (typeof mesh.updateMesh === 'function') {
+                    mesh.updateMesh();
+                }
+                return true;
+            }
+
+            function tickAmllPalette() {
+                if (!amllColorState.enabled) {
+                    amllColorState.rafId = null;
+                    return;
+                }
+                const renderer = amllColorState.renderer;
+                const mesh = getActiveMesh(renderer);
+                if (mesh) {
+                    if (!amllColorState.originalMeshColors) {
+                        captureMeshColors(mesh);
+                    }
+                    ensureBasePalette();
+                    const colors = buildDynamicColors();
+                    if (colors.length) {
+                        applyColorsToMesh(mesh, colors);
+                    }
+                }
+                amllColorState.rafId = requestAnimationFrame(tickAmllPalette);
+            }
+
+            function startAmllPaletteLoop() {
+                if (amllColorState.rafId != null) return;
+                amllColorState.rafId = requestAnimationFrame(tickAmllPalette);
+            }
+
+            function stopAmllPaletteLoop({ clearBackground = true } = {}) {
+                if (amllColorState.rafId != null) {
+                    cancelAnimationFrame(amllColorState.rafId);
+                }
+                amllColorState.rafId = null;
+                amllColorState.enabled = false;
+                amllColorState.lastColors = null;
+                const renderer = amllColorState.renderer;
+                const mesh = getActiveMesh(renderer);
+                if (mesh) {
+                    if (!restoreMeshColors(mesh)) {
+                        applyBasePaletteToMesh(mesh);
+                    }
+                }
+                amllColorState.renderer = null;
+                amllColorState.basePaletteHsl = [];
+                amllColorState.originalMeshColors = null;
+                amllColorState.originalMeshSize = null;
+                amllColorState.bandStats = [];
+                amllColorState.globalEnergy = 0;
+                if (clearBackground) {
+                    amllColorState.background = null;
+                }
+            }
+
+            function parseBeatCurve(buffer) {
+                if (!buffer || buffer.byteLength < 12) return null;
+                const view = new DataView(buffer);
+                const magic = String.fromCharCode(
+                    view.getUint8(0),
+                    view.getUint8(1),
+                    view.getUint8(2),
+                    view.getUint8(3)
+                );
+                if (magic !== AMLL_BEAT_CURVE_MAGIC && magic !== AMLL_BEAT_CURVE_MAGIC_LEVELS) return null;
+                const version = view.getUint8(4);
+                if (version !== 1) return null;
+                const bandCount = view.getUint8(5);
+                const frameMs = view.getUint16(6, true);
+                const frameCount = view.getUint32(8, true);
+                if (!bandCount || !frameMs || !frameCount) return null;
+                const dataOffset = 12;
+                const bytesPerFrame = magic === AMLL_BEAT_CURVE_MAGIC_LEVELS
+                    ? bandCount + 1
+                    : bandCount;
+                const expected = dataOffset + frameCount * bytesPerFrame;
+                if (buffer.byteLength < expected) return null;
+                const data = new Uint8Array(buffer, dataOffset, frameCount * bytesPerFrame);
+                const mode = magic === AMLL_BEAT_CURVE_MAGIC_LEVELS ? 'levels' : 'gain';
+                return { bandCount, frameMs, frameCount, data, mode };
+            }
+
+            function clearBeatCurvePolling() {
+                if (beatCurvePollTimer) {
+                    clearTimeout(beatCurvePollTimer);
+                    beatCurvePollTimer = null;
+                }
+                beatCurveRequestInFlight = false;
+            }
+
+            async function requestBeatCurveFromServer() {
+                if (!amllBeatEnabled) return;
+                if (beatCurveRequestInFlight) return;
+                beatCurveRequestInFlight = true;
+                try {
+                    const beatRes = await fetch('/amll/generate_beat_curve', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({})
+                    });
+                    const payload = await beatRes.json().catch(() => null);
+                    if (!beatRes.ok && beatRes.status !== 202) {
+                        console.warn('[AMLL] 自动生成节奏曲线失败', beatRes.status);
+                        return;
+                    }
+                    if (payload && payload.status === 'success' && payload.curve) {
+                        currentSongInfo = currentSongInfo || {};
+                        currentSongInfo.meta = currentSongInfo.meta || {};
+                        currentSongInfo.meta.background_beat_curve = payload.curve;
+                        await loadBeatCurve(payload.curve);
+                        return;
+                    }
+                    if (payload && payload.status === 'pending') {
+                        beatCurvePollTimer = setTimeout(requestBeatCurveFromServer, 2000);
+                    }
+                } catch (error) {
+                    console.warn('[AMLL] 自动生成节奏曲线失败', error);
+                } finally {
+                    beatCurveRequestInFlight = false;
+                }
+            }
+
+            function ensureBeatCurveAuto() {
+                if (!amllBeatEnabled) return;
+                if (amllColorState.beatCurve) return;
+                const curvePath = currentSongInfo?.meta?.background_beat_curve;
+                if (curvePath) {
+                    loadBeatCurve(curvePath);
+                    return;
+                }
+                requestBeatCurveFromServer();
+            }
+
+            function sampleBeatCurve(targetBands) {
+                const curve = amllColorState.beatCurve;
+                if (!curve || !audioPlayer) return null;
+                const timeMs = Number.isFinite(audioPlayer.currentTime) ? audioPlayer.currentTime * 1000 : 0;
+                const frameFloat = Math.max(0, timeMs / curve.frameMs);
+                const maxFrame = Math.max(0, curve.frameCount - 1);
+                const frameIndex = Math.min(maxFrame, Math.floor(frameFloat));
+                const nextIndex = Math.min(maxFrame, frameIndex + 1);
+                const frameFrac = frameFloat - frameIndex;
+                const bytesPerFrame = curve.mode === 'levels' ? curve.bandCount + 1 : curve.bandCount;
+                const baseOffset = frameIndex * bytesPerFrame;
+                const nextOffset = nextIndex * bytesPerFrame;
+                if (curve.mode === 'levels') {
+                    const levels = new Array(targetBands).fill(0);
+                    if (curve.bandCount === 1) {
+                        const v0 = curve.data[baseOffset] || 0;
+                        const v1 = curve.data[nextOffset] || v0;
+                        const value = lerp(v0, v1, frameFrac) / 255;
+                        levels.fill(value);
+                    } else {
+                        for (let i = 0; i < targetBands; i += 1) {
+                            const srcPos = targetBands === 1
+                                ? 0
+                                : (i / Math.max(1, targetBands - 1)) * (curve.bandCount - 1);
+                            const srcIndex = Math.floor(srcPos);
+                            const srcNext = Math.min(curve.bandCount - 1, srcIndex + 1);
+                            const srcFrac = srcPos - srcIndex;
+                            const a0 = lerp(
+                                curve.data[baseOffset + srcIndex] || 0,
+                                curve.data[baseOffset + srcNext] || 0,
+                                srcFrac
+                            );
+                            const a1 = lerp(
+                                curve.data[nextOffset + srcIndex] || 0,
+                                curve.data[nextOffset + srcNext] || 0,
+                                srcFrac
+                            );
+                            levels[i] = lerp(a0, a1, frameFrac) / 255;
+                        }
+                    }
+                    const g0 = curve.data[baseOffset + curve.bandCount] || 0;
+                    const g1 = curve.data[nextOffset + curve.bandCount] || g0;
+                    const globalEnergy = lerp(g0, g1, frameFrac) / 255;
+                    return { mode: 'levels', levels, globalEnergy };
+                }
+                const gains = new Array(targetBands).fill(AMLL_GAIN_MIN);
+                if (curve.bandCount === 1) {
+                    const v0 = curve.data[baseOffset] || 0;
+                    const v1 = curve.data[nextOffset] || v0;
+                    const value = lerp(v0, v1, frameFrac) / 255;
+                    const gain = AMLL_GAIN_MIN + value * (AMLL_GAIN_MAX - AMLL_GAIN_MIN);
+                    gains.fill(gain);
+                } else {
+                    for (let i = 0; i < targetBands; i += 1) {
+                        const srcPos = targetBands === 1
+                            ? 0
+                            : (i / Math.max(1, targetBands - 1)) * (curve.bandCount - 1);
+                        const srcIndex = Math.floor(srcPos);
+                        const srcNext = Math.min(curve.bandCount - 1, srcIndex + 1);
+                        const srcFrac = srcPos - srcIndex;
+                        const a0 = lerp(
+                            curve.data[baseOffset + srcIndex] || 0,
+                            curve.data[baseOffset + srcNext] || 0,
+                            srcFrac
+                        );
+                        const a1 = lerp(
+                            curve.data[nextOffset + srcIndex] || 0,
+                            curve.data[nextOffset + srcNext] || 0,
+                            srcFrac
+                        );
+                        const value = lerp(a0, a1, frameFrac) / 255;
+                        gains[i] = AMLL_GAIN_MIN + value * (AMLL_GAIN_MAX - AMLL_GAIN_MIN);
+                    }
+                }
+                return { mode: 'gain', gains };
+            }
+
+            function attachAmllPaletteDriver(background) {
+                amllColorState.background = background;
+                if (!amllBeatEnabled) return;
+                const renderer = background && (background.renderer || background._renderer || background['renderer']);
+                if (!renderer) return;
+                amllColorState.renderer = renderer;
+                amllColorState.enabled = true;
+                amllColorState.basePaletteHsl = [];
+                amllColorState.bandStats = [];
+                amllColorState.globalEnergy = 0;
+                if (!amllColorState.beatCurve || amllColorState.beatCurve.mode === 'gain') {
+                    ensureAudioAnalyser();
+                }
+                ensureBasePalette();
+                startAmllPaletteLoop();
+            }
+
+            function applyCoverPalette() {
+                // 保持 AMLL 自身取色逻辑，仅做饱和度动态变化
+            }
+
+            audioPlayer.addEventListener('play', () => {
+                ensureAudioAnalyser();
+                if (amllColorState.audioContext && amllColorState.audioContext.state === 'suspended') {
+                    amllColorState.audioContext.resume().catch(() => {});
+                }
+            });
+
+            document.addEventListener('click', () => {
+                if (amllColorState.audioContext && amllColorState.audioContext.state === 'suspended') {
+                    amllColorState.audioContext.resume().catch(() => {});
+                }
+            }, { passive: true });
 
             const LYRIC_SCALE_MIN = 0.35;
             const LYRIC_SCALE_MAX = 1.6;
@@ -931,6 +1711,7 @@
                     } catch (e) { /* 忽略清理异常 */ }
                     backgroundCleanup = null;
                 }
+                stopAmllPaletteLoop({ clearBackground: true });
                 clearBackgroundVideo();
                 document.querySelectorAll('.background-container').forEach((el) => el.remove());
             }
@@ -1103,6 +1884,7 @@
                     const dpr = window.devicePixelRatio || 1;
                     background.setRenderScale(dpr);
                     background.resume();
+                    attachAmllPaletteDriver(background);
                     return true;
                 } catch (error) {
                     console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
@@ -1110,6 +1892,31 @@
                         backgroundCleanup();
                         backgroundCleanup = null;
                     }
+                    return false;
+                }
+            }
+
+            async function loadBeatCurve(beatPath) {
+                const url = resolveMediaUrl(beatPath);
+                if (!url) {
+                    amllColorState.beatCurve = null;
+                    return false;
+                }
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const buffer = await res.arrayBuffer();
+                    const curve = parseBeatCurve(buffer);
+                    if (!curve) {
+                        throw new Error('Invalid beat curve');
+                    }
+                    amllColorState.beatCurve = curve;
+                    return true;
+                } catch (error) {
+                    console.warn('[AMLL] 加载节奏曲线失败', error);
+                    amllColorState.beatCurve = null;
                     return false;
                 }
             }
@@ -2417,6 +3224,7 @@
                 try {
                     const songInfoRes = await fetch('/song-info');
                     const songInfo = await songInfoRes.json();
+                    currentSongInfo = songInfo;
                     audioPlayer.src = songInfo.song;
 
                     if (!songInfo.meta || typeof songInfo.meta !== 'object') {
@@ -2434,6 +3242,11 @@
                         songInfo.cover = queryCover;
                         songInfo.coverUrl = queryCover;
                     }
+
+                    applyCoverPalette(songInfo.cover_palette);
+                    amllColorState.beatCurve = null;
+                    clearBeatCurvePolling();
+                    ensureBeatCurveAuto();
 
                     removeExistingBackground();
 

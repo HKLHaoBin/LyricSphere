@@ -7,6 +7,7 @@ import copy
 import functools
 import bcrypt
 import logging
+import math
 import os
 import re
 import shutil
@@ -43,6 +44,8 @@ import asyncio
 import websockets
 import queue
 from urllib.parse import urlparse, unquote
+import requests
+from PIL import Image
 
 _request_context: ContextVar[Optional["RequestContext"]] = ContextVar("request_context", default=None)
 _MISSING = object()
@@ -474,6 +477,8 @@ def render_template(template_name: str, **context: Any) -> HTMLResponse:
 
 THREADPOOL_MAX_WORKERS = int(os.getenv("APP_THREADPOOL_WORKERS", "16"))
 THREADPOOL_EXECUTOR = ThreadPoolExecutor(max_workers=THREADPOOL_MAX_WORKERS)
+BEAT_CURVE_TASKS: Dict[str, Dict[str, Any]] = {}
+BEAT_CURVE_LOCK = threading.Lock()
 
 def cleanup_missing_ssl_cert_env() -> List[str]:
     """
@@ -1288,6 +1293,74 @@ def build_meta_lyrics_value(existing_parts: List[str],
             parts[3] = roman_url or '!'
         return '::'.join(parts)
     return lyrics_url or ''
+
+
+def _extract_lyrics_windows_from_meta(
+    meta_value: Optional[str],
+    json_meta: Optional[dict],
+    padding_ms: int = 400,
+    merge_gap_ms: int = 200,
+    fallback_json_path: Optional[Path] = None
+) -> List[Tuple[int, int]]:
+    lyrics_url, _, _, _ = parse_meta_lyrics(meta_value)
+    if not lyrics_url and json_meta and isinstance(json_meta, dict):
+        lyrics_url = json_meta.get('lyrics', '') or ''
+        lyrics_url, _, _, _ = parse_meta_lyrics(lyrics_url)
+    if not lyrics_url:
+        return []
+    try:
+        parsed = urlparse(str(lyrics_url))
+        lyric_rel = parsed.path.lstrip('/')
+        if not lyric_rel:
+            return []
+        lyrics_path = STATIC_DIR / lyric_rel
+        if not lyrics_path.exists() and fallback_json_path:
+            # Try resolving relative to JSON file directory for legacy paths.
+            candidate = fallback_json_path.parent / lyric_rel
+            if candidate.exists():
+                lyrics_path = candidate
+        if not lyrics_path.exists():
+            return []
+        with open(lyrics_path, 'r', encoding='utf-8-sig') as handle:
+            lys_content = handle.read()
+    except Exception:
+        return []
+
+    lines = parse_lys(lys_content)
+    if not lines:
+        return []
+
+    windows: List[Tuple[int, int]] = []
+    for line in lines:
+        syllables = line.get('syllables') or []
+        if not syllables:
+            continue
+        start_ms = min(int(float(item.get('startTime', 0)) * 1000) for item in syllables)
+        end_ms = max(
+            int((float(item.get('startTime', 0)) + float(item.get('duration', 0))) * 1000)
+            for item in syllables
+        )
+        if end_ms <= start_ms:
+            continue
+        start_ms = max(0, start_ms - padding_ms)
+        end_ms = max(start_ms + 1, end_ms + padding_ms)
+        windows.append((start_ms, end_ms))
+
+    if not windows:
+        return []
+
+    windows.sort(key=lambda item: item[0])
+    merged: List[Tuple[int, int]] = []
+    for start_ms, end_ms in windows:
+        if not merged:
+            merged.append((start_ms, end_ms))
+            continue
+        prev_start, prev_end = merged[-1]
+        if start_ms <= prev_end + merge_gap_ms:
+            merged[-1] = (prev_start, max(prev_end, end_ms))
+        else:
+            merged.append((start_ms, end_ms))
+    return merged
 
 
 def analyze_lyrics_tags(lyrics_path: str) -> Tuple[bool, bool]:
@@ -3385,6 +3458,91 @@ async def upload_image():
         return jsonify({'status': 'error', 'message': str(e)})
 
 
+@app.route('/lddc/search', methods=['GET'])
+def lddc_search():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('搜索歌词')
+    if locked_response:
+        return locked_response
+    keyword = (request.args.get('keyword') or '').strip()
+    sources = (request.args.get('sources') or '').strip()
+    if not keyword:
+        return jsonify({'status': 'error', 'message': '缺少搜索关键词'})
+    params = {'keyword': keyword}
+    if sources:
+        params['sources'] = sources
+    try:
+        response = requests.get(f"{LDDC_API_BASE}/api/search", params=params, timeout=20)
+        response.raise_for_status()
+        return jsonify({'status': 'success', 'results': response.json()})
+    except requests.exceptions.RequestException as exc:
+        return jsonify({'status': 'error', 'message': f'搜索失败: {exc}'})
+
+
+@app.route('/lddc/match_lyrics', methods=['GET'])
+def lddc_match_lyrics():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('匹配歌词')
+    if locked_response:
+        return locked_response
+    title = (request.args.get('title') or '').strip()
+    artist = (request.args.get('artist') or '').strip()
+    keyword = (request.args.get('keyword') or '').strip()
+    if not (title and artist) and not keyword:
+        return jsonify({'status': 'error', 'message': '需要提供歌曲名+歌手名或关键词'})
+    params = {}
+    if title and artist:
+        params['title'] = title
+        params['artist'] = artist
+    if keyword:
+        params['keyword'] = keyword
+    try:
+        response = requests.get(f"{LDDC_API_BASE}/api/match_lyrics", params=params, timeout=20)
+        response.raise_for_status()
+        raw_lrc = response.text or ''
+        lys_text, translation_text = _split_lddc_lrc(raw_lrc)
+        return jsonify({
+            'status': 'success',
+            'lyrics_lys': lys_text,
+            'translation_lrc': translation_text,
+            'raw_lrc': raw_lrc
+        })
+    except requests.exceptions.RequestException as exc:
+        return jsonify({'status': 'error', 'message': f'匹配失败: {exc}'})
+
+
+@app.route('/lddc/get_lyrics_by_id', methods=['POST'])
+def lddc_get_lyrics_by_id():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('获取歌词')
+    if locked_response:
+        return locked_response
+    data = request.json or {}
+    song_info_json = (data.get('song_info_json') or '').strip()
+    if not song_info_json:
+        return jsonify({'status': 'error', 'message': '缺少 song_info_json'})
+    try:
+        response = requests.get(
+            f"{LDDC_API_BASE}/api/get_lyrics_by_id",
+            params={'song_info_json': song_info_json},
+            timeout=20
+        )
+        response.raise_for_status()
+        raw_lrc = response.text or ''
+        lys_text, translation_text = _split_lddc_lrc(raw_lrc)
+        return jsonify({
+            'status': 'success',
+            'lyrics_lys': lys_text,
+            'translation_lrc': translation_text,
+            'raw_lrc': raw_lrc
+        })
+    except requests.exceptions.RequestException as exc:
+        return jsonify({'status': 'error', 'message': f'获取失败: {exc}'})
+
+
 @app.route('/upload_lyrics', methods=['POST'])
 async def upload_lyrics():
     if not is_request_allowed():
@@ -5446,13 +5604,29 @@ def translate_lyrics():
         app.logger.info(f"原始歌词内容长度: {len(content)} 字符")
         app.logger.info(f"API密钥: {api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '****'}")
 
+        def _coerce_json_payload(response_obj: Any) -> Dict[str, Any]:
+            if isinstance(response_obj, dict):
+                return response_obj
+            body = getattr(response_obj, "body", None)
+            if isinstance(body, (bytes, bytearray)):
+                try:
+                    return json.loads(body.decode("utf-8"))
+                except Exception:
+                    return {}
+            json_attr = getattr(response_obj, "json", None)
+            if isinstance(json_attr, dict):
+                return json_attr
+            return {}
+
         # 1. 使用现有的提取功能获取时间戳和歌词
         timestamps_response = extract_timestamps()
         lyrics_response = extract_lyrics()
         
         # 从响应中获取数据
-        timestamps = timestamps_response.json.get('timestamps', [])
-        lyrics = lyrics_response.json.get('content', '').split('\n')
+        timestamps_payload = _coerce_json_payload(timestamps_response)
+        lyrics_payload = _coerce_json_payload(lyrics_response)
+        timestamps = timestamps_payload.get('timestamps', [])
+        lyrics = lyrics_payload.get('content', '').split('\n')
 
         # 基于原始歌词判断是否存在时间戳模式
         candidate_lines = [
@@ -5982,6 +6156,235 @@ def get_lyrics_by_path():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+def _build_beat_curve_bins(freqs, band_count: int, min_freq: float, max_freq: float) -> List[Tuple[int, int]]:
+    log_min = math.log10(min_freq)
+    log_max = math.log10(max_freq)
+    edges = [
+        10 ** (log_min + (log_max - log_min) * (i / band_count))
+        for i in range(band_count + 1)
+    ]
+    bins: List[Tuple[int, int]] = []
+    for i in range(band_count):
+        f0 = edges[i]
+        f1 = edges[i + 1]
+        start = int(freqs.searchsorted(f0, side="left"))
+        end = int(freqs.searchsorted(f1, side="right"))
+        start = max(0, min(start, len(freqs) - 1))
+        end = max(start + 1, min(end, len(freqs)))
+        bins.append((start, end))
+    return bins
+
+
+def _generate_beat_curve_file(
+    audio_path: Path,
+    output_path: Path,
+    frame_ms: int = 1000,
+    band_count: int = 16,
+    min_freq: float = 40.0,
+    max_freq: float = 14000.0,
+    sample_rate: int = 44100,
+    n_fft: int = 2048,
+    lyric_windows_ms: Optional[List[Tuple[int, int]]] = None
+) -> Dict[str, Any]:
+    try:
+        import numpy as np
+        import librosa
+    except ImportError as exc:
+        raise RuntimeError("Missing dependencies: numpy, librosa") from exc
+
+    audio, sr = librosa.load(str(audio_path), sr=sample_rate, mono=True)
+    if audio.size == 0:
+        raise RuntimeError("Empty audio data")
+    hop_length = max(1, int(round(sr * frame_ms / 1000)))
+    stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length, window="hann", center=True)
+    mag = np.abs(stft)
+    if mag.size == 0:
+        raise RuntimeError("Empty spectrogram")
+    mag_max = float(np.max(mag))
+    if not math.isfinite(mag_max) or mag_max <= 0:
+        mag_max = 1.0
+    mag = mag / mag_max
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+    band_bins = _build_beat_curve_bins(freqs, band_count, min_freq, max_freq)
+
+    frame_count = mag.shape[1]
+    if frame_count <= 0:
+        raise RuntimeError("Empty spectrogram")
+
+    emphasized = np.zeros((band_count, frame_count), dtype=np.float32)
+    for i, (start, end) in enumerate(band_bins):
+        band_mag = mag[start:end, :]
+        if band_mag.size == 0:
+            continue
+        rms = np.sqrt(np.mean(band_mag ** 2, axis=0))
+        peak = np.max(band_mag, axis=0)
+        level = 0.7 * rms + 0.3 * peak
+        band_emph = np.power(np.clip(level, 0.0, 1.0), 1.15)
+        emphasized[i, :] = band_emph
+
+    window_frames = max(3, int(round(8 * 1000 / frame_ms)))
+    half_window = window_frames // 2
+    bytes_per_frame = band_count
+    output = bytearray(frame_count * bytes_per_frame)
+
+    prefix = np.concatenate([np.zeros((band_count, 1), dtype=np.float32), np.cumsum(emphasized, axis=1)], axis=1)
+    prefix_sq = np.concatenate([np.zeros((band_count, 1), dtype=np.float32), np.cumsum(emphasized ** 2, axis=1)], axis=1)
+
+    def _std_for_range(band_idx: int, left: int, right: int) -> float:
+        if right <= left:
+            return 0.0
+        sum_v = float(prefix[band_idx, right] - prefix[band_idx, left])
+        sum_sq = float(prefix_sq[band_idx, right] - prefix_sq[band_idx, left])
+        count = max(1, right - left)
+        mean = sum_v / count
+        var = max(0.0, (sum_sq / count) - mean ** 2)
+        return math.sqrt(var)
+
+    lyric_windows_ms = lyric_windows_ms or []
+
+    for i in range(band_count):
+        series = emphasized[i, :]
+        stds = np.zeros(frame_count, dtype=np.float32)
+        if lyric_windows_ms:
+            frame_windows = []
+            for start_ms, end_ms in lyric_windows_ms:
+                left = max(0, int(math.floor(start_ms / frame_ms)))
+                right = min(frame_count, int(math.ceil(end_ms / frame_ms)) + 1)
+                if right <= left:
+                    continue
+                frame_windows.append((left, right))
+            frame_windows.sort(key=lambda item: item[0])
+            window_stds = []
+            for left, right in frame_windows:
+                window_stds.append(_std_for_range(i, left, right))
+
+            window_idx = 0
+            for t in range(frame_count):
+                while window_idx < len(frame_windows) and t >= frame_windows[window_idx][1]:
+                    window_idx += 1
+                if window_idx < len(frame_windows):
+                    left, right = frame_windows[window_idx]
+                    if left <= t < right:
+                        stds[t] = window_stds[window_idx]
+                        continue
+                local_left = max(0, t - half_window)
+                local_right = min(frame_count, t + half_window + 1)
+                stds[t] = _std_for_range(i, local_left, local_right)
+        else:
+            for t in range(frame_count):
+                left = max(0, t - half_window)
+                right = min(frame_count, t + half_window + 1)
+                stds[t] = _std_for_range(i, left, right)
+
+        target_std = float(np.percentile(stds, 70))
+        target_std = max(target_std, 0.03)
+        mean_energy = float(np.mean(series))
+        energy_factor = max(0.7, min(0.35 / (mean_energy + 0.05), 2.0))
+        for t in range(frame_count):
+            local_std = float(stds[t])
+            gain = target_std / (local_std + 0.02)
+            gain = max(0.6, min(gain * energy_factor, 3.0))
+            gain_norm = (gain - 0.6) / (3.0 - 0.6)
+            gain_norm = max(0.0, min(gain_norm, 1.0))
+            output[t * bytes_per_frame + i] = int(round(gain_norm * 255))
+
+    actual_frame_ms = max(1, int(round(hop_length * 1000 / sr)))
+    header = bytearray()
+    header.extend(b"AMBG")
+    header.extend(struct.pack("<BBHI", 1, band_count, actual_frame_ms, frame_count))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as handle:
+        handle.write(header)
+        handle.write(output)
+
+    return {
+        "frame_ms": actual_frame_ms,
+        "frame_count": frame_count,
+        "band_count": band_count
+    }
+
+
+def _update_song_json_with_curve(json_path: Path, curve_relative: str) -> None:
+    with BEAT_CURVE_LOCK:
+        with open(json_path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            raise RuntimeError('json 格式不正确')
+        meta = data.setdefault('meta', {})
+        if not isinstance(meta, dict):
+            raise RuntimeError('meta 格式不正确')
+        meta['background_beat_curve'] = curve_relative
+        with open(json_path, 'w', encoding='utf-8') as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+
+
+def _beat_curve_task_key(json_path: Path, song_relative: str) -> str:
+    return f"{json_path.resolve()}::{song_relative}"
+
+
+def _submit_beat_curve_job(
+    json_path: Path,
+    song_relative: str,
+    audio_path: Path,
+    output_path: Path,
+    frame_ms: int,
+    band_count: int,
+    min_freq: float,
+    max_freq: float,
+    sample_rate: int,
+    n_fft: int,
+    lyric_windows_ms: Optional[List[Tuple[int, int]]] = None
+) -> None:
+    task_key = _beat_curve_task_key(json_path, song_relative)
+
+    def _job():
+        info = _generate_beat_curve_file(
+            audio_path=audio_path,
+            output_path=output_path,
+            frame_ms=frame_ms,
+            band_count=band_count,
+            min_freq=min_freq,
+            max_freq=max_freq,
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            lyric_windows_ms=lyric_windows_ms
+        )
+        curve_relative = f"./songs/{output_path.name}"
+        _update_song_json_with_curve(json_path, curve_relative)
+        return {
+            "curve_relative": curve_relative,
+            "info": info
+        }
+
+    def _done_callback(future):
+        with BEAT_CURVE_LOCK:
+            task = BEAT_CURVE_TASKS.get(task_key)
+        if task is None:
+            return
+        try:
+            result = future.result()
+            with BEAT_CURVE_LOCK:
+                task['status'] = 'done'
+                task['result'] = result
+                task['error'] = None
+        except Exception as exc:
+            with BEAT_CURVE_LOCK:
+                task['status'] = 'error'
+                task['error'] = str(exc)
+
+    future = THREADPOOL_EXECUTOR.submit(_job)
+    with BEAT_CURVE_LOCK:
+        BEAT_CURVE_TASKS[task_key] = {
+            "status": "pending",
+            "future": future,
+            "result": None,
+            "error": None,
+            "output_path": str(output_path)
+        }
+    future.add_done_callback(_done_callback)
+
+
 @app.route('/song-info')
 def song_info():
     json_file = session.get('lyrics_json_file', '测试 - 测试.json')
@@ -6007,6 +6410,8 @@ def song_info():
             if not raw_value or raw_value == '!':
                 return ''
             cleaned = str(raw_value).strip().replace('\\', '/').replace('/static/songs/', '/songs/').replace('static/songs/', 'songs/')
+            if cleaned.startswith('./'):
+                cleaned = cleaned[2:]
             if not cleaned:
                 return ''
             parsed = urlparse(cleaned)
@@ -6029,7 +6434,7 @@ def song_info():
             if existing_background:
                 meta['Background-image'] = existing_background
 
-            for key in ('albumImgSrc', 'cover', 'coverUrl'):
+            for key in ('albumImgSrc', 'cover', 'coverUrl', 'background_beat_curve'):
                 normalized = normalize_media_url(meta.get(key))
                 if normalized:
                     meta[key] = normalized
@@ -6063,11 +6468,166 @@ def song_info():
                     data['coverUrl'] = normalized_candidate
                     break
 
+        palette_payload = _build_cover_palette_payload(data, meta)
+        if palette_payload:
+            data['cover_palette'] = palette_payload
+
         return jsonify(data)
     except FileNotFoundError:
         return jsonify({'error': 'Song info file not found'}), 404
     except json.JSONDecodeError:
         return jsonify({'error': 'Error decoding JSON'}), 500
+
+
+@app.route('/amll/generate_beat_curve', methods=['POST'])
+def generate_beat_curve():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('生成背景节奏曲线')
+    if locked_response:
+        return locked_response
+
+    payload = request.get_json(silent=True) or {}
+    json_path = payload.get('json_path') or payload.get('jsonPath')
+    frame_ms = int(payload.get('frame_ms', 1000))
+    band_count = int(payload.get('band_count', 16))
+    min_freq = float(payload.get('min_freq', 40.0))
+    max_freq = float(payload.get('max_freq', 14000.0))
+    sample_rate = int(payload.get('sample_rate', 44100))
+    n_fft = int(payload.get('n_fft', 2048))
+    force = bool(payload.get('force'))
+
+    if frame_ms <= 0 or band_count <= 0 or min_freq <= 0 or max_freq <= 0:
+        return jsonify({'status': 'error', 'message': '参数不合法'}), 400
+
+    if json_path:
+        try:
+            json_real = resolve_resource_path(json_path, 'static')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'路径不合法: {exc}'}), 400
+    else:
+        json_file = session.get('lyrics_json_file', '测试 - 测试.json')
+        json_real = (STATIC_DIR / json_file).resolve()
+        try:
+            json_real.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'json 文件路径不合法'}), 400
+
+    if not json_real.exists():
+        return jsonify({'status': 'error', 'message': 'json 文件未找到'}), 404
+
+    try:
+        with open(json_real, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': f'读取 json 失败: {exc}'}), 500
+
+    if not isinstance(data, dict):
+        return jsonify({'status': 'error', 'message': 'json 格式不正确'}), 400
+
+    meta = data.get('meta') if isinstance(data, dict) else None
+    if isinstance(meta, dict):
+        existing_curve = meta.get('background_beat_curve')
+        if existing_curve and not force:
+            curve_relative = _extract_single_song_relative(existing_curve)
+            curve_path = (SONGS_DIR / curve_relative) if curve_relative else None
+            if curve_path and curve_path.exists():
+                curve_public = build_public_url('songs', curve_relative)
+                return jsonify({
+                    'status': 'success',
+                    'curve': curve_public,
+                    'meta_key': 'background_beat_curve',
+                    'frame_ms': None,
+                    'frame_count': None,
+                    'band_count': None
+                })
+
+    song_value = data.get('song')
+    song_relative = _extract_single_song_relative(song_value)
+    if not song_relative:
+        return jsonify({'status': 'error', 'message': '歌曲路径无效'}), 400
+
+    audio_path = SONGS_DIR / song_relative
+    if not audio_path.exists():
+        return jsonify({'status': 'error', 'message': '歌曲文件未找到'}), 404
+
+    base_name = sanitize_filename(Path(song_relative).stem)
+    if not base_name:
+        base_name = f"beat_curve_{int(time.time())}"
+    output_path = SONGS_DIR / f"{base_name}.ambc"
+
+    lyric_windows_ms = []
+    if isinstance(meta, dict):
+        lyric_windows_ms = _extract_lyrics_windows_from_meta(
+            meta.get('lyrics'),
+            meta,
+            padding_ms=int(payload.get('lyric_pad_ms', 400)),
+            merge_gap_ms=int(payload.get('lyric_gap_ms', 200)),
+            fallback_json_path=json_real
+        )
+
+    if output_path.exists() and not force:
+        try:
+            _update_song_json_with_curve(json_real, f"./songs/{output_path.name}")
+        except Exception as exc:
+            return jsonify({'status': 'error', 'message': f'写入 json 失败: {exc}'}), 500
+        return jsonify({
+            'status': 'success',
+            'curve': build_public_url('songs', output_path.name),
+            'meta_key': 'background_beat_curve',
+            'frame_ms': None,
+            'frame_count': None,
+            'band_count': None
+        })
+
+    task_key = _beat_curve_task_key(json_real, song_relative)
+    with BEAT_CURVE_LOCK:
+        task = BEAT_CURVE_TASKS.get(task_key)
+
+    if task:
+        status = task.get('status')
+        if status == 'done':
+            result = task.get('result') or {}
+            curve_relative = result.get('curve_relative') or f"./songs/{output_path.name}"
+            try:
+                curve_rel = _extract_single_song_relative(curve_relative)
+                curve_url = build_public_url('songs', curve_rel) if curve_rel else f"/songs/{output_path.name}"
+            except Exception:
+                curve_url = f"/songs/{output_path.name}"
+            info = result.get('info') or {}
+            return jsonify({
+                'status': 'success',
+                'curve': curve_url,
+                'meta_key': 'background_beat_curve',
+                'frame_ms': info.get('frame_ms'),
+                'frame_count': info.get('frame_count'),
+                'band_count': info.get('band_count')
+            })
+        if status == 'error':
+            error_message = task.get('error') or '生成失败'
+            if force:
+                with BEAT_CURVE_LOCK:
+                    BEAT_CURVE_TASKS.pop(task_key, None)
+            else:
+                return jsonify({'status': 'error', 'message': error_message}), 500
+        else:
+            return jsonify({'status': 'pending', 'message': '任务处理中'}), 202
+
+    _submit_beat_curve_job(
+        json_path=json_real,
+        song_relative=song_relative,
+        audio_path=audio_path,
+        output_path=output_path,
+        frame_ms=frame_ms,
+        band_count=band_count,
+        min_freq=min_freq,
+        max_freq=max_freq,
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        lyric_windows_ms=lyric_windows_ms
+    )
+
+    return jsonify({'status': 'pending', 'message': '任务已创建'}), 202
 
 def parse_lrc(lrc_content, offset=0):
     """
@@ -6971,6 +7531,89 @@ def _decode_data_url(data_url: str) -> tuple[Optional[bytes], Optional[str]]:
     except Exception:
         return None, None
 
+def _load_cover_image_bytes(cover_url: Optional[str], cover_data_url: Optional[str]) -> Optional[bytes]:
+    if cover_data_url:
+        data_bytes, _ = _decode_data_url(cover_data_url)
+        if data_bytes:
+            return data_bytes
+    if not cover_url:
+        return None
+    cover_url = str(cover_url).strip()
+    if cover_url.startswith("data:"):
+        data_bytes, _ = _decode_data_url(cover_url)
+        if data_bytes:
+            return data_bytes
+    relative = _extract_single_song_relative(cover_url)
+    if not relative:
+        return None
+    cover_path = SONGS_DIR / relative
+    if not cover_path.exists():
+        return None
+    try:
+        return cover_path.read_bytes()
+    except Exception:
+        return None
+
+def _extract_palette_from_bytes(image_bytes: bytes, max_colors: int = 128) -> Optional[dict]:
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            img = img.convert("RGB")
+            img.thumbnail((128, 128))
+            quantized = img.quantize(colors=max_colors, method=Image.MEDIANCUT)
+            palette = quantized.getpalette() or []
+            color_counts = quantized.getcolors(max_colors) or []
+    except Exception:
+        return None
+
+    if not color_counts or not palette:
+        return None
+
+    extracted: list[tuple[int, str]] = []
+    for count, index in color_counts:
+        base = palette[index * 3:(index * 3) + 3]
+        if len(base) != 3:
+            continue
+        r, g, b = base
+        extracted.append((count, f"#{r:02x}{g:02x}{b:02x}"))
+
+    if not extracted:
+        return None
+
+    extracted.sort(key=lambda item: item[0])
+    counts = [item[0] for item in extracted]
+    colors = [item[1] for item in extracted]
+    return {"counts": counts, "colors": colors, "color_count": len(colors)}
+
+def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
+    cover_data_url = ""
+    if isinstance(data, dict):
+        cover_data_url = data.get("cover_data_url") or ""
+    if not cover_data_url and isinstance(meta, dict):
+        cover_data_url = meta.get("cover_data_url") or ""
+    cover_candidates = []
+    if isinstance(data, dict):
+        cover_candidates.extend([data.get("cover"), data.get("coverUrl")])
+    if isinstance(meta, dict):
+        cover_candidates.extend([meta.get("albumImgSrc"), meta.get("cover"), meta.get("coverUrl")])
+
+    cover_url = next((c for c in cover_candidates if c), None)
+    image_bytes = _load_cover_image_bytes(cover_url, cover_data_url)
+    if not image_bytes:
+        return {}
+    palette = _extract_palette_from_bytes(image_bytes)
+    if not palette:
+        return {}
+
+    base_colors = palette["colors"]
+    base_counts = palette["counts"]
+    full_colors = base_colors
+    full_counts = base_counts
+    return {
+        "colors": full_colors,
+        "counts": full_counts,
+        "color_count": palette["color_count"]
+    }
+
 def _extract_song_payload_from_state(state_val: dict) -> dict:
     """兼容新版 AMLL state 消息里的歌曲元数据载荷。"""
     if not isinstance(state_val, dict):
@@ -7418,6 +8061,97 @@ def _amll_lines_to_lrc(lines: list[dict]) -> str:
             start_ms = int(round(float(syllables[0].get("startTime", 0)) * 1000))
         rows.append(f"{_format_tag(start_ms)}{text}")
     return "\n".join(rows)
+
+LDDC_API_BASE = "https://vercel-lddc-api-python-eight.vercel.app"
+_LDDC_TS_RE = re.compile(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]")
+
+def _parse_lrc_timestamp(value: str) -> Optional[int]:
+    """解析 LRC 时间戳为毫秒。"""
+    match = _LDDC_TS_RE.match(value)
+    if not match:
+        return None
+    minutes = int(match.group(1))
+    seconds = int(match.group(2))
+    millis_str = (match.group(3) or "0").ljust(3, "0")[:3]
+    millis = int(millis_str)
+    return (minutes * 60 + seconds) * 1000 + millis
+
+def _format_lrc_timestamp(ms: int) -> str:
+    minutes, remainder = divmod(int(ms), 60000)
+    seconds, millis = divmod(remainder, 1000)
+    return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
+
+def _lrc_syllable_line_to_lys(raw_line: str) -> Optional[str]:
+    matches = list(_LDDC_TS_RE.finditer(raw_line))
+    if len(matches) < 2:
+        return None
+    timestamps = []
+    segments = []
+    for idx, match in enumerate(matches):
+        ts = _parse_lrc_timestamp(match.group(0))
+        if ts is None:
+            continue
+        timestamps.append(ts)
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw_line)
+        segments.append(raw_line[start:end])
+    parts = []
+    for idx, start_ms in enumerate(timestamps):
+        if idx >= len(segments):
+            continue
+        text = segments[idx]
+        if text == "":
+            continue
+        next_ms = timestamps[idx + 1] if idx + 1 < len(timestamps) else None
+        duration = max(0, (next_ms - start_ms) if next_ms is not None else 0)
+        parts.append(f"{text}({start_ms},{duration})")
+    if not parts:
+        return None
+    return f"[0]{''.join(parts)}"
+
+def _split_lddc_lrc(raw_lrc: str) -> Tuple[str, str]:
+    """将 LDDC 返回的 LRC 拆为 LYS 与翻译 LRC。"""
+    lyrics_lines: List[str] = []
+    translation_lines: List[str] = []
+    last_lyric_start: Optional[int] = None
+
+    for raw_line in raw_lrc.splitlines():
+        if not raw_line.strip():
+            continue
+        matches = list(_LDDC_TS_RE.finditer(raw_line))
+        if not matches:
+            continue
+        timestamps = []
+        segments = []
+        for idx, match in enumerate(matches):
+            ts = _parse_lrc_timestamp(match.group(0))
+            if ts is None:
+                continue
+            timestamps.append(ts)
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw_line)
+            segments.append(raw_line[start:end])
+        if not timestamps:
+            continue
+        if len(timestamps) > 1:
+            if len(timestamps) == 2 and segments and segments[0].strip() and (len(segments) < 2 or not segments[1].strip()):
+                translation_lines.append(f"[{_format_lrc_timestamp(timestamps[0])}]{segments[0].strip()}")
+                continue
+            lys_line = _lrc_syllable_line_to_lys(raw_line)
+            if lys_line:
+                lyrics_lines.append(lys_line)
+                last_lyric_start = timestamps[0]
+            continue
+        text = segments[0].strip() if segments else ""
+        if not text:
+            continue
+        if last_lyric_start is not None and timestamps[0] == last_lyric_start:
+            translation_lines.append(f"[{_format_lrc_timestamp(timestamps[0])}]{text}")
+        else:
+            lyrics_lines.append(f"[0]{text}({timestamps[0]},0)")
+            last_lyric_start = timestamps[0]
+
+    return "\n".join(lyrics_lines), "\n".join(translation_lines)
 
 def _ensure_unique_filename(base_dir: Path, filename: str) -> str:
     """在目录下确保文件名唯一，自动追加序号。"""
