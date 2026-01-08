@@ -5,6 +5,10 @@ LyricSphere 是一个基于 Flask 的 Web 应用，专注于动态歌词的管�
 致谢：
 - https://github.com/BingoKingo/amll-web/tree/amlw-dev
 - 本项目的 AMLL-web 功能与部分模板文件使用了该仓库的 AMLL 背景能力。
+- https://github.com/Steve-xmh/applemusic-like-lyrics
+- 本项目使用了该仓库提供的 Apple Music 风格歌词显示能力，实现了类似 iPad 版 Apple Music 的精美歌词动画效果。
+- https://github.com/my-name-is-not-available/vercel-LDDC-api-python
+- 本项目使用了该仓库提供的 LDDC（Lyrics Display and Download Center）API 能力，支持歌词显示和下载功能。
 
 ## 主要功能
 
