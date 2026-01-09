@@ -168,4 +168,4 @@ LyricSphere/
 
 本项目采用 **GNU General Public License v3.0** (GPL-3.0) 进行授权。任何人都可以在遵守 GPL-3.0 的前提下使用、修改与分发本项目的源码或衍生作品。
 
-完整许可证文本请见 `LICENSE`。如需了解详细条款，请参考 https://www.gnu.org/licenses/gpl-3.0.html
+完整许可证文本请见 `LICENSE`。
