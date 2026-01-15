@@ -949,6 +949,11 @@
             color: #1a1a1a;
         }
 
+        .instrumental-tag {
+            background: #5c7cfa;
+            color: #fff;
+        }
+
         .lyrics-editor {
             height: 176px;
             margin: 10px 0;
@@ -2374,31 +2379,46 @@
 
                     const openAmllPlayer = (encodedLyricPath) => {
                         const styleQuery = styleQuerySnapshot;
-                        const amllUrl = `${amllPlayerBaseUrl}?music=${musicPath}&lyric=${encodedLyricPath}&title=${title}&artist=${artists}${coverQuery}${styleQuery}`;
+                        const params = [];
+                        if (musicPath) params.push(`music=${musicPath}`);
+                        if (encodedLyricPath) params.push(`lyric=${encodedLyricPath}`);
+                        if (title) params.push(`title=${title}`);
+                        if (artists) params.push(`artist=${artists}`);
+                        if (coverPath) params.push(`cover=${coverPath}`);
+                        const baseQuery = params.join('&');
+                        const mergedQuery = baseQuery
+                            ? `${baseQuery}${styleQuery}`
+                            : (styleQuery ? styleQuery.replace(/^&/, '') : '');
+                        const amllUrl = mergedQuery
+                            ? `${amllPlayerBaseUrl}?${mergedQuery}`
+                            : amllPlayerBaseUrl;
                         window.open(amllUrl, '_blank');
                     };
+                    const preparePlayerLyric = async (sourcePath) => {
+                        const resp = await fetch('/prepare_ttml_for_player', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: sourcePath })
+                        });
+                        const data = await resp.json();
+                        if (data.status === 'success' && data.ttmlPath) {
+                            return normalizeSongsUrl(data.ttmlPath);
+                        }
+                        const message = data.message || '生成TTML失败';
+                        throw new Error(message);
+                    };
 
-                    if (originalLyricsRelative && !originalLyricsRelative.toLowerCase().endsWith('.ttml')) {
+                    if (originalLyricsRelative) {
                         try {
-                            const convertResponse = await fetch('/convert_to_ttml_temp', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ path: originalLyricsRelative })
-                            });
-                            const convertData = await convertResponse.json();
-                            if (convertData.status === 'success') {
-                                const convertedLyricsUrl = normalizeSongsUrl(convertData.ttmlPath);
-                                const convertedLyricsPath = encodeURIComponent(convertedLyricsUrl);
-                                openAmllPlayer(convertedLyricsPath);
-                            } else {
-                                alert('歌词转换失败: ' + convertData.message);
-                            }
+                            const preparedUrl = await preparePlayerLyric(lyricCandidate);
+                            const preparedPath = encodeURIComponent(preparedUrl);
+                            openAmllPlayer(preparedPath);
                         } catch (error) {
-                            console.error('歌词转换请求失败:', error);
-                            alert('歌词转换请求失败');
+                            console.warn('歌词处理失败，已跳过歌词参数:', error);
+                            openAmllPlayer('');
                         }
                     } else {
-                        openAmllPlayer(lyricsPath);
+                        openAmllPlayer('');
                     }
                 } catch (error) {
                     console.error('获取歌曲信息失败:', error);
@@ -2667,10 +2687,34 @@
             return span
         }
 
+        function normalizeLyricsValue(value) {
+            return String(value || '').trim()
+        }
+
+        function extractLyricsPathFromMeta(metaLyrics) {
+            const raw = normalizeLyricsValue(metaLyrics)
+            if (!raw) return ''
+            const parts = raw.split('::')
+            if (parts.length >= 4) {
+                return normalizeLyricsValue(parts[1])
+            }
+            return raw
+        }
+
+        function hasLyricsSummary(summary) {
+            const direct = normalizeLyricsValue(summary.lyricsPath)
+            if (direct && direct !== '!') return true
+            const fromMeta = extractLyricsPathFromMeta(summary.metaLyrics)
+            return Boolean(fromMeta && fromMeta !== '!')
+        }
+
         function buildSongTags(summary) {
             const container = document.createElement('div')
             container.className = 'song-tags'
             container.id = `tags-${summary.filename}`
+            if (!hasLyricsSummary(summary)) {
+                container.appendChild(createTag('纯音乐', 'song-tag instrumental-tag'))
+            }
             if (!summary.hasAudio) {
                 container.appendChild(createTag('无音源', 'song-tag no-audio-tag'))
             }
@@ -2908,7 +2952,7 @@
 
             const amllBtn = document.createElement('button')
             amllBtn.className = 'style-button am-style'
-            amllBtn.textContent = 'AMLL-web'
+            amllBtn.textContent = 'AM歌词样式'
             amllBtn.addEventListener('click', () => openFamyliamCloud(summary.filename, 'amll'))
 
             const brightBtn = document.createElement('button')
@@ -3228,41 +3272,43 @@
             const modal = document.getElementById('lyricsModal')
             const lyricsPathInput = document.getElementById('lyricsPath')
             const translationPathInput = document.getElementById('translationPath')
+            const normalizedLyricsPath = lyricsPath && lyricsPath !== '!' ? lyricsPath : ''
+            const normalizedTranslationPath = translationPath && translationPath !== '!' ? translationPath : ''
             
             // 设置当前文件名
             document.getElementById('currentFileName').textContent = jsonFile.replace('.json', '')
 
             // 设置路径
-            lyricsPathInput.value = stripSongsPrefix(lyricsPath)
-            if (translationPath && translationPath !== '!') {
-                translationPathInput.value = stripSongsPrefix(translationPath)
-            } else {
-                translationPathInput.value = ''
-            }
+            lyricsPathInput.value = normalizedLyricsPath ? stripSongsPrefix(normalizedLyricsPath) : ''
+            translationPathInput.value = normalizedTranslationPath ? stripSongsPrefix(normalizedTranslationPath) : ''
 
             updateFontFamilyNotice('')
             await ensureMonacoEditors()
 
             // 加载歌词内容
-            fetch('/get_lyrics', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: lyricsPath })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        setLyricsContent(data.content)
-                        updateFontFamilyNotice(data.content)
-                    }
-                })
-
-            // 加载翻译内容
-            if (translationPath && translationPath !== '!') {
+            if (normalizedLyricsPath) {
                 fetch('/get_lyrics', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: translationPath })
+                    body: JSON.stringify({ path: normalizedLyricsPath })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            setLyricsContent(data.content)
+                            updateFontFamilyNotice(data.content)
+                        }
+                    })
+            } else {
+                setLyricsContent('')
+            }
+
+            // 加载翻译内容
+            if (normalizedTranslationPath) {
+                fetch('/get_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: normalizedTranslationPath })
                 })
                     .then(response => response.json())
                     .then(data => {
@@ -3636,14 +3682,18 @@
             const content = index === 0 ?
                 getLyricsContent() :
                 getTranslationContent()
+            const trimmedPath = (path || '').trim()
 
             // 验证路径
-            if (!path || path === '.' || path === './') {
+            if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') {
+                if (index === 0 || index === 1) {
+                    return updateLyricsPath(index).then(() => Promise.resolve())
+                }
                 return Promise.reject(new Error('无效的文件路径'));
             }
 
             return new Promise((resolve, reject) => {
-                const fullPath = normalizeSongsUrl(path)
+                const fullPath = normalizeSongsUrl(trimmedPath)
 
                 fetch('/save_lyrics', {
                     method: 'POST',
@@ -3676,19 +3726,20 @@
             try {
                 const lyricsPath = document.getElementById('lyricsPath').value;
                 const translationPath = document.getElementById('translationPath').value;
+                const trimmedLyricsPath = (lyricsPath || '').trim();
 
                 // 验证歌词路径
-                if (!lyricsPath || lyricsPath === '.' || lyricsPath === './') {
-                    throw new Error('请先设置有效的歌词文件路径');
+                if (!trimmedLyricsPath || trimmedLyricsPath === '.' || trimmedLyricsPath === './') {
+                    await updateLyricsPath(0);
+                } else {
+                    await updateLyricsPath(0);
+                    await saveLyrics(0);
                 }
 
                 // 验证翻译路径（如果有）
                 if (translationPath && (translationPath === '.' || translationPath === './')) {
                     throw new Error('翻译文件路径无效');
                 }
-
-                await updateLyricsPath(0);
-                await saveLyrics(0);
 
                 // 只有在有翻译路径时才保存翻译
                 if (translationPath) {
@@ -3710,7 +3761,7 @@
                 const pathInput = index === 0 ?
                     document.getElementById('lyricsPath') :
                     document.getElementById('translationPath')
-                const newPath = pathInput.value
+                const newPath = (pathInput.value || '').trim()
 
                 fetch('/update_file_path', {
                     method: 'POST',
@@ -4220,7 +4271,6 @@
         }
 
         function buildSongJsonData(title, artists, baseName, songFileName) {
-            const lyricsFileName = `${baseName}.lys`
             return {
                 serial: 123456,
                 meta: {
@@ -4228,7 +4278,7 @@
                     artists: artists,
                     albumImgSrc: `${RESOURCE_CONFIG.songs.base}专辑图.jpg`,
                     duration_ms: 0,
-                    lyrics: `::${RESOURCE_CONFIG.songs.base}${lyricsFileName}::!::!::`
+                    lyrics: '::!::!::!::'
                 },
                 song: `${RESOURCE_CONFIG.songs.base}${songFileName}`
             }
@@ -6271,6 +6321,7 @@
                         params.set(key, value);
                     }
                 });
+                params.set('for_player', '1');
                 window.open('/lyrics-animate?' + params.toString(), '_blank');
             };
 
@@ -6329,6 +6380,7 @@
                             params.set(key, value);
                         }
                     });
+                    params.set('for_player', '1');
                     window.open('/lyrics-animate?' + params.toString(), '_blank');
                 };
 

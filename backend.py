@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import time
+import tempfile
 import webbrowser
 import sys
 import xml
@@ -49,15 +50,36 @@ from PIL import Image
 
 _request_context: ContextVar[Optional["RequestContext"]] = ContextVar("request_context", default=None)
 _MISSING = object()
+TEMP_TTML_FILES: Dict[str, float] = {}
+TEMP_TTML_TTL_SEC = 10 * 60
 
 
 class FileStorageAdapter:
+    """文件存储适配器类，用于适配FastAPI的UploadFile对象
+
+    该类提供了一个统一的接口来处理文件上传，封装了FastAPI的UploadFile对象，
+    使其更易于操作和使用。
+    """
+
     def __init__(self, upload: UploadFile):
+        """初始化文件存储适配器
+
+        Args:
+            upload: FastAPI的UploadFile对象，包含上传文件的所有信息
+        """
         self._upload = upload
         self.filename = upload.filename or ""
         self.stream = upload.file
 
     def save(self, dst: Union[str, Path]) -> None:
+        """保存上传的文件到指定目标位置
+
+        该方法会将上传的文件内容保存到指定的路径。如果目标目录不存在，
+        会自动创建目录结构。保存前会将文件指针重置到文件开头。
+
+        Args:
+            dst: 目标保存路径，可以是字符串或Path对象
+        """
         dst_path = Path(dst)
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         self._upload.file.seek(0)
@@ -66,38 +88,121 @@ class FileStorageAdapter:
 
     @property
     def upload(self) -> UploadFile:
+        """获取原始的UploadFile对象
+
+        Returns:
+            返回被适配的原始UploadFile对象
+        """
         return self._upload
 
     def read(self, size: int = -1) -> bytes:
+        """从文件中读取指定大小的数据
+
+        Args:
+            size: 要读取的字节数，-1表示读取到文件末尾
+
+        Returns:
+            返回读取到的字节数据
+        """
         return self._upload.file.read(size)
 
     def seek(self, offset: int, whence: int = 0) -> int:
+        """移动文件指针到指定位置
+
+        Args:
+            offset: 偏移量
+            whence: 参考位置（0:文件开头, 1:当前位置, 2:文件末尾）
+
+        Returns:
+            返回新的文件指针位置
+        """
         return self._upload.file.seek(offset, whence)
 
 
 class FilesWrapper:
+    """文件包装器类，用于管理多个上传的文件
+
+    该类提供了一个类似字典的接口来访问和管理通过表单上传的多个文件。
+    每个键可以对应多个文件值，但默认访问第一个文件。
+    """
+
     def __init__(self, mapping: Dict[str, List[FileStorageAdapter]]):
+        """初始化文件包装器
+
+        Args:
+            mapping: 文件映射字典，键为字段名，值为FileStorageAdapter列表
+        """
         self._mapping = mapping
 
     def __contains__(self, key: str) -> bool:
+        """检查是否存在指定键的文件
+
+        Args:
+            key: 字段名
+
+        Returns:
+            如果存在返回True，否则返回False
+        """
         return key in self._mapping
 
     def __getitem__(self, key: str) -> FileStorageAdapter:
+        """获取指定键的第一个文件
+
+        Args:
+            key: 字段名
+
+        Returns:
+            返回该键对应的第一个FileStorageAdapter对象
+
+        Raises:
+            KeyError: 当键不存在时抛出
+        """
         return self._mapping[key][0]
 
     def get(self, key: str, default: Any = None) -> Any:
+        """安全获取指定键的第一个文件
+
+        Args:
+            key: 字段名
+            default: 默认值，当键不存在时返回
+
+        Returns:
+            返回该键对应的第一个FileStorageAdapter对象或默认值
+        """
         if key in self._mapping:
             return self._mapping[key][0]
         return default
 
     def getlist(self, key: str) -> List[FileStorageAdapter]:
+        """获取指定键的所有文件
+
+        Args:
+            key: 字段名
+
+        Returns:
+            返回该键对应的所有FileStorageAdapter对象列表
+        """
         return list(self._mapping.get(key, []))
 
     def items(self):
+        """获取所有键值对（每个键只取第一个文件）
+
+        Yields:
+            生成(键, 第一个FileStorageAdapter)的元组
+        """
         return ((key, values[0]) for key, values in self._mapping.items())
 
 
 async def save_upload_file(upload: Union[FileStorageAdapter, UploadFile], dst: Union[str, Path]) -> None:
+    """异步保存上传的文件到指定目标位置
+
+    该函数支持FileStorageAdapter和UploadFile两种类型的上传文件对象。
+    使用异步IO进行大文件写入，避免阻塞事件循环。写入完成后会重置文件指针。
+
+    Args:
+        upload: 上传的文件对象，可以是FileStorageAdapter或UploadFile
+        dst: 目标保存路径，可以是字符串或Path对象
+    """
     dst_path = Path(dst)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     upload_file = upload.upload if isinstance(upload, FileStorageAdapter) else upload
@@ -118,6 +223,18 @@ async def save_upload_file_with_meta(
     upload: Union[FileStorageAdapter, UploadFile],
     dst: Union[str, Path]
 ) -> Tuple[int, str]:
+    """异步保存上传的文件并计算文件大小和MD5哈希值
+
+    该函数在保存文件的同时，会计算文件的总大小和MD5哈希值。
+    这对于文件完整性校验和元数据记录非常有用。
+
+    Args:
+        upload: 上传的文件对象，可以是FileStorageAdapter或UploadFile
+        dst: 目标保存路径，可以是字符串或Path对象
+
+    Returns:
+        返回一个元组 (文件大小, MD5哈希值字符串)
+    """
     dst_path = Path(dst)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     upload_file = upload.upload if isinstance(upload, FileStorageAdapter) else upload
@@ -137,6 +254,11 @@ async def save_upload_file_with_meta(
         return size, md5_hash.hexdigest()
 
     def _sync_copy() -> Tuple[int, str]:
+        """同步复制文件并计算大小和MD5
+
+        Returns:
+            返回一个元组 (文件大小, MD5哈希值字符串)
+        """
         sync_size = 0
         upload.seek(0)
         with open(dst_path, "wb") as out_file:
@@ -154,52 +276,118 @@ async def save_upload_file_with_meta(
 
 
 class RequestContext:
+    """请求上下文类，封装HTTP请求的所有相关信息
+
+    该类提供了一个统一的接口来访问HTTP请求的各个部分，
+    包括请求体、表单数据、JSON数据、文件上传等。
+    使用缓存机制提高性能。
+    """
+
     def __init__(self, request: StarletteRequest, body: bytes, form: Optional[FormData]):
+        """初始化请求上下文
+
+        Args:
+            request: Starlette的Request对象
+            body: 请求体的字节数据
+            form: 解析后的表单数据（如果存在）
+        """
         self._request = request
         self._body = body
         self._form = form
-        self._json_cache: Any = _MISSING
-        self._files_cache: Optional[FilesWrapper] = None
+        self._json_cache: Any = _MISSING  # 用于缓存JSON数据
+        self._files_cache: Optional[FilesWrapper] = None  # 用于缓存文件包装器
 
     @property
     def method(self) -> str:
+        """获取HTTP请求方法
+
+        Returns:
+            返回HTTP方法（GET、POST、PUT等）
+        """
         return self._request.method
 
     @property
     def headers(self) -> Headers:
+        """获取HTTP请求头
+
+        Returns:
+            返回请求头对象
+        """
         return self._request.headers
 
     @property
     def cookies(self) -> Dict[str, str]:
+        """获取所有Cookie
+
+        Returns:
+            返回Cookie字典
+        """
         return dict(self._request.cookies)
 
     @property
     def args(self) -> QueryParams:
+        """获取查询参数
+
+        Returns:
+            返回URL查询参数对象
+        """
         return self._request.query_params
 
     @property
     def path(self) -> str:
+        """获取请求路径
+
+        Returns:
+            返回URL路径部分（不包含域名和查询参数）
+        """
         return self._request.url.path
 
     @property
     def url_root(self) -> str:
+        """获取URL根路径
+
+        Returns:
+            返回完整的URL根路径（协议+域名+/）
+        """
         url = self._request.url
         return f"{url.scheme}://{url.netloc}/"
 
     @property
     def host(self) -> str:
+        """获取主机名
+
+        Returns:
+            返回请求的主机名
+        """
         return self._request.headers.get("host", "")
 
     @property
     def remote_addr(self) -> Optional[str]:
+        """获取客户端IP地址
+
+        Returns:
+            返回客户端的IP地址，如果无法获取则返回None
+        """
         return self._request.client.host if self._request.client else None
 
     @property
     def json(self) -> Any:
+        """获取JSON数据（静默模式）
+
+        Returns:
+            返回解析后的JSON对象，解析失败返回None
+        """
         return self.get_json(silent=True)
 
     @property
     def files(self) -> FilesWrapper:
+        """获取上传的文件
+
+        使用懒加载和缓存机制，只在首次访问时解析表单中的文件。
+
+        Returns:
+            返回FilesWrapper对象，用于访问上传的文件
+        """
         if self._files_cache is None:
             mapping: Dict[str, List[FileStorageAdapter]] = {}
             if self._form:
@@ -210,6 +398,19 @@ class RequestContext:
         return self._files_cache
 
     def get_json(self, silent: bool = False) -> Any:
+        """解析并获取JSON数据
+
+        使用缓存机制，避免重复解析。支持静默模式处理解析错误。
+
+        Args:
+            silent: 是否在解析失败时静默返回None而不是抛出异常
+
+        Returns:
+            返回解析后的JSON对象，失败时根据silent参数决定返回None或抛出异常
+
+        Raises:
+            Exception: 当silent为False且JSON解析失败时抛出
+        """
         if self._json_cache is not _MISSING:
             return self._json_cache
         if not self._body:
@@ -226,55 +427,174 @@ class RequestContext:
 
 
 class RequestProxy:
+    """请求代理类，用于访问当前请求上下文
+
+    该类提供了一个全局的访问点来获取当前请求的属性和方法。
+    通过__getattr__魔法方法，将所有属性访问委托给当前的RequestContext对象。
+    """
+
     def _require_context(self) -> RequestContext:
+        """确保请求上下文存在
+
+        获取当前的请求上下文，如果不存在则抛出异常。
+
+        Returns:
+            返回当前的RequestContext对象
+
+        Raises:
+            RuntimeError: 当请求上下文不可用时抛出
+        """
         ctx = _request_context.get()
         if ctx is None:
             raise RuntimeError("Request context is not available.")
         return ctx
 
     def __getattr__(self, name: str) -> Any:
+        """动态获取请求上下文的属性
+
+        将所有未定义的属性访问委托给当前的RequestContext对象。
+
+        Args:
+            name: 属性名
+
+        Returns:
+            返回RequestContext对象对应属性的值
+        """
         return getattr(self._require_context(), name)
 
 
 class SessionProxy:
+    """会话代理类，用于管理用户会话数据
+
+    该类提供了一个类似字典的接口来访问和管理会话数据。
+    会自动处理会话不存在的情况，返回空字典而不是抛出异常。
+    """
+
     def _get_session(self) -> Dict[str, Any]:
+        """获取会话字典
+
+        安全地获取当前请求的会话字典，如果会话不存在则返回空字典。
+
+        Returns:
+            返回会话字典，如果不存在则返回空字典
+        """
         ctx = _request_context.get()
         if ctx is None or not hasattr(ctx._request, "session"):
             return {}
         return ctx._request.session
 
     def __getitem__(self, key: str) -> Any:
+        """获取会话中的值
+
+        Args:
+            key: 键名
+
+        Returns:
+            返回对应的值
+
+        Raises:
+            KeyError: 当键不存在时抛出
+        """
         return self._get_session()[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
+        """设置会话中的值
+
+        Args:
+            key: 键名
+            value: 要设置的值
+        """
         self._get_session()[key] = value
 
     def get(self, key: str, default: Any = None) -> Any:
+        """安全获取会话中的值
+
+        Args:
+            key: 键名
+            default: 默认值，当键不存在时返回
+
+        Returns:
+            返回对应的值或默认值
+        """
         return self._get_session().get(key, default)
 
     def pop(self, key: str, default: Any = None) -> Any:
+        """弹出并删除会话中的值
+
+        Args:
+            key: 键名
+            default: 默认值，当键不存在时返回
+
+        Returns:
+            返回被弹出的值或默认值
+        """
         return self._get_session().pop(key, default)
 
     def clear(self) -> None:
+        """清空会话中的所有数据"""
         self._get_session().clear()
 
     def __contains__(self, key: str) -> bool:
+        """检查会话中是否存在指定键
+
+        Args:
+            key: 键名
+
+        Returns:
+            如果存在返回True，否则返回False
+        """
         return key in self._get_session()
 
 
 def has_request_context() -> bool:
+    """检查是否存在请求上下文
+
+    Returns:
+        如果存在请求上下文返回True，否则返回False
+    """
     return _request_context.get() is not None
 
 
 def stream_with_context(generator):
+    """在请求上下文中流式传输生成器
+
+    该函数保持生成器在当前的请求上下文中执行。
+
+    Args:
+        generator: 生成器对象
+
+    Returns:
+        返回原始的生成器对象
+    """
     return generator
 
 
 def abort(code: int):
+    """中止请求并返回HTTP错误
+
+    立即抛出HTTPException，中断当前请求的处理。
+
+    Args:
+        code: HTTP状态码
+
+    Raises:
+        HTTPException: 总是抛出，包含指定的状态码
+    """
     raise HTTPException(status_code=code)
 
 
 def jsonify(payload: Any = None, **kwargs: Any) -> JSONResponse:
+    """创建JSON响应
+
+    将Python对象转换为JSON响应。支持灵活的参数组合。
+
+    Args:
+        payload: 主要数据，可以是None
+        **kwargs: 额外的数据字段
+
+    Returns:
+        返回JSONResponse对象
+    """
     if payload is None:
         payload = kwargs
     elif kwargs:
@@ -286,6 +606,17 @@ def jsonify(payload: Any = None, **kwargs: Any) -> JSONResponse:
 
 
 def _coerce_response(payload: Any) -> StarletteResponse:
+    """将各种类型的响应转换为标准的Starlette响应对象
+
+    该函数是一个响应转换器，能够将Python的各种数据类型转换为
+    Starlette框架可以处理的响应对象。
+
+    Args:
+        payload: 要转换的响应数据，可以是任意类型
+
+    Returns:
+        返回转换后的StarletteResponse对象
+    """
     if isinstance(payload, StarletteResponse):
         return payload
     if isinstance(payload, (dict, list)):
@@ -298,6 +629,20 @@ def _coerce_response(payload: Any) -> StarletteResponse:
 
 
 def _normalize_response(result: Any) -> StarletteResponse:
+    """规范化响应结果，支持多种返回格式
+
+    该函数处理Flask风格的返回值，支持直接返回响应对象、
+    或者返回包含响应体、状态码和头的元组。
+
+    Args:
+        result: 路由函数的返回值，可以是以下格式：
+            - StarletteResponse对象：直接返回
+            - 元组：(body, status_code, headers)
+            - 其他类型：通过_coerce_response转换
+
+    Returns:
+        返回规范化的StarletteResponse对象
+    """
     if isinstance(result, StarletteResponse):
         return result
     if isinstance(result, tuple):
@@ -319,6 +664,26 @@ def send_file(
     download_name: Optional[str] = None,
     mimetype: Optional[str] = None
 ) -> StarletteResponse:
+    """发送文件给客户端，支持多种文件格式和下载方式
+
+    该函数可以发送本地文件、内存中的字节数据或文件对象。
+    支持以附件形式下载或直接在浏览器中显示。
+
+    Args:
+        path: 要发送的文件路径或文件对象，可以是：
+            - 字符串或Path对象：本地文件路径
+            - BytesIO/bytes/bytearray：内存中的字节数据
+            - 任何有read()方法的对象：文件类对象
+        as_attachment: 是否作为附件下载，默认为False
+        download_name: 下载时的文件名，如果未提供则使用原文件名
+        mimetype: 文件的MIME类型，如果未提供则自动检测
+
+    Returns:
+        返回包含文件内容的StarletteResponse对象
+
+    Raises:
+        HTTPException: 当文件不存在时抛出404错误
+    """
     if isinstance(path, (BytesIO, bytearray, bytes)) or hasattr(path, "read"):
         file_obj = path
         if isinstance(file_obj, BytesIO):
@@ -346,6 +711,22 @@ def send_file(
 
 
 def send_from_directory(directory: Union[str, Path], filename: str, mimetype: Optional[str] = None) -> StarletteResponse:
+    """从指定目录发送文件，防止路径遍历攻击
+
+    该函数安全地从指定目录发送文件，通过验证文件路径确保
+    无法访问目录外的文件，防止路径遍历攻击。
+
+    Args:
+        directory: 要发送文件的根目录
+        filename: 要发送的文件名
+        mimetype: 文件的MIME类型，如果未提供则自动检测
+
+    Returns:
+        返回包含文件内容的FileResponse对象
+
+    Raises:
+        HTTPException: 当文件路径不合法或文件不存在时抛出404错误
+    """
     directory_path = Path(directory).resolve()
     target = (directory_path / filename).resolve()
     try:
@@ -358,6 +739,18 @@ def send_from_directory(directory: Union[str, Path], filename: str, mimetype: Op
 
 
 async def _run_sync_in_thread(func, **kwargs):
+    """在线程池中运行同步函数，保持上下文变量
+
+    该函数将同步函数放到线程池中执行，避免阻塞事件循环。
+    同时保持当前上下文变量，确保请求上下文等数据可用。
+
+    Args:
+        func: 要执行的同步函数
+        **kwargs: 传递给函数的关键字参数
+
+    Returns:
+        返回函数执行的结果
+    """
     ctx = copy_context()
     bound = functools.partial(func, **kwargs)
     loop = asyncio.get_running_loop()
@@ -365,7 +758,21 @@ async def _run_sync_in_thread(func, **kwargs):
 
 
 class FlaskCompat(FastAPI):
+    """Flask兼容性包装器，提供Flask风格的API
+
+    该类继承自FastAPI，但提供了Flask风格的接口和装饰器，
+    使得从Flask迁移到FastAPI更加容易。
+    """
+
     def __init__(self, import_name: str, static_folder: str, template_folder: str, static_url_path: str):
+        """初始化Flask兼容性应用
+
+        Args:
+            import_name: 应用名称，类似Flask的import_name
+            static_folder: 静态文件目录路径
+            template_folder: 模板文件目录路径
+            static_url_path: 静态文件的URL路径前缀
+        """
         super().__init__()
         self.import_name = import_name
         self.static_folder = static_folder
@@ -986,9 +1393,14 @@ def _merge_playlists(new_playlists, old_playlists):
         tracks = item.get('tracks')
         if not isinstance(tracks, list):
             tracks = []
+        name = item.get('name') or item.get('title') or ''
+        playlist_type = item.get('type') or ('artist' if item.get('artistName') else 'manual')
+        artist_name = item.get('artistName') or (name if playlist_type == 'artist' else '')
         return {
             'id': playlist_id,
-            'name': item.get('name') or item.get('title') or '',
+            'name': name,
+            'type': playlist_type,
+            'artistName': artist_name,
             'tracks': tracks
         }
 
@@ -1005,10 +1417,15 @@ def _merge_playlists(new_playlists, old_playlists):
             continue
         existing = playlist_index.get(normalized['id'])
         if existing:
-            existing_tracks = existing.get('tracks', [])
-            for track in normalized.get('tracks', []):
-                if track not in existing_tracks:
-                    existing_tracks.append(track)
+            if existing.get('type') != 'artist' and normalized.get('type') != 'artist':
+                existing_tracks = existing.get('tracks', [])
+                for track in normalized.get('tracks', []):
+                    if track not in existing_tracks:
+                        existing_tracks.append(track)
+            if not existing.get('type') and normalized.get('type'):
+                existing['type'] = normalized['type']
+            if not existing.get('artistName') and normalized.get('artistName'):
+                existing['artistName'] = normalized['artistName']
             if not existing.get('name') and normalized.get('name'):
                 existing['name'] = normalized['name']
         else:
@@ -1016,6 +1433,89 @@ def _merge_playlists(new_playlists, old_playlists):
             merged.append(normalized)
 
     return merged
+
+
+def _normalize_backup_payload_data(data):
+    """Normalize backup payload data and split artist shortcuts."""
+    if not isinstance(data, dict):
+        return {}
+
+    playlists = data.get('playlists')
+    artist_shortcuts = data.get('artistShortcuts')
+    if not isinstance(playlists, list):
+        playlists = []
+    if not isinstance(artist_shortcuts, list):
+        artist_shortcuts = []
+
+    normalized_playlists = []
+    normalized_artist_shortcuts = []
+    artist_ids = set()
+
+    def normalize_artist_shortcut(item):
+        if not isinstance(item, dict):
+            return None
+        playlist_id = item.get('id')
+        if not playlist_id:
+            return None
+        name = item.get('name') or item.get('title') or ''
+        artist_name = item.get('artistName') or name
+        return {
+            'id': playlist_id,
+            'name': name,
+            'type': 'artist',
+            'artistName': artist_name,
+            'tracks': []
+        }
+
+    for item in playlists:
+        if not isinstance(item, dict):
+            continue
+        playlist_id = item.get('id')
+        if not playlist_id:
+            continue
+        name = item.get('name') or item.get('title') or ''
+        playlist_type = item.get('type')
+        artist_name = item.get('artistName')
+        if not playlist_type and isinstance(playlist_id, str) and playlist_id.startswith('artist-'):
+            playlist_type = 'artist'
+        if playlist_type == 'artist':
+            shortcut = normalize_artist_shortcut({
+                'id': playlist_id,
+                'name': name,
+                'artistName': artist_name or name
+            })
+            if shortcut:
+                if shortcut['id'] not in artist_ids:
+                    normalized_artist_shortcuts.append(shortcut)
+                    artist_ids.add(shortcut['id'])
+            normalized_playlists.append({
+                'id': playlist_id,
+                'name': name,
+                'type': 'artist',
+                'artistName': artist_name or name,
+                'tracks': []
+            })
+            continue
+        tracks = item.get('tracks')
+        if not isinstance(tracks, list):
+            tracks = []
+        normalized_playlists.append({
+            'id': playlist_id,
+            'name': name,
+            'type': playlist_type or 'manual',
+            'artistName': artist_name or '',
+            'tracks': tracks
+        })
+
+    for item in artist_shortcuts:
+        normalized = normalize_artist_shortcut(item)
+        if normalized and normalized['id'] not in artist_ids:
+            normalized_artist_shortcuts.append(normalized)
+            artist_ids.add(normalized['id'])
+
+    data['playlists'] = normalized_playlists
+    data['artistShortcuts'] = normalized_artist_shortcuts
+    return data
 
 # 配置日志
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -1506,7 +2006,19 @@ def qe_normalize_selection(doc: Dict[str, Any], selection: List[Dict[str, str]])
 
 def qe_apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: Dict[str, Any],
                   delete_empty_lines: bool = True) -> None:
-    """将 selection 的 tokens 按 target 位置移动。"""
+    """将选中的tokens按照目标位置移动
+
+    该函数实现了快速编辑器中的拖拽移动功能，支持多种目标位置：
+    - anchor: 移动到指定token的前后
+    - newline: 移动到新行
+    - line: 移动到行的开始或结束
+
+    Args:
+        doc: 文档对象
+        selection: 选中的token列表
+        target: 目标位置信息
+        delete_empty_lines: 是否删除空行
+    """
     if not selection:
         return
     collected = qe_normalize_selection(doc, selection)
@@ -1559,11 +2071,28 @@ def qe_apply_move(doc: Dict[str, Any], selection: List[Dict[str, str]], target: 
 
 
 def qe_error_response(message: str, status: int = 400) -> Response:
+    """创建快速编辑器的错误响应
+
+    Args:
+        message: 错误消息
+        status: HTTP状态码
+
+    Returns:
+        返回包含错误信息的纯文本响应
+    """
     return PlainTextResponse(message, status_code=status)
 
 
 def qe_register_doc(doc: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """缓存文档及其元信息，初始化撤销/重做栈。"""
+    """注册文档到快速编辑器缓存并初始化撤销/重做栈
+
+    Args:
+        doc: 要注册的文档对象
+        meta: 文档的元信息
+
+    Returns:
+        返回注册后的文档对象
+    """
     doc_id = doc.get("id") or qe_new_id()
     doc["id"] = doc_id
     QUICK_EDITOR_DOCS[doc_id] = doc
@@ -1930,6 +2459,14 @@ def quick_editor_page():
 
 # ===== 快速歌词顺序编辑器 API =====
 def _qe_get_doc(doc_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Response]]:
+    """获取快速编辑器文档
+
+    Args:
+        doc_id: 文档ID
+
+    Returns:
+        返回元组 (文档对象, 错误响应)
+    """
     doc = QUICK_EDITOR_DOCS.get(doc_id)
     if not doc:
         return None, qe_error_response('document not found', 404)
@@ -1937,6 +2474,15 @@ def _qe_get_doc(doc_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Respons
 
 
 def _qe_prepare_mutation(doc_id: str, base_version: Optional[int]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Response]]:
+    """准备文档变更操作，验证版本并创建备份
+
+    Args:
+        doc_id: 文档ID
+        base_version: 基础版本号
+
+    Returns:
+        返回元组 (文档对象, 备份文档, 错误响应)
+    """
     doc = QUICK_EDITOR_DOCS.get(doc_id)
     if not doc:
         return None, None, qe_error_response('document not found', 404)
@@ -2457,6 +3003,14 @@ def escape_js_filter(s):
 
 @app.route('/backup_file', methods=['POST'])
 def backup_file():
+    """备份指定文件
+
+    接收文件路径，创建该文件的时间戳备份。备份文件保存在backups目录下，
+    保持与原文件相同的目录结构。
+
+    Returns:
+        JSON响应，包含备份状态
+    """
     if not is_request_allowed():
         return abort(403)
     file_path = request.json.get('file_path')
@@ -2490,21 +3044,7 @@ def backup_client_state():
         filename = f"{client_id}.json"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / filename
-    if anchor_id and backup_path.exists():
-        try:
-            with open(backup_path, 'r', encoding='utf-8') as f:
-                existing = json.load(f)
-            existing_payload = existing.get('payload', {}) if isinstance(existing, dict) else {}
-            existing_data = existing_payload.get('data', {}) if isinstance(existing_payload, dict) else {}
-            merged_data = {
-                'playlists': _merge_playlists(data.get('playlists'), existing_data.get('playlists')),
-                'history': _merge_history(data.get('history'), existing_data.get('history')),
-                'listenStats': _merge_listen_stats(data.get('listenStats'), existing_data.get('listenStats'))
-            }
-            data = merged_data
-        except Exception:
-            pass
-
+    data = _normalize_backup_payload_data(data)
     payload['data'] = data
 
     envelope = {
@@ -2613,6 +3153,7 @@ def get_anchor_backup():
 
     payload = content.get('payload', {}) if isinstance(content, dict) else {}
     data = payload.get('data', {}) if isinstance(payload, dict) else {}
+    data = _normalize_backup_payload_data(data)
 
     return jsonify({
         'status': 'success',
@@ -3089,6 +3630,32 @@ def find_related_json(lyrics_path):
         app.logger.warning(f"歌词文件不在songs目录中: {lyrics_path}")
         return related_jsons
 
+    def _field_matches(field_value: str) -> bool:
+        if not field_value or field_value == '!':
+            return False
+        parsed = urlparse(str(field_value))
+        candidate = parsed.path if parsed.scheme else str(field_value)
+        candidate = unquote(candidate.replace('\\', '/')).strip()
+        if not candidate:
+            return False
+        while candidate.startswith('./'):
+            candidate = candidate[2:]
+        candidate = candidate.lstrip('/')
+        lower_candidate = candidate.lower()
+        if lower_candidate.startswith('static/'):
+            candidate = candidate[len('static/'):].lstrip('/')
+            lower_candidate = candidate.lower()
+        if lower_candidate.startswith('songs/'):
+            candidate = candidate[len('songs/'):].lstrip('/')
+        candidate = candidate.split('?', 1)[0].split('#', 1)[0].strip()
+        if not candidate:
+            return False
+        try:
+            candidate = _normalize_relative_path(candidate)
+        except ValueError:
+            return False
+        return candidate == str(lyrics_relative)
+
     for json_file in static_dir.iterdir():
         if json_file.suffix == '.json':
             try:
@@ -3096,7 +3663,7 @@ def find_related_json(lyrics_path):
                     data = json.load(f)
                     lyrics_fields = data['meta'].get('lyrics', '').split('::')
                     # 检查每个字段是否包含当前歌词文件的相对路径
-                    if any(str(lyrics_relative) in field for field in lyrics_fields):
+                    if any(_field_matches(field) for field in lyrics_fields):
                         related_jsons.append(str(json_file))
             except Exception as e:
                 app.logger.warning(f"处理JSON文件时出错 {json_file}: {str(e)}")
@@ -3291,6 +3858,8 @@ def list_song_summaries():
 
     summaries: List[Dict[str, Any]] = []
     for file in STATIC_DIR.glob('*.json'):
+        if file.name == 'artists.json':
+            continue
 
         try:
             raw_data = json.loads(file.read_text(encoding='utf-8'))
@@ -3645,9 +4214,18 @@ async def upload_translation():
 
 # TTML转换相关类和函数
 class TTMLTime:
+    """TTML时间处理类，用于解析和操作TTML格式的时间戳
+
+    支持格式：MM:SS.mmm（分:秒.毫秒）
+    """
     _pattern: Pattern = compile(r'\d+')
 
     def __init__(self, centi: str = ''):
+        """初始化TTML时间对象
+
+        Args:
+            centi: 时间字符串，格式为 MM:SS.mmm
+        """
         if centi == '':
             # 默认初始化为 00:00.000，避免属性缺失
             self._minute = 0
@@ -3664,22 +4242,65 @@ class TTMLTime:
         self._micros:int = int(next(iterator).group())
 
     def __str__(self) -> str:
+        """返回格式化的时间字符串
+
+        Returns:
+            返回 MM:SS.mmm 格式的时间字符串
+        """
         return f'{self._minute:02}:{self._second:02}.{self._micros:03}'
 
     def __int__(self) -> int:
+        """转换为毫秒数
+
+        Returns:
+            返回总的毫秒数
+        """
         return (self._minute * 60 + self._second) * 1000 + self._micros
 
     def __ge__(self, other) -> bool:
+        """大于等于比较
+
+        Args:
+            other: 另一个TTMLTime对象
+
+        Returns:
+            如果当前时间大于等于另一个时间返回True
+        """
         return (self._minute, self._second, self._micros) >= (other._minute, other._second, other._micros)
 
     def __ne__(self, other) -> bool:
+        """不等于比较
+
+        Args:
+            other: 另一个TTMLTime对象
+
+        Returns:
+            如果两个时间不相等返回True
+        """
         return (self._minute, self._second, self._micros) != (other._minute, other._second, other._micros)
 
     def __sub__(self, other) -> int:
+        """计算时间差
+
+        Args:
+            other: 另一个TTMLTime对象
+
+        Returns:
+            返回两个时间差的绝对值（毫秒）
+        """
         return abs(int(self) - int(other))
 
 class TTMLSyl:
+    """TTML音节类，表示一个带时间戳的音节
+
+    从TTML的<span>元素解析而来，包含文本内容和时间信息。
+    """
     def __init__(self, element: Element):
+        """初始化TTML音节对象
+
+        Args:
+            element: XML DOM元素对象，包含begin和end属性
+        """
         self.__element: Element = element
         self.__begin: TTMLTime = TTMLTime(element.getAttribute("begin"))
         self.__end: TTMLTime = TTMLTime(element.getAttribute("end"))
@@ -3967,9 +4588,16 @@ def ttml_to_lys(input_path, songs_dir):
     return True, lyric_path, trans_path
 
 def preprocess_brackets(content):
-    """
-    保留括号原样，避免把时间标记边界吞掉。
+    """预处理括号内容，保留时间标记边界
+
+    该函数保留括号原样，避免把时间标记边界吞掉。
     仅做轻量的空白折叠，不再移除 ')(' / '(('。
+
+    Args:
+        content: 要处理的文本内容
+
+    Returns:
+        返回处理后的文本
     """
     if not content:
         return ''
@@ -3984,6 +4612,242 @@ def extract_tag_value(text: str, tag: str) -> Optional[str]:
         value = match.group(1).strip()
         return value or None
     return None
+
+
+CREATOR_LABEL = "创作者"
+
+
+def _normalize_artists(artists: Optional[List[str]]) -> List[str]:
+    if not artists:
+        return []
+    normalized: List[str] = []
+    for artist in artists:
+        if not artist:
+            continue
+        parts = re.split(r'\s*_\s*', str(artist))
+        for part in parts:
+            cleaned = part.strip()
+            if cleaned:
+                normalized.append(cleaned)
+    return normalized
+
+
+def _format_creator_text(artists: List[str]) -> Optional[str]:
+    if not artists:
+        return None
+    joined = "、".join(artists)
+    return f"{CREATOR_LABEL}: {joined}"
+
+
+def _extract_offset_ms(lys_content: str) -> int:
+    offset_match = re.search(r'\[offset:\s*(-?\d+)\s*\]', lys_content)
+    if offset_match:
+        try:
+            return int(offset_match.group(1))
+        except Exception:
+            return 0
+    return 0
+
+
+def _get_last_lyric_end_ms(lys_content: str) -> int:
+    last_end_ms = 0
+    offset_ms = _extract_offset_ms(lys_content)
+    for line in lys_content.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        if stripped_line.startswith('[from:') or stripped_line.startswith('[id:') or stripped_line.startswith('[offset:'):
+            continue
+        content_match = re.match(r'\[(?P<marker>[^\]]*)\](?P<content>.*)', stripped_line)
+        if not content_match:
+            continue
+        marker = content_match.group('marker')
+        if marker != '' and not marker.isdigit():
+            continue
+        content = content_match.group('content')
+        syllables = parse_syllable_info(content, marker, offset=offset_ms)
+        if not syllables:
+            continue
+        end_ms = syllables[-1]['start_ms'] + syllables[-1]['duration_ms']
+        if end_ms > last_end_ms:
+            last_end_ms = end_ms
+    return last_end_ms
+
+
+def _ensure_creator_line_in_lys(
+    lys_content: str,
+    artists: Optional[List[str]] = None,
+    song_end_ms: Optional[int] = None
+) -> str:
+    if not artists:
+        return lys_content
+    if re.search(rf'{re.escape(CREATOR_LABEL)}\s*:', lys_content):
+        return lys_content
+    creator_text = _format_creator_text(_normalize_artists(artists))
+    if not creator_text:
+        return lys_content
+    last_end_ms = _get_last_lyric_end_ms(lys_content)
+    start_ms = max(0, last_end_ms)
+    total_end_ms = max(start_ms, int(song_end_ms or 0), last_end_ms)
+    duration_ms = max(0, total_end_ms - start_ms)
+    creator_line = f"[]{creator_text}({start_ms},{duration_ms})"
+    if lys_content and not lys_content.endswith("\n"):
+        lys_content += "\n"
+    return f"{lys_content}{creator_line}\n"
+
+
+def _append_creator_line_to_lys_file(
+    lyrics_path: Path,
+    artists: Optional[List[str]] = None,
+    song_end_ms: Optional[int] = None
+) -> bool:
+    try:
+        raw_content = lyrics_path.read_text(encoding='utf-8', errors='ignore')
+    except Exception:
+        return False
+    updated_content = _ensure_creator_line_in_lys(raw_content, artists, song_end_ms)
+    if updated_content == raw_content:
+        return False
+    lyrics_path.write_text(updated_content, encoding='utf-8')
+    return True
+
+
+def _inject_creator_line_into_ttml(
+    ttml_text: str,
+    artists: Optional[List[str]] = None,
+    song_end_ms: Optional[int] = None
+) -> Optional[str]:
+    if not artists:
+        return None
+    try:
+        SONGS_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(SONGS_DIR)) as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            input_path = temp_dir_path / "source.ttml"
+            input_path.write_text(ttml_text, encoding='utf-8')
+
+            success, lyric_path, _ = ttml_to_lys(str(input_path), str(temp_dir_path))
+            if not success or not lyric_path:
+                return None
+            lyric_path = Path(lyric_path)
+            lys_content = lyric_path.read_text(encoding='utf-8', errors='ignore')
+            updated_lys = _ensure_creator_line_in_lys(lys_content, artists, song_end_ms)
+            if updated_lys != lys_content:
+                lyric_path.write_text(updated_lys, encoding='utf-8')
+
+            output_path = temp_dir_path / "creator.ttml"
+            success, _ = lys_to_ttml(str(lyric_path), str(output_path))
+            if not success or not output_path.exists():
+                return None
+            return output_path.read_text(encoding='utf-8', errors='ignore')
+    except Exception:
+        return None
+
+
+def _extract_artists_from_meta(meta: Optional[Dict[str, Any]]) -> List[str]:
+    if not meta or not isinstance(meta, dict):
+        return []
+    artists = meta.get('artists')
+    if isinstance(artists, list):
+        return _normalize_artists([str(item) for item in artists if item is not None])
+    if isinstance(artists, str):
+        return _normalize_artists([artists])
+    return []
+
+
+def _extract_duration_ms_from_meta(meta: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not meta or not isinstance(meta, dict):
+        return None
+    duration_ms = meta.get('duration_ms')
+    if isinstance(duration_ms, (int, float)) and duration_ms > 0:
+        return int(duration_ms)
+    return None
+
+
+def _extract_song_value_from_json(data: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not data or not isinstance(data, dict):
+        return None
+    song_value = data.get('song')
+    if isinstance(song_value, str) and song_value.strip():
+        return song_value
+    meta = data.get('meta')
+    if isinstance(meta, dict):
+        meta_song = meta.get('song')
+        if isinstance(meta_song, str) and meta_song.strip():
+            return meta_song
+    return None
+
+
+def _get_audio_duration_ms(audio_path: Path) -> Optional[int]:
+    if not audio_path.exists():
+        return None
+    try:
+        import librosa
+    except Exception:
+        return None
+    try:
+        duration_sec = float(librosa.get_duration(path=str(audio_path)))
+        if not math.isfinite(duration_sec) or duration_sec <= 0:
+            return None
+        return int(round(duration_sec * 1000))
+    except Exception:
+        return None
+
+
+def _get_song_duration_ms_from_json(data: Optional[Dict[str, Any]]) -> Optional[int]:
+    song_value = _extract_song_value_from_json(data)
+    if not song_value:
+        return None
+    try:
+        song_path = resolve_resource_path(song_value, 'songs')
+    except ValueError:
+        return None
+    return _get_audio_duration_ms(song_path)
+
+
+def _cleanup_temp_ttml_files(now_ts: Optional[float] = None) -> None:
+    now_ts = now_ts or time.time()
+    expired = [path for path, ts in TEMP_TTML_FILES.items() if ts <= now_ts]
+    for path in expired:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        TEMP_TTML_FILES.pop(path, None)
+
+
+def _create_player_ttml_from_text(
+    ttml_text: str,
+    artists: Optional[List[str]],
+    duration_ms: Optional[int]
+) -> Optional[str]:
+    updated = _inject_creator_line_into_ttml(ttml_text, artists, duration_ms)
+    if not updated:
+        return None
+    unique = uuid.uuid4().hex
+    filename = f"lyrics_player_{unique}.ttml"
+    output_path = SONGS_DIR / filename
+    output_path.write_text(updated, encoding='utf-8')
+    TEMP_TTML_FILES[str(output_path)] = time.time() + TEMP_TTML_TTL_SEC
+    return build_public_url('songs', filename)
+
+
+def _get_artists_from_related_json(lyrics_path: Path) -> Tuple[List[str], Optional[int]]:
+    related_jsons = find_related_json(lyrics_path)
+    if not related_jsons:
+        return [], None
+    for json_path in related_jsons:
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            meta = data.get('meta', {})
+            artists = _extract_artists_from_meta(meta)
+            duration_ms = _get_song_duration_ms_from_json(data)
+            if artists or duration_ms:
+                return artists, duration_ms
+        except Exception:
+            continue
+    return [], None
 
 
 def parse_syllable_info(content, marker='', offset=0):
@@ -6006,6 +6870,12 @@ def lyrics_animate():
     else:
         session.pop('override_background_url', None)
 
+    for_player = request.args.get('for_player')
+    if for_player in ('1', 'true', 'True'):
+        session['for_player'] = True
+    elif for_player is not None:
+        session['for_player'] = False
+
     session['lyrics_json_file'] = file
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
@@ -6019,6 +6889,17 @@ def get_lyrics():
     支持的音乐格式：.mp3, .wav, .ogg, .mp4
     """
     json_file = session.get('lyrics_json_file', '测试 - 测试.json')
+    meta_data = {}
+    json_path = os.path.join(app.static_folder, json_file)
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            meta_data = json.load(f)
+    except FileNotFoundError:
+        meta_data = {}
+    except json.JSONDecodeError:
+        return jsonify({'error': '解析元数据JSON时出错'}), 500
+    except Exception:
+        meta_data = {}
 
     # ✅ 优先使用临时转换得到的覆盖地址（来自 /lyrics-animate）
     lys_url = session.get('override_lys_url')
@@ -6026,10 +6907,7 @@ def get_lyrics():
 
     # 如果没有覆盖地址，再走旧逻辑：从 JSON 的 meta.lyrics 里找
     if not lys_url:
-        json_path = os.path.join(app.static_folder, json_file)
         try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                meta_data = json.load(f)
             lyrics_info = meta_data.get('meta', {}).get('lyrics', '')
             lyric_sources = [src for src in lyrics_info.split('::') if src and src != '!']
             for src in lyric_sources:
@@ -6047,6 +6925,9 @@ def get_lyrics():
 
     # 读取 LYS 内容
     from urllib.parse import urlparse
+    for_player = request.args.get('for_player') in ('1', 'true', 'True')
+    if not for_player:
+        for_player = bool(session.get('for_player'))
     parsed_url = urlparse(lys_url)
     lyrics_path = os.path.join(app.static_folder, parsed_url.path.lstrip('/'))
     try:
@@ -6055,6 +6936,11 @@ def get_lyrics():
     except FileNotFoundError:
         return jsonify({'error': 'LYS 歌词文件未找到'}), 404
 
+    if for_player:
+        meta = meta_data.get('meta', {}) if isinstance(meta_data, dict) else {}
+        artists = _extract_artists_from_meta(meta)
+        duration_ms = _get_song_duration_ms_from_json(meta_data)
+        lys_content = _ensure_creator_line_in_lys(lys_content, artists, duration_ms)
     parsed_lyrics = parse_lys(lys_content)
 
     # 新增：提取 offset
@@ -6137,8 +7023,11 @@ def get_lyrics_by_path():
         if locked_response:
             return locked_response
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         lyrics_path = data.get('path', '')
+        for_player = data.get('for_player') in (True, '1', 1, 'true', 'True')
+        if not for_player:
+            for_player = request.args.get('for_player') in ('1', 'true', 'True')
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '缺少歌词路径'}), 400
 
@@ -6150,11 +7039,71 @@ def get_lyrics_by_path():
         if not real_path.exists():
             return jsonify({'status': 'error', 'message': '歌词文件未找到'}), 404
 
-        with open(real_path, 'r', encoding='utf-8') as f:
+        with open(real_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
+        if for_player:
+            artists, duration_ms = _get_artists_from_related_json(real_path)
+            if real_path.suffix.lower() == '.ttml':
+                updated = _inject_creator_line_into_ttml(content, artists, duration_ms)
+                if updated:
+                    content = updated
+            elif real_path.suffix.lower() == '.lys':
+                updated = _ensure_creator_line_in_lys(content, artists, duration_ms)
+                if updated != content:
+                    content = updated
         return jsonify({'status': 'success', 'content': content})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/prepare_ttml_for_player', methods=['POST'])
+def prepare_ttml_for_player():
+    if not is_request_allowed():
+        return abort(403)
+    try:
+        data = request.get_json() or {}
+        lyrics_path = data.get('path', '')
+        if not lyrics_path:
+            return jsonify({'status': 'error', 'message': '缺少歌词路径'}), 400
+
+        _cleanup_temp_ttml_files()
+
+        try:
+            real_path = resolve_resource_path(lyrics_path, 'songs')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'路径不合法: {exc}'}), 400
+
+        if not real_path.exists():
+            return jsonify({'status': 'error', 'message': '歌词文件未找到'}), 404
+
+        artists, duration_ms = _get_artists_from_related_json(real_path)
+        file_ext = real_path.suffix.lower()
+
+        if file_ext == '.ttml':
+            ttml_text = real_path.read_text(encoding='utf-8', errors='ignore')
+        elif file_ext in ('.lys', '.lrc'):
+            temp_dir = tempfile.TemporaryDirectory(dir=str(SONGS_DIR))
+            temp_path = Path(temp_dir.name) / f"{real_path.stem}.ttml"
+            if file_ext == '.lys':
+                success, error_msg = lys_to_ttml(str(real_path), str(temp_path))
+            else:
+                success, error_msg = lrc_to_ttml(str(real_path), str(temp_path))
+            if not success:
+                temp_dir.cleanup()
+                return jsonify({'status': 'error', 'message': f'转换失败: {error_msg}'}), 400
+            ttml_text = temp_path.read_text(encoding='utf-8', errors='ignore')
+            temp_dir.cleanup()
+        else:
+            return jsonify({'status': 'error', 'message': '只支持LYS/LRC/TTML格式'}), 400
+
+        ttml_url = _create_player_ttml_from_text(ttml_text, artists, duration_ms)
+        if not ttml_url:
+            return jsonify({'status': 'error', 'message': '生成TTML失败'}), 500
+
+        return jsonify({'status': 'success', 'ttmlPath': ttml_url})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 def _build_beat_curve_bins(freqs, band_count: int, min_freq: float, max_freq: float) -> List[Tuple[int, int]]:
     log_min = math.log10(min_freq)
@@ -7483,7 +8432,14 @@ def extract_lyrics_to_csv(lyrics_data):
 
 # ======= 新增 AMLL 实时推送功能函数 =======
 def _ms_to_sec(ms: int) -> float:
-    """毫秒转秒，保留3位小数"""
+    """将毫秒转换为秒，保留3位小数
+
+    Args:
+        ms: 毫秒数
+
+    Returns:
+        返回转换后的秒数
+    """
     return round((ms or 0) / 1000.0, 3)
 
 def _coerce_ms(value) -> int:
@@ -8585,8 +9541,21 @@ def start_ws_server_once():
         return t
 
 if __name__ == '__main__':
+    """主函数入口
+
+    处理命令行参数，启动WebSocket服务器和FastAPI应用。
+    支持指定端口，如果默认端口被占用会自动切换到随机端口。
+    """
     import random
     def try_run(port):
+        """尝试在指定端口启动应用
+
+        Args:
+            port: 要尝试的端口号
+
+        Returns:
+            启动成功返回True，失败返回False
+        """
         try:
             # 启动时同步 port_status.json
             if port == 5000:
