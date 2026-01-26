@@ -1,0 +1,306 @@
+{
+  "repo_notes": [
+    {
+      "content": "LyricSphere 是一个基于 Python Flask/FastAPI 的歌词管理与编辑 Web 应用，专注于动态歌词的管理、编辑与展示，并支持实时同步播放。项目兼容 .lrc、.lys、.ttml 等多种格式，覆盖从编辑、转换到播放的完整流程。核心技术包括：1) 基于 FastAPI 的后端架构，支持异步处理和高并发；2) WebSocket 服务器（端口 11444）用于与 AMLL 集成；3) SSE 实现实时歌词流式更新；4) AI 驱动的歌词翻译功能，支持多个 AI 提供商（DeepSeek、OpenAI、OpenRouter、Together、Groq）；5) 设备认证和密码保护安全机制；6) 自动备份系统（最多保留 7 个版本）。项目使用 Waitress 作为生产环境服务器，采用 bcrypt 加密，并通过 CORS 支持跨域请求。最新版本 v1.5.11 新增了 ZIP 文件导入导出功能和资源完整性检查。"
+    }
+  ],
+  "pages": [
+    {
+      "title": "LyricSphere Overview",
+      "purpose": "High-level introduction to LyricSphere, its purpose, features, and overall system architecture",
+      "page_notes": [
+        {
+          "content": "LyricSphere 是一个功能完整的歌词管理系统，主要功能包括：支持多种歌词格式（.lrc、.lys、.ttml、LQE）；实时歌词显示与动画效果，支持前后端动画配置同步；歌词音节分组功能，优化歌词行渲染布局；资源 URL 规范化处理，支持安全的路径解析；翻译状态可视化，提供阶段状态、进度追踪与多态提示动画；字体元标签与逐音节字体渲染，支持本地文件、Google Fonts 与 CDN 多源字体加载；ZIP 文件导入导出功能，支持批量导入/导出歌词 JSON 文件和资源文件；资源完整性检查，在导出时对缺失资源生成警告；文件版本管理和自动备份（最多保留 7 个版本）；设备认证和密码保护安全机制；与 AMLL 集成的 WebSocket 服务器；AI 驱动的歌词翻译功能。技术栈：后端 Python + Flask/FastAPI，前端 HTML/CSS/JavaScript，生产服务器 Waitress，安全 bcrypt 加密。"
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Quick start guide for installing and running LyricSphere",
+      "parent": "LyricSphere Overview",
+      "page_notes": [
+        {
+          "content": "环境要求：Python 3.6+。安装依赖：pip install flask openai bcrypt waitress websockets。运行应用：python backend.py（默认端口 5000）或 python backend.py 5000 指定端口。在生产环境中，设置 USE_WAITRESS=1 环境变量使用 Waitress 作为服务器。首次运行会自动创建必要的目录结构：static/songs/（歌曲文件、歌词和相关媒体）、static/backups/（备份文件）、logs/（应用日志）、exports/（导出文件）。访问 http://localhost:5000 打开主界面进行歌词管理。支持 DEBUG_LOGGING=1 启用详细日志输出。"
+        }
+      ]
+    },
+    {
+      "title": "System Architecture",
+      "purpose": "Overview of LyricSphere's architecture, showing how major components interact",
+      "parent": "LyricSphere Overview",
+      "page_notes": [
+        {
+          "content": "LyricSphere 采用分层架构：1) 表现层：包括主仪表板（LyricSphere.html）、AMLL 播放器（Lyrics-style.HTML-AMLL-v1.HTML）、快速编辑器（lyrics_quick_editor.html）等多个前端界面；2) API 层：基于 FastAPI 的 RESTful API，提供歌词管理、格式转换、AI 翻译、文件导入导出等功能；3) 业务逻辑层：包含歌词解析器（支持 LRC、LYS、TTML、LQE 格式）、格式转换器、AI 翻译引擎、文件管理系统；4) 实时通信层：WebSocket 服务器（端口 11444）用于 AMLL 集成，SSE 实现实时歌词流式更新；5) 数据存储层：文件系统存储歌词文件、媒体资源和备份版本；6) 安全层：设备认证、密码保护、路径验证、CORS 支持。组件间通过 REST API 和 WebSocket 通信，实现松耦合架构。"
+        }
+      ]
+    },
+    {
+      "title": "Backend System",
+      "purpose": "Comprehensive documentation of the Flask/FastAPI backend (backend.py)",
+      "page_notes": [
+        {
+          "content": "后端系统基于 FastAPI 框架构建（通过 FlaskCompat 提供 Flask 风格的 API），核心文件 backend.py（约 10000 行代码）。主要模块包括：1) FlaskCompat 类：提供 Flask 风格的装饰器和 API 接口；2) RequestProxy 和 SessionProxy：请求上下文和会话管理；3) FileStorageAdapter 和 FilesWrapper：文件上传处理；4) 资源路径管理系统：extract_resource_relative、resolve_resource_path、resource_relative_from_path 等函数实现安全的路径解析和验证；5) 歌词解析器：parse_lrc、parse_lys、parse_ttml、parse_lqe 等函数；6) 格式转换器：lys_to_ttml、ttml_to_lys、lrc_to_ttml 等；7) AI 翻译引擎：translate_lyrics_with_ai、process_thinking_model 等函数；8) 备份系统：create_backup、restore_backup 等；9) WebSocket 服务器：端口 11444，用于 AMLL 集成；10) SSE 系统：/amll/stream 端点实现实时歌词流式更新。后端使用 ThreadPoolExecutor 实现异步处理，支持多线程并发。"
+        }
+      ]
+    },
+    {
+      "title": "API Endpoints Reference",
+      "purpose": "Complete reference of all REST API endpoints, request/response formats, and usage examples",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "主要 API 端点：1) 歌曲管理：GET /api/songs（获取歌曲列表）、POST /api/songs（创建歌曲）、PUT /api/songs/<id>（更新歌曲）、DELETE /api/songs/<id>（删除歌曲）；2) 歌词管理：GET /api/songs/<id>/lyrics（获取歌词）、PUT /api/songs/<id>/lyrics（保存歌词）；3) 格式转换：POST /api/convert（格式转换）、POST /convert_to_ttml_temp（临时 TTML 转换用于 AMLL 规则编写）；4) AI 翻译：POST /api/translate（歌词翻译）、POST /api/ai/test（测试 AI 连接）、POST /api/ai/models（获取可用模型列表）；5) 文件导入导出：POST /api/import（导入文件）、POST /api/export（导出文件）、POST /api/export/share（导出分享包）；6) 备份管理：GET /api/songs/<id>/backups（获取备份列表）、POST /api/songs/<id>/backups（创建备份）、POST /api/songs/<id>/backups/restore（恢复备份）；7) 实时通信：WebSocket ws://localhost:11444（AMLL 集成）、SSE /amll/stream（实时歌词流）；8) 配置管理：POST /api/settings（保存设置）、GET /api/settings（获取设置）、POST /player/animation-config（同步动画配置）。所有 API 返回 JSON 格式，包含 success、data、message 字段。"
+        }
+      ]
+    },
+    {
+      "title": "File Management System",
+      "purpose": "Documentation of file storage structure, path resolution, and resource management",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "文件管理系统采用分层目录结构：BASE_PATH/（项目根目录）、static/songs/（歌曲文件，每个歌曲一个子目录）、static/backups/（备份文件，按歌曲 ID 组织）、logs/（应用日志）、exports/（导出文件）。路径安全机制：1) extract_resource_relative：从字符串中提取资源相对路径，防止路径遍历；2) resolve_resource_path：将相对路径解析为绝对路径并验证在受控目录内；3) resource_relative_from_path：将绝对路径转换为相对路径；4) sanitize_filename：清理文件名，移除非法字符；5) _normalize_relative_path：规范化相对路径，移除 ./ 和 ../ 等段。资源类型：static（静态文件）、songs（歌曲文件）、backups（备份文件）。文件操作支持异步保存（save_upload_file）和带元数据的保存（save_upload_file_with_meta）。资源 URL 规范化处理（normalizeResourceUrl）支持动态解析不同格式的路径，包括绝对路径、相对路径、URL 路径等。"
+        }
+      ]
+    },
+    {
+      "title": "Format Conversion Pipeline",
+      "purpose": "Overview of lyric format conversion system and supported formats",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "格式转换管道支持双向转换：1) LYS/LRC → TTML：将音节级或行级歌词转换为 Apple 风格的 TTML 格式，支持翻译内容合并，背景人声标记（LYS 中的 [6][7][8] 转换为 ttm:role=\"x-bg\"），对唱标记（[2][5] 转换为 ttm:agent=\"v2\"）；2) TTML → LYS/LRC：将 TTML 文件转换为 LYS 或 LRC 格式，保留背景人声和对唱信息，支持歌词括号预处理（strip_brackets 配置控制是否移除括号内容）；3) LYS/LRC → LQE：将歌词和翻译合并为 LQE 格式；4) LQE → LYS/LRC：从 LQE 提取歌词部分。转换器支持歌词音节分组（groupSyllablesIntoWords）和逐音节字体渲染（[font-family:...] 元标签）。TTML 内容安全处理功能过滤非必要的 XML 元素以提高安全性。转换流程：解析 → 标准化 → 转换 → 验证 → 输出。"
+        }
+      ]
+    },
+    {
+      "title": "LRC Format",
+      "purpose": "Details of LRC (line-level) format support, including background vocals and duet markers",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "LRC（LRC Lyrics）是标准的行级定时歌词格式，广泛用于音乐播放器。格式规范：每行格式为 [mm:ss.xx] 歌词文本，其中 mm 是分钟，ss 是秒，xx 是百分秒。支持的特殊标记：[6][7][8] 表示背景人声，[2][5] 表示对唱标记（2 为主唱，5 为和声）。解析器（parse_lrc）处理逻辑：1) 使用正则表达式提取时间戳和歌词文本；2) 支持多行同一时间戳的情况；3) 识别并保留背景人声和对唱标记；4) 支持歌词括号预处理（strip_brackets 配置）；5) 使用字符串翻译表移除括号字符，保留其中文本，提高性能。转换到 TTML 时，将 LRC 转换为音节级格式，每个音节分配相同的时间段。LRC 格式适合简单的歌词同步，但不支持逐字动画效果。"
+        }
+      ]
+    },
+    {
+      "title": "LYS Format",
+      "purpose": "Details of LYS (syllable-level) format, the internal representation format",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "LYS（LyricSphere）是自定义的音节级定时歌词格式，提供更精细的歌词同步控制。格式规范：JSON 格式，包含 lines 数组，每个 line 包含 words 数组，每个 word 包含 syllables 数组，每个 syllable 包含 startTime、endTime、text 字段。支持的特殊标记：[6][7][8] 表示背景人声，[2][5] 表示对唱标记。解析器（parse_lys）处理逻辑：1) 验证 JSON 结构；2) 提取时间戳和音节文本；3) 识别并保留背景人声和对唱标记；4) 支持歌词音节分组（groupSyllablesIntoWords）优化布局；5) 支持逐音节字体渲染（[font-family:...] 元标签）。LYS 是 LyricSphere 的内部格式，支持逐字动画效果，转换到 TTML 时保留所有时间信息和标记。LYS 格式适合高质量的歌词展示和动画效果。"
+        }
+      ]
+    },
+    {
+      "title": "TTML Format",
+      "purpose": "Details of TTML (XML-based) format support with Apple-style output",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "TTML（Timed Text Markup Language）是基于 XML 的定时文本格式，LyricSphere 支持 Apple 风格的 TTML 输出。格式规范：使用 <tt> 根元素，<body> 包含 <div>，<div> 包含 <p>（段落），<p> 包含 <span>（文本），支持 ttm:role 和 ttm:agent 属性。支持的特殊标记：ttm:role=\"x-bg\" 表示背景人声，ttm:agent=\"v2\" 表示对唱。解析器（parse_ttml）处理逻辑：1) 使用 xml.dom.minidom 解析 XML；2) 提取时间戳和文本内容；3) 识别并保留背景人声和对唱标记；4) 支持 TTML 内容安全处理，过滤非必要的 XML 元素；5) 处理空白字符和特殊字符。转换到 LYS/LRC 时，将 TTML 的层级结构转换为扁平的音节/行级格式。TTML 格式适合 Apple Music 等平台的歌词展示，支持丰富的样式和动画效果。"
+        }
+      ]
+    },
+    {
+      "title": "LQE Format",
+      "purpose": "Details of LQE format for merged lyrics and translations",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "LQE（LyricSphere Enhanced）是结合歌词和翻译的复合格式，用于特定应用场景。格式规范：JSON 格式，包含 original（原始歌词）和 translation（翻译）两个字段，每个字段使用 LYS 或 LRC 格式。解析器（parse_lqe）处理逻辑：1) 验证 JSON 结构；2) 解析 original 和 translation 字段；3) 支持歌词和翻译的对齐；4) 可用于导出和分享功能。LQE 格式主要用于存储翻译后的歌词，便于后续编辑和导出。转换到 LYS/LRC 时，可以选择提取 original 或 translation 部分。LQE 格式适合需要同时保留原文和翻译的场景。"
+        }
+      ]
+    },
+    {
+      "title": "AI Translation System",
+      "purpose": "Complete guide to AI-powered lyric translation features",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "AI 翻译系统支持多个 AI 提供商（DeepSeek、OpenAI、OpenRouter、Together、Groq），实现高质量歌词翻译。核心功能：1) 自定义系统提示词控制翻译风格；2) 流式响应实现实时翻译显示；3) 自动对齐时间戳与原始歌词；4) 支持 API 连接测试功能；5) 支持思考模型（Thinking Model），在翻译前对歌词进行深度理解；6) 自动检测并提示时间戳异常，结合原始歌词定位问题行；7) 翻译流程提供阶段进度与多状态提示动画；8) 支持无时间戳歌词的翻译；9) 兼容模式开关，将系统提示词合并到用户消息以适配不支持多角色的模型；10) 歌词括号预处理功能（strip_brackets 配置）。AI 探活接口兼容返回 404 的服务，实现对不支持 /v1/models 端点的 API 的健康检查。翻译配置包括 API Key、Base URL、Model、System Prompt、Max Tokens、Temperature、Thinking Model 等参数。"
+        }
+      ]
+    },
+    {
+      "title": "Translation Workflow",
+      "purpose": "Step-by-step explanation of the translation pipeline from request to output",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "翻译工作流程：1) 接收翻译请求：前端发送 POST /api/translate 请求，包含歌词文本、翻译配置、源语言、目标语言等参数；2) 验证请求：检查 API Key、Model、Prompt 等配置是否有效；3) 预处理歌词：可选执行歌词括号预处理（strip_brackets），检测时间戳异常；4) 调用思考模型（如果配置）：使用 Thinking Model 对歌词进行深度理解，生成分析结果；5) 构建提示词：根据系统提示词和歌词内容构建完整提示，兼容模式下合并系统提示词到用户消息；6) 调用翻译 API：使用 OpenAI 客户端调用 AI 提供商的翻译接口；7) 流式处理：接收流式响应，实时更新前端显示；8) 对齐时间戳：将翻译结果与原始歌词时间戳对齐；9) 后处理：清理多余空格，处理特殊字符；10) 返回结果：返回翻译后的歌词文本和翻译状态。翻译状态包括：准备中、分析中（思考模型）、翻译中、完成、错误。异常处理包括网络错误、API 错误、时间戳异常等。"
+        }
+      ]
+    },
+    {
+      "title": "AI Provider Configuration",
+      "purpose": "Guide to configuring and using different AI providers (DeepSeek, OpenAI, etc.)",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "AI 提供商配置：支持的提供商包括 DeepSeek、OpenAI、OpenRouter、Together、Groq。配置参数：1) API Key：提供商的 API 密钥；2) Base URL：API 端点 URL，DeepSeek 为 https://api.deepseek.com，OpenAI 为 https://api.openai.com/v1，OpenRouter 为 https://openrouter.ai/api/v1，Together 为 https://api.together.xyz/v1，Groq 为 https://api.groq.com/openai/v1；3) Model：模型名称，如 deepseek-chat、gpt-4、gpt-3.5-turbo、meta-llama/Llama-3.3-70B-Instruct-Turbo、llama3-70b-8192；4) System Prompt：自定义系统提示词，控制翻译风格；5) Max Tokens：最大生成长度，默认 4096；6) Temperature：温度参数，控制随机性，默认 0.7；7) Thinking Model：思考模型配置，用于翻译前的歌词分析。测试接口：POST /api/ai/test 测试 API 连接，POST /api/ai/models 获取可用模型列表（兼容 404 响应）。SSL 处理：自动清理失效的 SSL 证书路径，支持使用 certifi CA 文件，必要时禁用 SSL 验证（仅临时兼容）。"
+        }
+      ]
+    },
+    {
+      "title": "Thinking Model Integration",
+      "purpose": "Explanation of the two-stage translation process with analysis/thinking models",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "思考模型（Thinking Model）集成实现两阶段翻译流程：第一阶段（分析阶段）：调用 Thinking Model 对歌词进行深度理解，生成分析结果，包括歌词主题、情感、文化背景、翻译难点等。分析结果用于构建更准确的翻译提示词。第二阶段（翻译阶段）：基于分析结果构建翻译提示词，调用主翻译模型进行翻译。配置参数：Thinking Model 模型名称、Thinking Prompt（思考提示词，指导模型分析歌词）、Use Thinking Model（是否启用思考模型）。流程：1) 接收翻译请求；2) 如果启用思考模型，先调用 Thinking Model 进行歌词分析；3) 根据分析结果优化翻译提示词；4) 调用主翻译模型进行翻译；5) 返回翻译结果。思考模型可以显著提高翻译质量，特别是对文化背景和歌词含义的理解。分析结果可以显示在前端，帮助用户理解翻译过程。"
+        }
+      ]
+    },
+    {
+      "title": "Real-time Communication",
+      "purpose": "Documentation of WebSocket and SSE systems for real-time updates",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "实时通信系统包括 WebSocket 和 SSE 两种机制：1) WebSocket 服务器：端口 11444，用于与 AMLL（Advanced Music Live Lyrics）集成，提供双向通信能力，支持歌词推送、播放控制、状态同步等功能；2) SSE（Server-Sent Events）：/amll/stream 端点，用于实时歌词流式更新，单向通信，客户端订阅后持续接收歌词数据。WebSocket 特点：全双工通信，低延迟，适合交互式场景；SSE 特点：单向推送，基于 HTTP，适合数据流场景。实现细节：WebSocket 使用 websockets 库，SSE 使用 Starlette 的 StreamingResponse。WebSocket 消息格式：JSON，包含 type、data 字段。SSE 消息格式：文本行，data: 前缀后跟 JSON 数据。两个系统都支持连接管理、心跳检测、错误重连。实时通信用于歌词动画、播放进度同步、翻译状态更新等场景。"
+        }
+      ]
+    },
+    {
+      "title": "WebSocket Server",
+      "purpose": "WebSocket server (port 11444) for AMLL integration",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "WebSocket 服务器运行在端口 11444，用于与 AMLL 集成。功能特性：1) 双向通信：支持服务器推送歌词和客户端发送播放控制命令；2) 连接管理：支持多客户端连接，每个客户端独立会话；3) 消息类型：歌词推送（type: lyric）、播放控制（type: play/pause/stop）、状态同步（type: status）、心跳检测（type: ping/pong）；4) 错误处理：自动重连、超时检测、异常恢复。消息格式：JSON，包含 type 和 data 字段。例如：{type: \"lyric\", data: {time: 120.5, text: \"Hello World\"}}。WebSocket 服务器使用 websockets 库实现，运行在独立线程中。集成方式：AMLL 前端连接 ws://localhost:11444，订阅歌词流，接收实时歌词更新。WebSocket 还支持自定义消息处理，允许扩展其他功能。"
+        }
+      ]
+    },
+    {
+      "title": "Server-Sent Events (SSE)",
+      "purpose": "SSE implementation for real-time lyric streaming",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "SSE（Server-Sent Events）通过 /amll/stream 端点实现实时歌词流式更新。功能特性：1) 单向推送：服务器到客户端的持续数据流；2) 基于 HTTP：使用标准 HTTP 协议，无需额外端口；3) 自动重连：浏览器自动重连机制；4) 事件类型：支持自定义事件类型（lyric、status、error）；5) 流式处理：实时推送歌词数据，无需轮询。消息格式：文本行，每行以 data: 前缀开头，后跟 JSON 数据。例如：data: {\"time\": 120.5, \"text\": \"Hello World\"}。客户端使用 EventSource API 连接：const eventSource = new EventSource('/amll/stream'); eventSource.onmessage = (event) => { const data = JSON.parse(event.data); console.log(data); }。SSE 使用 Starlette 的 StreamingResponse 实现，生成器函数持续推送歌词数据。SSE 适合歌词播放、翻译进度更新等需要实时数据流的场景。"
+        }
+      ]
+    },
+    {
+      "title": "Security and Authentication",
+      "purpose": "Overview of security features and authentication mechanisms",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "安全系统包括设备认证、密码保护、路径验证和 CORS 支持：1) 设备认证：基于设备的认证系统，支持受信任设备管理，首次访问需要密码验证，验证通过后设备被标记为受信任设备；2) 密码保护：使用 bcrypt 加密密码，存储在配置文件中，敏感操作（创建、删除、重命名、导出等）需要密码验证；3) 本地访问限制：敏感操作仅允许本地执行，检测本地回环地址（127.0.0.1、::1、IPv4 映射地址）；4) 安全配置开关：允许在不同环境中调整安全级别；5) 路径验证：安全路径解析和验证，防止路径遍历攻击，使用 resolve_resource_path 和 extract_resource_relative 函数；6) 文件名清理：sanitize_filename 函数移除非法字符，防止文件系统攻击；7) CORS 支持：实现跨域资源共享控制，支持与前端集成；8) 会话管理：使用 SessionMiddleware 管理用户会话，会话数据存储在内存中。安全检查在关键操作前执行，确保只有授权用户才能执行敏感操作。"
+        }
+      ]
+    },
+    {
+      "title": "Device Authentication",
+      "purpose": "Device-based authentication with trusted device management",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "设备认证系统基于设备的指纹和密码实现双重验证：1) 设备指纹：通过客户端 IP、User-Agent 等信息生成设备唯一标识；2) 密码验证：用户输入密码，与存储的 bcrypt 哈希值比对；3) 受信任设备：验证通过的设备被标记为受信任设备，后续访问无需密码；4) 设备列表：维护受信任设备列表，可以手动移除设备；5) 会话管理：使用 SessionMiddleware 管理会话，会话包含设备信息和认证状态。流程：1) 客户端访问；2) 服务器检查设备是否在受信任列表中；3) 如果是受信任设备，直接允许访问；4) 如果不是，要求输入密码；5) 密码验证通过后，将设备添加到受信任列表；6) 返回认证成功响应。敏感操作（创建、删除、重命名、导出等）在执行前验证设备解锁状态。设备认证提高了系统安全性，同时减少了频繁输入密码的麻烦。"
+        }
+      ]
+    },
+    {
+      "title": "Path Security and Validation",
+      "purpose": "Path validation, traversal prevention, and filename sanitization",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "路径安全系统包括路径验证、遍历防护和文件名清理：1) 路径验证：resolve_resource_path 函数将相对路径解析为绝对路径并验证在受控目录内，使用 Path.resolve() 和 relative_to() 方法，如果路径越界则抛出 ValueError；2) 遍历防护：extract_resource_relative 函数从字符串中提取资源相对路径，检测并拒绝包含 .. 的路径，防止路径遍历攻击；3) 文件名清理：sanitize_filename 函数移除非法字符（非字母数字、中文、连字符、下划线、点、空格），替换引号为全角引号，清理前后空格；4) URL 规范化：normalizeResourceUrl 函数处理各种格式的路径，包括绝对路径、相对路径、URL 路径，支持动态解析；5) 资源类型限制：只允许访问 static、songs、backups 三个资源目录，其他目录拒绝访问。安全机制在文件上传、下载、读取、写入等操作前执行，确保所有文件操作都在受控范围内。路径安全系统有效防止了路径遍历、文件泄露等安全漏洞。"
+        }
+      ]
+    },
+    {
+      "title": "Backup and Version Management",
+      "purpose": "Automatic backup system with 7-version retention",
+      "parent": "Backend System",
+      "page_notes": [
+        {
+          "content": "备份系统提供自动备份和版本管理功能：1) 自动备份：每次保存歌词时自动创建备份，备份文件存储在 static/backups/<song_id>/ 目录；2) 版本保留：最多保留 7 个版本，超过 7 个版本时自动删除最旧的备份；3) 备份命名：备份文件名包含时间戳，格式为 <filename>.<timestamp>.bak，超长文件名使用哈希截断策略；4) 备份列表：GET /api/songs/<id>/backups 获取备份列表，按时间降序排列；5) 创建备份：POST /api/songs/<id>/backups 手动创建备份；6) 恢复备份：POST /api/songs/<id>/backups/restore 恢复到指定备份版本。备份内容包括歌词文件、封面图、背景图等所有相关资源。备份系统使用文件系统存储，不需要数据库。备份文件使用原始文件格式，可以直接查看和编辑。备份系统确保了歌词数据的安全性，防止误操作导致的数据丢失。"
+        }
+      ]
+    },
+    {
+      "title": "Frontend Systems",
+      "purpose": "Overview of all frontend interfaces and their purposes",
+      "page_notes": [
+        {
+          "content": "前端系统包括多个界面，每个界面专注于特定功能：1) 主仪表板（LyricSphere.html）：主要歌词管理界面，提供歌曲列表、搜索过滤、创建编辑、导入导出、翻译等功能；2) AMLL 播放器（Lyrics-style.HTML-AMLL-v1.HTML）：高级 AMLL 播放器，支持完整的歌词显示和动画效果，包括背景可视化器；3) 快速编辑器（lyrics_quick_editor.html）：简化的歌词编辑界面，用于快速编辑歌词文本；4) AMLL Web 播放器（amll_web_player.html）：现代化的 Web 播放器界面，支持自定义基础 URL 配置，包含丰富的播放控制功能；5) 歌词动画页面：显示歌词动画效果，支持逐音节动画、字体渲染、动画配置同步。前端使用 HTML/CSS/JavaScript 构建，与后端通过 REST API 和 WebSocket 通信。前端支持响应式设计，适配不同设备（桌面、平板、手机）。前端使用 Bootstrap CSS 和 Material Design 原则提供美观的用户界面。"
+        }
+      ]
+    },
+    {
+      "title": "Main Dashboard (LyricSphere.html)",
+      "purpose": "Complete guide to the main web interface for lyric management",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "主仪表板（LyricSphere.html）是主要的歌词管理界面，提供完整的歌曲管理功能。主要功能区域：1) 歌曲列表：显示所有歌曲，支持搜索过滤、排序、分页；2) 搜索工具栏：模糊搜索、多条件过滤（歌手、专辑、年份）、排序选项；3) 歌曲卡片：显示封面、标题、歌手、专辑、创建时间，支持快速操作（编辑、删除、播放、导出）；4) 创建歌曲：从 AMLL 源创建、手动输入、文件导入；5) 编辑界面：歌词编辑器（支持行级和音节级）、封面上传、背景图上传、元数据编辑；6) 翻译界面：AI 翻译配置、翻译进度显示、翻译结果编辑；7) 导出界面：导出为 CSV、LRC、LYS、TTML 格式，导出分享包（ZIP）；8) 备份管理：查看备份列表、恢复备份、删除备份。界面使用响应式设计，适配桌面和移动设备。搜索功能支持模糊匹配和即时搜索。所有敏感操作（创建、删除、重命名、导出）都需要密码验证。"
+        }
+      ]
+    },
+    {
+      "title": "Search and Filtering",
+      "purpose": "Search system with fuzzy matching and sorting capabilities",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "搜索系统提供强大的搜索和过滤功能：1) 模糊搜索：支持模糊匹配标题、歌手、专辑，不区分大小写，支持部分匹配；2) 多条件过滤：可以同时过滤歌手、专辑、年份等条件；3) 排序选项：支持按创建时间、修改时间、标题、歌手排序，升序或降序；4) 即时搜索：输入时实时更新搜索结果，无需点击搜索按钮；5) 搜索历史：记录最近的搜索词，方便快速访问；6) 高级搜索：支持正则表达式和特殊字符搜索。搜索算法使用 JavaScript 的 includes() 和 match() 方法实现模糊匹配。过滤使用数组的 filter() 方法，结合多个条件进行过滤。排序使用数组的 sort() 方法，支持自定义比较函数。搜索系统优化了性能，使用防抖（debounce）技术减少不必要的搜索操作。搜索工具栏适配横屏大屏设备，提供更好的用户体验。"
+        }
+      ]
+    },
+    {
+      "title": "Song Creation and Import",
+      "purpose": "Creating songs from AMLL, manual input, or file import",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "歌曲创建支持多种方式：1) 从 AMLL 源创建：输入 AMLL 源的歌曲名、歌手、封面 URL，自动获取歌词并创建歌曲；2) 手动输入：手动填写歌曲信息（标题、歌手、专辑、年份），上传封面图、背景图，手动输入歌词；3) 文件导入：导入 LRC、LYS、TTML、LQE 格式的歌词文件，自动解析并创建歌曲；4) ZIP 导入：批量导入歌词 JSON 文件和资源文件，自动解析 ZIP 包中的所有歌曲。创建流程：1) 点击\"创建歌曲\"按钮；2) 选择创建方式；3) 填写歌曲信息或选择文件；4) 上传封面图和背景图（可选）；5) 点击\"保存\"按钮；6) 系统验证输入并创建歌曲；7) 自动创建初始备份。从 AMLL 源创建时，使用 AMLL API 获取歌词数据。文件导入时，自动检测文件格式并选择相应的解析器。ZIP 导入时，遍历 ZIP 包中的所有文件，识别歌词文件和资源文件，创建多个歌曲。所有创建操作都需要密码验证。"
+        }
+      ]
+    },
+    {
+      "title": "Export and Sharing",
+      "purpose": "Export functionality with resource integrity checking",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "导出功能支持多种格式和资源完整性检查：1) 单个文件导出：导出为 CSV、LRC、LYS、TTML 格式，选择要导出的内容（歌词、翻译、元数据）；2) 分享包导出：导出为 ZIP 包，包含歌词 JSON 文件和所有相关资源（封面图、背景图、音频文件）；3) 资源完整性检查：导出前检查所有引用的资源文件是否存在，缺失资源生成警告；4) 资源路径管理：自动收集 JSON 中引用的资源文件路径，确保所有资源都包含在导出包中；5) 文件扩展名验证：统一使用 hasValidImageExtension 函数验证图片文件格式。导出流程：1) 选择要导出的歌曲；2) 选择导出格式；3) 选择要导出的内容；4) 点击\"导出\"按钮；5) 系统检查资源完整性；6) 生成导出文件；7) 下载导出文件。分享包导出使用 ZIP 格式，包含歌词文件和资源文件，便于分享和备份。导出功能支持批量导出，可以同时导出多个歌曲。所有导出操作都需要密码验证。"
+        }
+      ]
+    },
+    {
+      "title": "Lyrics Translation Interface",
+      "purpose": "UI for AI translation with progress tracking and configuration",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "翻译界面提供完整的 AI 翻译功能和进度跟踪：1) 翻译配置：选择 AI 提供商、模型、系统提示词、最大 Token 数、温度等参数；2) 思考模型配置：启用/禁用思考模型，选择思考模型，配置思考提示词；3) 兼容模式：启用/禁用兼容模式，将系统提示词合并到用户消息；4) 歌词括号预处理：启用/禁用歌词括号移除功能；5) 翻译进度：显示翻译阶段（准备中、分析中、翻译中、完成、错误），进度条，预计剩余时间；6) 翻译结果：实时显示翻译结果，支持编辑和修正；7) 时间戳异常检测：自动检测并高亮标记存在问题的歌词行，显示错误提示；8) 翻译历史：记录翻译历史，支持重新翻译。翻译流程：1) 选择要翻译的歌曲；2) 配置翻译参数；3) 点击\"开始翻译\"按钮；4) 系统显示翻译进度；5) 翻译完成后显示结果；6) 用户可以编辑和保存翻译结果。翻译界面提供详细的状态显示和多态提示动画，帮助用户了解翻译进度。所有翻译操作都需要密码验证。"
+        }
+      ]
+    },
+    {
+      "title": "Player UIs",
+      "purpose": "Overview of different lyric display player interfaces",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "播放器界面提供多种歌词显示方式：1) AMLL 播放器（Lyrics-style.HTML-AMLL-v1.HTML）：高级 AMLL 播放器，支持完整的歌词显示和动画效果，包括背景可视化器、逐音节动画、字体渲染；2) AMLL Web 播放器（amll_web_player.html）：现代化的 Web 播放器界面，支持自定义基础 URL 配置，包含丰富的播放控制功能（播放速度调整、音量控制、歌词延迟设置、封面样式定制）；3) 歌词动画页面：显示歌词动画效果，支持逐音节动画、字体渲染、动画配置同步；4) 快速预览：在主界面中快速预览歌词，无需打开完整播放器。播放器功能：播放/暂停、进度控制、音量控制、歌词同步、动画效果、全屏模式。播放器与后端通过 WebSocket 或 SSE 通信，实时获取歌词数据。播放器支持自定义动画配置，通过 /player/animation-config 接口同步前端上报的动画参数。播放器适配不同设备，提供响应式设计。"
+        }
+      ]
+    },
+    {
+      "title": "AMLL Player (Lyrics-style.HTML-AMLL-v1.HTML)",
+      "purpose": "Advanced AMLL player with full feature set including background visualizer",
+      "parent": "Frontend Systems",
+      "page_notes": [
+        {
+          "content": "AMLL 播放器（Lyrics-style.HTML-AMLL-v1.HTML）是高级 AMLL 播放器，提供完整的歌词显示和动画效果。主要功能：1) 歌词显示：支持 LYS、LRC、TTML 格式，显示行级和音节级歌词；2) 动画效果：逐音节动画、上浮动画、缓动效果，使用 FLIP 渲染流程优化性能；3) 字体渲染：支持逐音节字体渲染（[font-family:...] 元标签），自动选择中/英/日字体，支持本地文件、Google Fonts 与 CDN 多源字体加载；4) 背景可视化器：音频可视化背景，支持多种视觉效果；5) 播放控制：播放/暂停、进度控制、音量控制、歌词延迟设置；6) 封面显示：显示专辑封面，支持自定义封面样式；7) 全屏模式：支持全屏显示歌词；8) 动画配置：支持自定义动画时长、进入/移动/退出动画效果、歌词消失时机。动画配置通过 /player/animation-config 接口同步，默认把进入/移动/退出动画时长统一到 600ms，提供 useComputedDisappear 开关控制是否启用后端计算的消失时机。播放器使用 WebSocket 或 SSE 与后端通信，实时获取歌词数据。播放器适配不同设备，提供响应式设计。"
+        }
+      ]
+    }
+  ]
+}
