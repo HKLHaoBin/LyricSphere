@@ -58,6 +58,7 @@
         .player-container {
             width: 90%;
             text-align: center;
+            position: relative;
         }
 
         :where(#albumSidePanel, #amll-stub-host, body) .song-info-container {
@@ -127,12 +128,121 @@
             align-items: center;
             color: rgba(255, 255, 255, 0.2); /* 白色 20% 不透明 */
             width: 100%;
+            min-height: 1.5em;
             word-break: keep-all;
             white-space: normal;
             overflow: visible;
             transition:
                 font-size var(--lyric-scale-duration, 360ms) var(--lyric-scale-easing, cubic-bezier(0.32, 0.78, 0.12, 1)),
                 line-height var(--lyric-scale-duration, 360ms) var(--lyric-scale-easing, cubic-bezier(0.32, 0.78, 0.12, 1));
+        }
+
+        .next-line-preview-host {
+            width: 100%;
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 100%;
+            margin-top: 12px;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            flex-wrap: nowrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .next-line-preview-host-top {
+            top: auto;
+            bottom: 100%;
+            margin-top: 0;
+            margin-bottom: 12px;
+        }
+
+        .lyric-line.next-line-preview {
+            opacity: 0.35;
+            filter: saturate(0.92);
+        }
+
+        .breath-dots-line {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: calc(3.6em * var(--lyric-scale, 1));
+            line-height: 1.2;
+            pointer-events: none;
+        }
+
+        .breath-dots {
+            display: inline-flex;
+            gap: 0.12em;
+            align-items: center;
+            transform-origin: center;
+            animation: breath-pulse 7s ease-in-out infinite;
+        }
+
+        .breath-dots-inline {
+            margin-right: 0.35em;
+        }
+
+        .breath-dot {
+            display: inline-block;
+            transform-origin: center;
+            opacity: 0.4;
+            text-shadow: 0 0 0 rgba(255, 255, 255, 0);
+        }
+
+        @keyframes breath-pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.35);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        @keyframes breath-glow {
+            0% {
+                opacity: 0.35;
+                text-shadow: 0 0 0 rgba(255, 255, 255, 0);
+            }
+            60% {
+                opacity: 1;
+                text-shadow: 0 0 14px rgba(255, 255, 255, 0.85);
+            }
+            100% {
+                opacity: 1;
+                text-shadow: 0 0 14px rgba(255, 255, 255, 0.85);
+            }
+        }
+
+        .breath-dots-line.breath-dots-exit .breath-dots {
+            animation: breath-exit 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+        }
+
+        .breath-dots-line.breath-dots-exit {
+            color: rgb(238, 238, 239);
+        }
+
+        .breath-dots-line.breath-dots-exit .breath-dot {
+            opacity: 1;
+            text-shadow: 0 0 14px rgba(255, 255, 255, 0.85);
+        }
+
+        @keyframes breath-exit {
+            0% {
+                transform: scale(var(--breath-exit-start, 1));
+                opacity: var(--breath-exit-opacity, 1);
+            }
+            40% {
+                transform: scale(1.7);
+                opacity: var(--breath-exit-opacity, 1);
+            }
+            100% {
+                transform: scale(0);
+                opacity: 0;
+            }
         }
 
         /* 对于“侵入式”连体字体，允许溢出显示，避免字形被裁 */
@@ -261,6 +371,7 @@
             padding: 1em;
             color: rgba(255, 255, 255, 0.95);
             text-shadow: 0 0 12px rgba(255, 255, 255, 0.35);
+            min-height: 1.5em;
         }
 
         .amll-main-line span {
@@ -373,7 +484,10 @@
 <body>
     <div class="player-container" id="player-container">
         <audio id="audio-player"></audio>
-        <div id="lyrics-container"></div>
+        <div id="lyrics-container">
+            <div id="next-line-preview-host-top" class="next-line-preview-host next-line-preview-host-top"></div>
+            <div id="next-line-preview-host" class="next-line-preview-host"></div>
+        </div>
     </div>
     <div class="font-slider-container">
         <input type="range" min="0.5" max="1.5" value="1" step="0.05" id="fontSlider">
@@ -739,6 +853,8 @@
             const audioPlayer = document.getElementById('audio-player');
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
+            const nextLinePreviewHost = document.getElementById('next-line-preview-host');
+            const nextLinePreviewHostTop = document.getElementById('next-line-preview-host-top');
             const fontSlider = document.getElementById('fontSlider');
             let lyricsData = [];
             let forceCenterAlign = false; // 新增
@@ -827,10 +943,20 @@
                 }
             };
 
+            window.setAlwaysShowNextLine = (enabled) => {
+                alwaysShowNextLine = Boolean(enabled);
+                updateNextLinePreview();
+            };
+
             window.addEventListener('message', (event) => {
                 const data = event && event.data;
-                if (!data || data.type !== 'amll-beat-toggle') return;
-                window.setAmllBeatEnabled(data.enabled);
+                if (!data || !data.type) return;
+                if (data.type === 'amll-beat-toggle') {
+                    window.setAmllBeatEnabled(data.enabled);
+                }
+                if (data.type === 'amll-next-line-toggle') {
+                    window.setAlwaysShowNextLine(data.enabled);
+                }
             });
 
             document.addEventListener('contextmenu', (event) => {
@@ -1988,6 +2114,10 @@
             const exitDuration = 600;            // 歌词行退出动画时长（毫秒）
             const placeholderDuration = 50;      // 占位符（消失行）延时
             const lineDisplayOffset = 0.5;       // 歌词行提前显示时间（秒）
+            const takeoverAdvance = 0.1;
+            const breathGapSeconds = 6;          // 呼吸点触发间隔（秒）
+            const breathDisappearOffsetMs = 500; // 呼吸点消失时机偏移（毫秒，负数提前）
+            const breathExitDurationMs = 1000;   // 呼吸点退出动画时长（毫秒）
             const useComputedDisappear = false;  // 是否使用后端计算的消失时机
             const SYLLABLE_FADE_RATIO = 0.3;     // 逐字渐变的淡入范围比例
             const SYLLABLE_FLOAT_ASCEND_EASING = 'cubic-bezier(0.55, 0.05, 0.85, 0.25)'; // 逐音节上浮阶段使用缓慢起步后逐渐加速的曲线
@@ -2018,8 +2148,16 @@
             let placeholderLines = new Map(); // 跟踪正在消失的行的占位符
             const customEasing = 'cubic-bezier(.27,.14,0,.99)';
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
+            let alwaysShowNextLine = false; // 是否始终显示下一行预览
+            let nextLinePreviews = new Map();
+            let lineResizeObserver = null;
+            let previewHostRects = new Map();
             let rafId = null; // requestAnimationFrame ID
             const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
+            const breathDotsState = { element: null, between: null };
+            const firstBreathState = { element: null };
+            const breathDotsKey = 'breath-dots-gap';
+            const firstBreathKey = 'breath-dots-first';
 
             function refreshDisplayedLineAnimations() {
                 requestAnimationFrame(() => {
@@ -2143,7 +2281,8 @@
                 }
 
                 const metrics = measureLineMetrics();
-                const lines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || []);
+                const lines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || [])
+                    .filter((line) => !line.classList.contains('next-line-preview'));
                 if (lines.length === 0) {
                     return clamp(userLyricScale, LYRIC_SCALE_MIN, LYRIC_SCALE_MAX);
                 }
@@ -3387,8 +3526,146 @@
                     }
                 });
             }
+
+            function createBreathDotsSpan(extraClass = '') {
+                const wrapper = document.createElement('span');
+                wrapper.className = `breath-dots${extraClass ? ' ' + extraClass : ''}`;
+                for (let i = 0; i < 3; i++) {
+                    const dot = document.createElement('span');
+                    dot.className = 'breath-dot';
+                    dot.textContent = '●';
+                    wrapper.appendChild(dot);
+                }
+                return wrapper;
+            }
+
+            function createBreathDotsLine(kind = 'gap', alignClass = 'center-aligned') {
+                const lineEl = document.createElement('div');
+                lineEl.className = `lyric-line breath-dots-line ${alignClass}`;
+                lineEl.dataset.breathDots = '1';
+                lineEl.dataset.breathKind = kind;
+                lineEl.appendChild(createBreathDotsSpan());
+                return lineEl;
+            }
+
+            function applyBreathDotSequence(lineEl, startTime, endTime) {
+                if (!lineEl) return;
+                const duration = Math.max(0, endTime - startTime);
+                const dots = Array.from(lineEl.querySelectorAll('.breath-dot'));
+                if (duration <= 0 || dots.length === 0) return;
+                const segment = duration / dots.length;
+                dots.forEach((dot, index) => {
+                    dot.style.animationName = 'breath-glow';
+                    dot.style.animationDuration = `${segment}s`;
+                    dot.style.animationDelay = `${segment * index}s`;
+                    dot.style.animationIterationCount = '1';
+                    dot.style.animationFillMode = 'both';
+                    dot.style.animationTimingFunction = 'ease-in-out';
+                });
+            }
+
+            function removeBreathDotsLine() {
+                if (breathDotsState.element) {
+                    unobserveLineHeight(breathDotsState.element);
+                    breathDotsState.element.remove();
+                }
+                breathDotsState.element = null;
+                breathDotsState.between = null;
+                displayedLines.delete(breathDotsKey);
+            }
+
+            function insertBreathDotsLine(el, beforeIndex) {
+                if (!lyricsContainer) return;
+                const children = Array.from(lyricsContainer.children).filter((child) => (
+                    child !== nextLinePreviewHost
+                    && child !== nextLinePreviewHostTop
+                    && child.dataset.breathDots !== '1'
+                ));
+                let inserted = false;
+                for (let i = 0; i < children.length; i++) {
+                    const childIndex = parseInt(children[i].dataset.lineIndex, 10);
+                    if (Number.isFinite(childIndex) && childIndex >= beforeIndex) {
+                        lyricsContainer.insertBefore(el, children[i]);
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
+                        lyricsContainer.insertBefore(el, nextLinePreviewHostTop);
+                    } else if (nextLinePreviewHost) {
+                        lyricsContainer.insertBefore(el, nextLinePreviewHost);
+                    } else {
+                        lyricsContainer.appendChild(el);
+                    }
+                }
+            }
+
+            function resolveLineAlignClass(lineIndex) {
+                const line = lyricsData[lineIndex];
+                const lineStyle = line && line.style ? line.style : {};
+                if (forceCenterAlign) return 'center-aligned';
+                if (lineStyle.align === 'right') return 'right-aligned';
+                if (lineStyle.align === 'center') return 'center-aligned';
+                return 'left-aligned';
+            }
+
+            function applyBreathLineAlignment(lineEl, alignClass) {
+                if (!lineEl) return;
+                lineEl.classList.remove('left-aligned', 'center-aligned', 'right-aligned');
+                lineEl.classList.add(alignClass);
+            }
+
+            function ensureBreathDotsLine(prevIndex, nextIndex, startTime, endTime) {
+                const alignClass = resolveLineAlignClass(nextIndex);
+                if (breathDotsState.element && breathDotsState.between
+                    && breathDotsState.between.prev === prevIndex
+                    && breathDotsState.between.next === nextIndex) {
+                    applyBreathLineAlignment(breathDotsState.element, alignClass);
+                    applyBreathDotSequence(breathDotsState.element, startTime, endTime);
+                    return;
+                }
+                removeBreathDotsLine();
+                const el = createBreathDotsLine('gap', alignClass);
+                el.dataset.startTime = startTime;
+                el.dataset.endTime = endTime;
+                breathDotsState.element = el;
+                breathDotsState.between = { prev: prevIndex, next: nextIndex };
+                insertBreathDotsLine(el, nextIndex);
+                displayedLines.set(breathDotsKey, { element: el });
+                observeLineHeight(el);
+                applyBreathDotSequence(el, startTime, endTime);
+            }
+
+            function removeFirstBreathLine() {
+                if (firstBreathState.element) {
+                    unobserveLineHeight(firstBreathState.element);
+                    firstBreathState.element.remove();
+                }
+                firstBreathState.element = null;
+                displayedLines.delete(firstBreathKey);
+            }
+
+            function ensureFirstBreathLine(endTime) {
+                const alignClass = resolveLineAlignClass(0);
+                if (firstBreathState.element) {
+                    firstBreathState.element.dataset.endTime = endTime;
+                    applyBreathLineAlignment(firstBreathState.element, alignClass);
+                    applyBreathDotSequence(firstBreathState.element, 0, endTime);
+                    return;
+                }
+                const el = createBreathDotsLine('first', alignClass);
+                el.dataset.startTime = 0;
+                el.dataset.endTime = endTime;
+                firstBreathState.element = el;
+                insertBreathDotsLine(el, 0);
+                displayedLines.set(firstBreathKey, { element: el });
+                observeLineHeight(el);
+                applyBreathDotSequence(el, 0, endTime);
+            }
             
-            function createLineElement(lineIndex) {
+            function createLineElement(lineIndex, options = {}) {
+                const { isPreview = false } = options;
                 const line = lyricsData[lineIndex];
                 if (!line) return null;
 
@@ -3408,6 +3685,11 @@
 
                 const lineEl = document.createElement('div');
                 lineEl.classList.add('lyric-line');
+                if (isPreview) {
+                    lineEl.classList.add('next-line-preview');
+                    lineEl.dataset.preview = '1';
+                    lineEl.style.pointerEvents = 'none';
+                }
                 if (hasAnySpecialFont) {
                     lineEl.classList.add('allow-overflow');
                     lineEl.dataset.specialFont = '1';
@@ -3491,6 +3773,7 @@
                 const amllMeta = buildAmllWords(line, mainLineEl, { aliases: dedupAliases, bodyFont });
                 lineEl.__amllData = amllMeta;
 
+
                 groupSyllablesIntoWords(blurLayer, 'blur-text');
 
                 // 翻译渲染：在歌词行下方插入翻译
@@ -3536,19 +3819,31 @@
                     }
                 }
 
-                lineEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    if (lineEl.dataset.startTime) {
-                        audioPlayer.currentTime = parseFloat(lineEl.dataset.startTime);
-                        audioPlayer.play();
-                    }
-                });
+                if (!isPreview) {
+                    lineEl.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (lineEl.dataset.startTime) {
+                            audioPlayer.currentTime = parseFloat(lineEl.dataset.startTime);
+                            audioPlayer.play();
+                        }
+                    });
+                }
                 return lineEl;
             }
 
             function initLyrics() {
-                lyricsContainer.innerHTML = '';
+                const existingLines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || []);
+                existingLines.forEach((line) => line.remove());
                 displayedLines.clear();
+                clearNextLinePreview();
+                removeBreathDotsLine();
+                removeFirstBreathLine();
+                if (nextLinePreviewHostTop && !lyricsContainer.contains(nextLinePreviewHostTop)) {
+                    lyricsContainer.appendChild(nextLinePreviewHostTop);
+                }
+                if (nextLinePreviewHost && !lyricsContainer.contains(nextLinePreviewHost)) {
+                    lyricsContainer.appendChild(nextLinePreviewHost);
+                }
                 if (lyricsData.length === 0) {
                      return;
                 }
@@ -3566,7 +3861,19 @@
                     placeholderLines.delete(lineIndex);
                 }
 
-                const incomingLine = createLineElement(lineIndex);
+                let incomingLine = null;
+                let previewOldRect = null;
+                let skipEnterAnimation = false;
+                if (nextLinePreviews.has(lineIndex)) {
+                    const previewEl = nextLinePreviews.get(lineIndex);
+                    previewOldRect = previewEl.getBoundingClientRect();
+                    incomingLine = detachPreviewLine(lineIndex);
+                    skipEnterAnimation = true;
+                }
+
+                if (!incomingLine) {
+                    incomingLine = createLineElement(lineIndex);
+                }
                 if (!incomingLine) return;
 
                 // 并发锁：如果动画未完成，不允许重复添加
@@ -3575,7 +3882,11 @@
 
                 // 找到下一个比当前 lineIndex 大的歌词行
                 let inserted = false;
-                const children = Array.from(lyricsContainer.children);
+                const children = Array.from(lyricsContainer.children).filter((child) => (
+                    child !== nextLinePreviewHost
+                    && child !== nextLinePreviewHostTop
+                    && child.dataset.breathDots !== '1'
+                ));
                 for (let i = 0; i < children.length; i++) {
                     const childIndex = parseInt(children[i].dataset.lineIndex, 10);
                     if (childIndex > lineIndex) {
@@ -3585,13 +3896,20 @@
                     }
                 }
                 if (!inserted) {
-                    lyricsContainer.appendChild(incomingLine);
+                    if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
+                        lyricsContainer.insertBefore(incomingLine, nextLinePreviewHostTop);
+                    } else if (nextLinePreviewHost) {
+                        lyricsContainer.insertBefore(incomingLine, nextLinePreviewHost);
+                    } else {
+                        lyricsContainer.appendChild(incomingLine);
+                    }
                 }
 
                 const lineInfo = { element: incomingLine };
                 displayedLines.set(lineIndex, lineInfo);
+                observeLineHeight(incomingLine);
 
-                if (!suppressAnimations) {
+                if (!suppressAnimations && !skipEnterAnimation) {
                     const animation = safeAnimate(incomingLine, [
                         { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
                         { opacity: 1, filter: 'blur(0)', '-webkit-filter': 'blur(0)' }
@@ -3608,6 +3926,33 @@
                     incomingLine.style.filter = 'none';
                     incomingLine.style.webkitFilter = 'none';
                     incomingLine.animationLock = false;
+                }
+
+                if (!suppressAnimations && skipEnterAnimation && previewOldRect) {
+                    const newRect = incomingLine.getBoundingClientRect();
+                    const deltaX = previewOldRect.left - newRect.left;
+                    const deltaY = previewOldRect.top - newRect.top;
+                    runFlipTransition(incomingLine, deltaX, deltaY);
+                }
+                
+                if (!suppressAnimations && skipEnterAnimation) {
+                    incomingLine.style.opacity = '0.35';
+                    incomingLine.style.filter = 'saturate(0.92)';
+                    incomingLine.style.webkitFilter = 'saturate(0.92)';
+                    incomingLine.__previewPromoteAnimation = safeAnimate(incomingLine, [
+                        { opacity: 0.35, filter: 'saturate(0.92)', '-webkit-filter': 'saturate(0.92)' },
+                        { opacity: 1, filter: 'none', '-webkit-filter': 'none' }
+                    ], {
+                        duration: enterDuration,
+                        easing: customEasing,
+                        fill: 'forwards'
+                    });
+                    incomingLine.__previewPromoteAnimation.onfinish = () => {
+                        incomingLine.style.opacity = '';
+                        incomingLine.style.filter = '';
+                        incomingLine.style.webkitFilter = '';
+                        delete incomingLine.__previewPromoteAnimation;
+                    };
                 }
 
                 const lineData = lyricsData[lineIndex];
@@ -3627,6 +3972,11 @@
                 if (!lineInfo) return;
 
                 const outgoingLine = lineInfo.element;
+                unobserveLineHeight(outgoingLine);
+                if (outgoingLine.__heightAnimation && typeof outgoingLine.__heightAnimation.cancel === 'function') {
+                    outgoingLine.__heightAnimation.cancel();
+                }
+                delete outgoingLine.__heightAnimation;
 
                 cancelLineAnimations(lineInfo, { commit: true });
 
@@ -3744,9 +4094,382 @@
                 scheduleAutoScale();
             }
 
+            function clearNextLinePreview() {
+                nextLinePreviews.forEach((previewEl) => {
+                    if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
+                        previewEl.__previewEnterAnimation.cancel();
+                    }
+                    delete previewEl.__previewEnterAnimation;
+                    if (previewEl.parentElement) {
+                        previewEl.remove();
+                    }
+                });
+                nextLinePreviews.clear();
+            }
+
+            function ensureLineResizeObserver() {
+                if (lineResizeObserver) return lineResizeObserver;
+                lineResizeObserver = new ResizeObserver((entries) => {
+                    entries.forEach((entry) => {
+                        const element = entry.target;
+                        if (!element || suppressAnimations) {
+                            element.__prevHeight = entry.contentRect.height;
+                            return;
+                        }
+                        if (element.classList.contains('next-line-preview')) {
+                            element.__prevHeight = entry.contentRect.height;
+                            return;
+                        }
+                        const prevHeight = element.__prevHeight;
+                        const nextHeight = entry.contentRect.height;
+                        element.__prevHeight = nextHeight;
+                        if (!prevHeight || Math.abs(prevHeight - nextHeight) < 0.5) return;
+
+                        if (element.__heightAnimation && typeof element.__heightAnimation.cancel === 'function') {
+                            element.__heightAnimation.cancel();
+                        }
+
+                        element.style.height = `${prevHeight}px`;
+                        element.style.overflow = 'hidden';
+                        element.__heightAnimation = safeAnimate(element, [
+                            { height: `${prevHeight}px` },
+                            { height: `${nextHeight}px` }
+                        ], {
+                            duration: moveDuration,
+                            easing: customEasing,
+                            fill: 'forwards'
+                        });
+
+                        element.__heightAnimation.onfinish = () => {
+                            if (element.__heightAnimation) {
+                                element.__heightAnimation = null;
+                            }
+                            element.style.height = '';
+                            element.style.overflow = '';
+                        };
+                    });
+                });
+                return lineResizeObserver;
+            }
+
+            function observeLineHeight(element) {
+                if (!element) return;
+                const observer = ensureLineResizeObserver();
+                element.__prevHeight = element.getBoundingClientRect().height;
+                observer.observe(element);
+            }
+
+            function unobserveLineHeight(element) {
+                if (!element || !lineResizeObserver) return;
+                lineResizeObserver.unobserve(element);
+            }
+
+            function detachPreviewLine(lineIndex) {
+                const previewEl = nextLinePreviews.get(lineIndex);
+                if (!previewEl) return null;
+                if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
+                    previewEl.__previewEnterAnimation.cancel();
+                }
+                delete previewEl.__previewEnterAnimation;
+                nextLinePreviews.delete(lineIndex);
+                previewEl.classList.remove('next-line-preview');
+                previewEl.removeAttribute('data-preview');
+                previewEl.style.opacity = '';
+                previewEl.style.filter = '';
+                previewEl.style.pointerEvents = '';
+                return previewEl;
+            }
+            
+            function startPreviewExitAnimation(lineIndex, previewEl) {
+                if (!previewEl || previewEl.__previewExitAnimation) return;
+                if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
+                    previewEl.__previewEnterAnimation.cancel();
+                }
+                delete previewEl.__previewEnterAnimation;
+                previewEl.dataset.previewExiting = '1';
+                previewEl.__previewExitAnimation = safeAnimate(previewEl, [
+                    { opacity: 0.35, filter: 'saturate(0.92)', '-webkit-filter': 'saturate(0.92)' },
+                    { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' }
+                ], {
+                    duration: exitDuration,
+                    easing: customEasing,
+                    fill: 'forwards'
+                });
+                previewEl.__previewExitAnimation.onfinish = () => {
+                    if (previewEl.parentElement) {
+                        previewEl.remove();
+                    }
+                    delete previewEl.__previewExitAnimation;
+                    delete previewEl.dataset.previewExiting;
+                    nextLinePreviews.delete(lineIndex);
+                };
+            }
+
+            function cancelPreviewExitAnimation(previewEl) {
+                if (!previewEl || !previewEl.__previewExitAnimation) return;
+                try {
+                    previewEl.__previewExitAnimation.cancel();
+                } catch (e) { /* 忽略 */ }
+                delete previewEl.__previewExitAnimation;
+                delete previewEl.dataset.previewExiting;
+                previewEl.style.opacity = '';
+                previewEl.style.filter = '';
+                previewEl.style.webkitFilter = '';
+            }
+
+            function getLineTiming(line) {
+                if (!line || !Array.isArray(line.syllables) || line.syllables.length === 0) {
+                    return null;
+                }
+                const firstSyllable = line.syllables[0];
+                const lastSyllable = line.syllables[line.syllables.length - 1];
+                const startTime = parseFloat(firstSyllable.startTime);
+                const fallbackEnd = parseFloat(lastSyllable.startTime) + parseFloat(lastSyllable.duration || 0);
+                const disappearTime = typeof line.disappearTime === 'number'
+                    ? line.disappearTime / 1000
+                    : fallbackEnd;
+                return { startTime, disappearTime };
+            }
+
+            function isLineTextEmpty(line) {
+                if (!line || !Array.isArray(line.syllables) || line.syllables.length === 0) {
+                    return true;
+                }
+                return line.syllables.every((syllable) => {
+                    if (!syllable || typeof syllable.text !== 'string') return true;
+                    return syllable.text.trim().length === 0;
+                });
+            }
+
+            function getLineStartTime(line) {
+                const timing = getLineTiming(line);
+                return timing ? timing.startTime : null;
+            }
+
+            function findNextLineIndices(currentTime) {
+                let activeIndex = null;
+                let nextIndex = null;
+                for (let i = 0; i < lyricsData.length; i++) {
+                    const line = lyricsData[i];
+                    const timing = getLineTiming(line);
+                    if (!timing) continue;
+                    const isActive = (currentTime >= timing.startTime - lineDisplayOffset)
+                        && (currentTime < timing.disappearTime);
+                    if (isActive) {
+                        activeIndex = i;
+                    }
+                    if (timing.startTime > currentTime && nextIndex === null) {
+                        nextIndex = i;
+                    }
+                }
+                if (activeIndex !== null) {
+                    for (let i = activeIndex + 1; i < lyricsData.length; i++) {
+                        const timing = getLineTiming(lyricsData[i]);
+                        if (timing) {
+                            nextIndex = i;
+                            break;
+                        }
+                    }
+                }
+                return { activeIndex, nextIndex };
+            }
+
+            function getTimeSortedUpcomingIndices(currentTime) {
+                const upcoming = [];
+                for (let i = 0; i < lyricsData.length; i++) {
+                    if (displayedLines.has(i)) continue;
+                    const startTime = getLineStartTime(lyricsData[i]);
+                    if (startTime == null) continue;
+                    if (startTime > currentTime) {
+                        upcoming.push({ index: i, startTime });
+                    }
+                }
+                upcoming.sort((a, b) => {
+                    if (a.startTime === b.startTime) return a.index - b.index;
+                    return a.startTime - b.startTime;
+                });
+                return upcoming;
+            }
+
+            function getAnchorIndexByTime(currentTime) {
+                let anchorIndex = null;
+                let bestStart = -Infinity;
+                for (let i = 0; i < lyricsData.length; i++) {
+                    const startTime = getLineStartTime(lyricsData[i]);
+                    if (startTime == null) continue;
+                    if (startTime <= currentTime && startTime >= bestStart) {
+                        bestStart = startTime;
+                        anchorIndex = i;
+                    }
+                }
+                return anchorIndex;
+            }
+
+            function getScaleFromTransform(transformValue) {
+                if (!transformValue || transformValue === 'none') return 1;
+                const match = transformValue.match(/matrix\(([^)]+)\)/);
+                if (!match) return 1;
+                const parts = match[1].split(',').map((v) => parseFloat(v.trim()));
+                if (parts.length < 4 || parts.some((v) => !Number.isFinite(v))) return 1;
+                const [a, b, c, d] = parts;
+                const scaleX = Math.sqrt(a * a + b * b);
+                const scaleY = Math.sqrt(c * c + d * d);
+                return Number.isFinite(scaleX) && Number.isFinite(scaleY) ? (scaleX + scaleY) / 2 : 1;
+            }
+
+            function updateBreathDots(currentTime) {
+                if (showAllLinesWhenPaused) {
+                    removeBreathDotsLine();
+                    return;
+                }
+                const breathOffsetSeconds = breathDisappearOffsetMs / 1000;
+                const exitHoldSeconds = breathExitDurationMs / 1000;
+                if (breathDotsState.element) {
+                    const existingEndTime = parseFloat(breathDotsState.element.dataset.endTime);
+                    if (Number.isFinite(existingEndTime)) {
+                        const removeAt = existingEndTime + breathOffsetSeconds + exitHoldSeconds;
+                        if (currentTime < removeAt) {
+                            return;
+                        }
+                    }
+                }
+                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                const prevIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
+                if (prevIndex == null || nextIndex == null || nextIndex <= prevIndex) {
+                    removeBreathDotsLine();
+                    return;
+                }
+                const prevTiming = getLineTiming(lyricsData[prevIndex]);
+                const nextTiming = getLineTiming(lyricsData[nextIndex]);
+                if (!prevTiming || !nextTiming) {
+                    removeBreathDotsLine();
+                    return;
+                }
+                const gapStart = prevTiming.disappearTime;
+                const gapEnd = Math.max(gapStart, nextTiming.startTime - lineDisplayOffset + 0.1);
+                const gap = gapEnd - gapStart;
+                const displayEndTime = gapEnd + breathOffsetSeconds;
+                const inGap = currentTime >= gapStart && currentTime < displayEndTime;
+                if (gap >= breathGapSeconds && inGap) {
+                    ensureBreathDotsLine(prevIndex, nextIndex, gapStart, gapEnd);
+                } else {
+                    removeBreathDotsLine();
+                }
+            }
+
+            function updateNextLinePreview() {
+                if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
+                    clearNextLinePreview();
+                    return;
+                }
+                const currentTime = audioPlayer.currentTime;
+                const { activeIndex } = findNextLineIndices(currentTime);
+                const anchorIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
+                const upcoming = getTimeSortedUpcomingIndices(currentTime);
+                if (upcoming.length === 0) {
+                    clearNextLinePreview();
+                    return;
+                }
+
+                const previewIndices = [];
+                let cursor = 0;
+                while (cursor < upcoming.length) {
+                    const current = upcoming[cursor];
+                    previewIndices.push(current.index);
+                    const next = upcoming[cursor + 1];
+                    if (!next) break;
+                    if ((next.startTime - current.startTime) * 1000 < 200) {
+                        cursor += 1;
+                        continue;
+                    }
+                    break;
+                }
+
+                const desired = new Set(previewIndices);
+                nextLinePreviews.forEach((previewEl, index) => {
+                    if (!desired.has(index)) {
+                        startPreviewExitAnimation(index, previewEl);
+                    } else if (previewEl.dataset.previewExiting) {
+                        cancelPreviewExitAnimation(previewEl);
+                    }
+                });
+
+                const sortedIndices = previewIndices.slice().sort((a, b) => a - b);
+                const previewOldRects = new Map();
+                if (!suppressAnimations) {
+                    nextLinePreviews.forEach((previewEl) => {
+                        previewOldRects.set(previewEl, previewEl.getBoundingClientRect());
+                    });
+                }
+                sortedIndices.forEach((index) => {
+                    if (nextLinePreviews.has(index)) return;
+                    const previewEl = createLineElement(index, { isPreview: true });
+                    if (!previewEl) return;
+                    nextLinePreviews.set(index, previewEl);
+                    const host = (anchorIndex != null && index < anchorIndex && nextLinePreviewHostTop)
+                        ? nextLinePreviewHostTop
+                        : nextLinePreviewHost;
+                    host.appendChild(previewEl);
+
+                    if (!suppressAnimations) {
+                        previewEl.style.opacity = '0';
+                        previewEl.style.filter = 'blur(5px)';
+                        previewEl.style.webkitFilter = 'blur(5px)';
+                        previewEl.__previewEnterAnimation = safeAnimate(previewEl, [
+                            { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
+                            { opacity: 0.35, filter: 'blur(0)', '-webkit-filter': 'blur(0)' }
+                        ], {
+                            duration: enterDuration,
+                            easing: customEasing,
+                            fill: 'forwards'
+                        });
+                    } else {
+                        previewEl.style.opacity = '1';
+                        previewEl.style.filter = 'none';
+                        previewEl.style.webkitFilter = 'none';
+                    }
+                });
+
+                if (nextLinePreviewHostTop) {
+                    const topOrder = sortedIndices.filter((index) => anchorIndex != null && index < anchorIndex);
+                    topOrder.forEach((index) => {
+                        const previewEl = nextLinePreviews.get(index);
+                        if (previewEl) nextLinePreviewHostTop.appendChild(previewEl);
+                    });
+                }
+                const bottomOrder = sortedIndices.filter((index) => !(anchorIndex != null && index < anchorIndex));
+                bottomOrder.forEach((index) => {
+                    const previewEl = nextLinePreviews.get(index);
+                    if (previewEl) nextLinePreviewHost.appendChild(previewEl);
+                });
+
+                if (!suppressAnimations) {
+                    nextLinePreviews.forEach((previewEl) => {
+                        const oldRect = previewOldRects.get(previewEl);
+                        if (!oldRect) return;
+                        const newRect = previewEl.getBoundingClientRect();
+                        const deltaX = oldRect.left - newRect.left;
+                        const deltaY = oldRect.top - newRect.top;
+                        runFlipTransition(previewEl, deltaX, deltaY);
+                    });
+                }
+            }
+
             function updateLyricsDisplay() {
                 const currentTime = audioPlayer.currentTime;
                 const oldPositions = suppressAnimations ? new Map() : new Map();
+                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                const activeLineVisible = activeIndex != null
+                    && !isLineTextEmpty(lyricsData[activeIndex]);
+                let takeoverIndex = null;
+                if (alwaysShowNextLine && activeIndex != null && nextIndex != null) {
+                    const activeTiming = getLineTiming(lyricsData[activeIndex]);
+                    if (activeTiming && currentTime >= (activeTiming.disappearTime - takeoverAdvance)) {
+                        takeoverIndex = nextIndex;
+                    } else if (!activeLineVisible) {
+                        takeoverIndex = nextIndex;
+                    }
+                }
                 if (!suppressAnimations) {
                     // FIRST: 记录所有当前显示行和占位符的位置
                     displayedLines.forEach((lineInfo, lineIndex) => {
@@ -3774,24 +4497,40 @@
                 } else {
                     // 正常模式，使用后端计算好的消失时机
                     lyricsData.forEach((line, index) => {
-                        // 确保歌词行有音节数据
-                        if (!line.syllables || line.syllables.length === 0) return;
+                        const timing = getLineTiming(line);
+                        if (!timing) {
+                            if (displayedLines.has(index)) removeLine(index);
+                            return;
+                        }
+                        if (isLineTextEmpty(line)) {
+                            if (displayedLines.has(index)) removeLine(index);
+                            return;
+                        }
 
-                        const startTime = parseFloat(line.syllables[0].startTime); // 单位：秒
-                        const disappearTime = line.disappearTime / 1000; // 从后端获取（毫秒 -> 秒）
-                        
                         const isLineDisplayed = displayedLines.has(index);
+                        const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
+                            && (currentTime < timing.disappearTime);
+                        const shouldForceDisplay = takeoverIndex === index
+                            && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
 
-                        // 判断是否应显示/消失
-                        const isLineActive = (currentTime >= startTime - lineDisplayOffset) && (currentTime < disappearTime);
-
-                        if (isLineActive && !isLineDisplayed) {
+                        if ((isLineActive || shouldForceDisplay) && !isLineDisplayed) {
                             addLine(index);
-                        } else if (!isLineActive && isLineDisplayed) {
+                        } else if (!isLineActive && !shouldForceDisplay && isLineDisplayed) {
                             removeLine(index);
                         }
                     });
                 }
+
+                const firstLineStart = getLineStartTime(lyricsData[0]);
+                const firstBreathEnd = typeof firstLineStart === 'number'
+                    ? Math.max(0, firstLineStart - lineDisplayOffset + 0.1)
+                    : null;
+                if (typeof firstBreathEnd === 'number' && currentTime < firstBreathEnd) {
+                    ensureFirstBreathLine(firstBreathEnd);
+                } else {
+                    removeFirstBreathLine();
+                }
+                updateBreathDots(currentTime);
 
                 if (!suppressAnimations) {
                     // LAST: 读取新位置
@@ -3839,9 +4578,38 @@
                         } else {
                             lineEl.classList.remove('active');
                         }
+                        if (lineEl.dataset.breathDots === '1' && Number.isFinite(endTime)) {
+                            const remainingMs = (endTime - currentTime) * 1000;
+                            const exitStartMs = 1000 - breathDisappearOffsetMs;
+                            if (remainingMs <= exitStartMs) {
+                                if (!lineEl.dataset.breathExitActive) {
+                                    const dotsEl = lineEl.querySelector('.breath-dots');
+                                    if (dotsEl) {
+                                        const computed = getComputedStyle(dotsEl);
+                                        const scale = getScaleFromTransform(computed.transform);
+                                        const opacity = parseFloat(computed.opacity);
+                                        dotsEl.style.setProperty('--breath-exit-start', `${Math.max(0.1, scale)}`);
+                                        dotsEl.style.setProperty('--breath-exit-opacity', '1');
+                                    }
+                                    lineEl.dataset.breathExitActive = '1';
+                                    lineEl.classList.add('breath-dots-exit');
+                                }
+                            } else {
+                                if (lineEl.dataset.breathExitActive) {
+                                    lineEl.dataset.breathExitActive = '';
+                                    lineEl.classList.remove('breath-dots-exit');
+                                    const dotsEl = lineEl.querySelector('.breath-dots');
+                                    if (dotsEl) {
+                                        dotsEl.style.removeProperty('--breath-exit-start');
+                                        dotsEl.style.removeProperty('--breath-exit-opacity');
+                                    }
+                                }
+                            }
+                        }
                         syncLineAnimations(lineInfo);
                     });
                 }
+                updateNextLinePreview();
             }
 
             audioPlayer.addEventListener('timeupdate', () => {
@@ -3926,7 +4694,27 @@
                     audioPlayer.pause();
                 }
             });
-            window.addEventListener('resize', scheduleAutoScale);
+            window.addEventListener('resize', () => {
+                scheduleAutoScale();
+                updateNextLinePreview();
+            });
+
+            if (lyricsContainer) {
+                const previewHostObserver = new ResizeObserver(() => {
+                    [nextLinePreviewHostTop, nextLinePreviewHost].forEach((host) => {
+                        if (!host) return;
+                        const newRect = host.getBoundingClientRect();
+                        const prevRect = previewHostRects.get(host) || null;
+                        if (prevRect) {
+                            const deltaX = prevRect.left - newRect.left;
+                            const deltaY = prevRect.top - newRect.top;
+                            runFlipTransition(host, deltaX, deltaY);
+                        }
+                        previewHostRects.set(host, newRect);
+                    });
+                });
+                previewHostObserver.observe(lyricsContainer);
+            }
 
             await syncAnimationConfig();
             await loadData();

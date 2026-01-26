@@ -1135,6 +1135,54 @@ def collect_song_resource_paths(payload: Union[dict, list, str]) -> Set[str]:
     return collected
 
 
+def extract_font_files_from_lys(lys_content: str) -> Set[str]:
+    """从LYS文件内容中提取所有引用的字体文件名
+    
+    解析 [font-family:] 标记，提取其中的字体文件名：
+    - [font-family:] - 指定默认字体（无字体文件）
+    - [font-family:Hymmnos-m8rx] - 使用 Hymmnos-m8rx 字体文件
+    - [font-family:ar-ciela_compartment] - 使用 ar-ciela_compartment 字体文件
+    - [font-family:(ja),Hymmnos-m8rx(en)] - 日语默认，英语使用 Hymmnos-m8rx
+    
+    Returns:
+        Set[str]: 所有引用的字体文件名集合（不含扩展名）
+    """
+    font_files: Set[str] = set()
+    
+    for line in lys_content.splitlines():
+        stripped_line = line.strip()
+        font_meta_match = FONT_FAMILY_META_REGEX.match(stripped_line)
+        if font_meta_match:
+            detected_family = font_meta_match.group(1)
+            if not detected_family:
+                continue
+            
+            # 解析字体标记
+            parts = [p.strip() for p in detected_family.split(',')]
+            for part in parts:
+                if not part:
+                    continue
+                # 匹配两种格式：
+                # 1. 纯字体名: Hymmnos-m8rx
+                # 2. 语言映射: Hymmnos-m8rx(en) 或 (ja)
+                m = re.match(r'^(?:(?P<name>[^()]+)\s*\((?P<lang>[^)]+)\))|(?P<plain>[^()]+)$', part)
+                if not m:
+                    continue
+                
+                # 提取字体名（排除空字符串和纯语言标记）
+                font_name = None
+                if m.group('plain'):
+                    font_name = m.group('plain').strip()
+                elif m.group('name'):
+                    font_name = m.group('name').strip()
+                
+                # 只有当字体名非空时才添加
+                if font_name:
+                    font_files.add(font_name)
+    
+    return font_files
+
+
 def get_public_base_url() -> str:
     if has_request_context():
         return request.url_root.rstrip('/')
@@ -1319,6 +1367,55 @@ def _resolve_import_target(target_path: Path, reserved_paths: Set[str]) -> Tuple
         counter += 1
 
 
+def _rebuild_import_url(parsed, new_path: str) -> str:
+    if parsed.scheme or parsed.netloc:
+        return parsed._replace(path=new_path).geturl()
+    if parsed.query or parsed.fragment:
+        suffix = ''
+        if parsed.query:
+            suffix += f"?{parsed.query}"
+        if parsed.fragment:
+            suffix += f"#{parsed.fragment}"
+        return f"{new_path}{suffix}"
+    return new_path
+
+
+def _replace_single_import_path(raw: str, old_rel: str, new_rel: str) -> str:
+    if raw == old_rel:
+        return new_rel
+
+    old_norm = old_rel.replace('\\', '/')
+    new_norm = new_rel.replace('\\', '/')
+    old_lower = old_norm.lower()
+
+    bare_old = None
+    bare_new = None
+    if old_lower.startswith('songs/'):
+        bare_old = old_norm[len('songs/'):]
+        if new_norm.lower().startswith('songs/'):
+            bare_new = new_norm[len('songs/'):]
+        else:
+            bare_new = new_norm
+        if raw == bare_old:
+            return bare_new
+
+    parsed = urlparse(raw)
+    path = (parsed.path or '').replace('\\', '/')
+    if not path:
+        return raw
+
+    path_lower = path.lower()
+    if path_lower.endswith(old_lower):
+        new_path = f"{path[:-len(old_norm)]}{new_norm}"
+        return _rebuild_import_url(parsed, new_path)
+
+    if bare_old and path_lower.endswith(bare_old.lower()):
+        new_path = f"{path[:-len(bare_old)]}{bare_new}"
+        return _rebuild_import_url(parsed, new_path)
+
+    return raw
+
+
 def _replace_import_paths(value: Any, rename_map: Dict[str, str]) -> Any:
     """Replace renamed import paths in JSON payload."""
     if isinstance(value, dict):
@@ -1328,15 +1425,15 @@ def _replace_import_paths(value: Any, rename_map: Dict[str, str]) -> Any:
     if not isinstance(value, str):
         return value
 
+    if '::' in value:
+        parts = value.split('::')
+        return '::'.join(_replace_import_paths(part, rename_map) for part in parts)
+
     updated = value
     for old_rel, new_rel in rename_map.items():
         if old_rel == new_rel:
             continue
-        if updated == old_rel:
-            updated = new_rel
-            continue
-        if updated.endswith(old_rel):
-            updated = updated[: -len(old_rel)] + new_rel
+        updated = _replace_single_import_path(updated, old_rel, new_rel)
     return updated
 
 
@@ -3219,6 +3316,35 @@ def export_static_bundle():
         return jsonify({'status': 'error', 'message': f'读取 JSON 失败: {exc}'}), 500
 
     referenced_assets = collect_song_resource_paths(json_data)
+    
+    # 检查所有.lys文件，提取字体文件引用
+    font_files: Set[str] = set()
+    for asset in referenced_assets:
+        if asset.lower().endswith('.lys'):
+            lys_path = SONGS_DIR / asset
+            if lys_path.exists():
+                try:
+                    with open(lys_path, 'r', encoding='utf-8') as lys_file:
+                        lys_content = lys_file.read()
+                    extracted_fonts = extract_font_files_from_lys(lys_content)
+                    font_files.update(extracted_fonts)
+                except Exception as exc:
+                    app.logger.warning(f"读取LYS文件 {asset} 失败: {exc}")
+    
+    # 查找字体文件（支持常见的字体文件扩展名）
+    font_extensions = {'.ttf', '.otf', '.woff', '.woff2', '.eot'}
+    font_assets: Set[str] = set()
+    for font_name in font_files:
+        for ext in font_extensions:
+            font_file = f"{font_name}{ext}"
+            font_path = SONGS_DIR / font_file
+            if font_path.exists():
+                font_assets.add(font_file)
+                break
+    
+    # 合并所有资源文件
+    referenced_assets.update(font_assets)
+    
     missing_assets = [asset for asset in referenced_assets if not (SONGS_DIR / asset).exists()]
     referenced_assets = {asset for asset in referenced_assets if (SONGS_DIR / asset).exists()}
 
@@ -9148,7 +9274,7 @@ def _try_parse_amll_binary_frame(buf: bytes) -> tuple[Optional[str], Optional[by
       magic u16 (little-endian)
       size  u32
       data  [size]
-    magic=0 -> OnAudioData（忽略）
+    magic=0 -> OnAudioData（音频数据）
     magic=1 -> SetCoverData（返回封面原始字节）
     """
     if not buf or len(buf) < 6:
@@ -9164,6 +9290,237 @@ def _try_parse_amll_binary_frame(buf: bytes) -> tuple[Optional[str], Optional[by
         return "cover", payload
     # 非 0/1 魔数：仍返回 payload 给兜底图片解析
     return None, payload
+
+# === 音频数据处理（用于律动背景） ===
+_audio_data_buffer = []  # 存储最近的音频数据
+_audio_buffer_max_size = 8000  # 缓冲区最大大小（约8秒的音频数据，假设采样率44100Hz）
+_audio_threshold_update_timer = None  # 阈值更新定时器
+_audio_thresholds = [0.1] * 16  # 默认16个频带的阈值
+_audio_last_threshold_update = 0  # 上次更新阈值的时间
+
+def _decode_audio_samples(audio_bytes: bytes):
+    """
+    Decode audio bytes into float samples in [-1, 1].
+    Prefer f32 PCM when values look valid, otherwise fall back to i16 PCM.
+    """
+    if not audio_bytes:
+        return [], "empty"
+
+    import array
+
+    f32_count = len(audio_bytes) // 4
+    if f32_count > 0:
+        raw_f32 = array.array('f', audio_bytes[:f32_count * 4])
+        valid = True
+        checked = 0
+        for value in raw_f32[: min(64, len(raw_f32))]:
+            if value != value or abs(value) > 2.5:
+                valid = False
+                break
+            checked += 1
+        if valid and checked:
+            return list(raw_f32), "f32"
+
+    i16_count = len(audio_bytes) // 2
+    if i16_count > 0:
+        raw_i16 = array.array('h', audio_bytes[:i16_count * 2])
+        return [float(value) / 32768.0 for value in raw_i16], "i16"
+
+    return [], "unknown"
+
+def _process_audio_data(audio_bytes: bytes):
+    """
+    处理音频数据，用于律动背景
+    音频数据格式：f32 PCM（小端序）
+    """
+    global _audio_data_buffer, _audio_threshold_update_timer, _audio_thresholds, _audio_last_threshold_update
+
+    if not audio_bytes:
+        return
+
+    try:
+        samples, sample_format = _decode_audio_samples(audio_bytes)
+        if not samples:
+            return
+
+        if app.logger.isEnabledFor(logging.DEBUG):
+            app.logger.debug(
+                f"[Audio] 收到音频数据: {len(audio_bytes)} bytes, {len(samples)} samples, format={sample_format}"
+            )
+
+        _audio_data_buffer.extend(samples)
+
+        # 限制缓冲区大小
+        if len(_audio_data_buffer) > _audio_buffer_max_size:
+            _audio_data_buffer = _audio_data_buffer[-_audio_buffer_max_size:]
+
+        # 每8秒更新一次阈值
+        current_time = time.time()
+        if current_time - _audio_last_threshold_update >= 8.0:
+            _update_audio_thresholds()
+            _audio_last_threshold_update = current_time
+
+        # 推送音频数据给前端（通过 SSE）
+        _broadcast_audio_data(samples)
+
+    except Exception as e:
+        app.logger.warning(f"[Audio] 处理音频数据失败: {e}")
+
+def _update_audio_thresholds():
+    """
+    每8秒更新一次音频阈值
+    """
+    global _audio_thresholds
+
+    if len(_audio_data_buffer) < 1024:
+        return
+
+    try:
+        import numpy as np
+
+        # 转换为 numpy 数组
+        samples = np.array(_audio_data_buffer[-len(_audio_data_buffer):])
+
+        # 计算 FFT
+        fft_result = np.fft.rfft(samples)
+        fft_magnitude = np.abs(fft_result)
+
+        # 将 FFT 结果分为 16 个频带
+        num_bands = 16
+        band_size = len(fft_magnitude) // num_bands
+        new_thresholds = []
+
+        for i in range(num_bands):
+            start = i * band_size
+            end = start + band_size
+            band_data = fft_magnitude[start:end]
+
+            if len(band_data) > 0:
+                # 计算该频带的平均值作为阈值
+                threshold = float(np.mean(band_data))
+                # 归一化到 0-1 范围（使用对数刻度）
+                normalized = np.log10(threshold + 1) / np.log10(1000 + 1)
+                # 确保 normalized 不是 NaN
+                if normalized != normalized:  # NaN 检查
+                    normalized = 0.1
+                new_thresholds.append(float(np.clip(normalized, 0.05, 0.5)))
+            else:
+                new_thresholds.append(0.1)
+
+        _audio_thresholds = new_thresholds
+        app.logger.info(f"[Audio] 更新阈值: {[f'{t:.3f}' for t in _audio_thresholds[:4]]}...")
+
+    except ImportError:
+        # 如果没有 numpy，使用简单的峰值检测
+        samples = _audio_data_buffer[-len(_audio_data_buffer):]
+        num_bands = 16
+        band_size = len(samples) // num_bands
+        new_thresholds = []
+
+        for i in range(num_bands):
+            start = i * band_size
+            end = start + band_size
+            band_data = samples[start:end]
+
+            if len(band_data) > 0:
+                # 计算绝对值的平均值
+                threshold = sum(abs(s) for s in band_data) / len(band_data)
+                # 归一化
+                normalized = min(threshold / 0.5, 0.5)
+                # 确保 normalized 不是 NaN
+                if normalized != normalized:  # NaN 检查
+                    normalized = 0.1
+                new_thresholds.append(max(normalized, 0.05))
+            else:
+                new_thresholds.append(0.1)
+
+        _audio_thresholds = new_thresholds
+        app.logger.info(f"[Audio] 更新阈值（简单模式）: {[f'{t:.3f}' for t in _audio_thresholds[:4]]}...")
+
+def _broadcast_audio_data(samples):
+    """
+    将音频数据推送给前端（通过 SSE）
+    """
+    try:
+        # 计算频带能量
+        band_levels = _calculate_band_levels(samples)
+
+        # 确保所有数值都是有效的（过滤 NaN 和 Infinity）
+        valid_levels = [float(x) if isinstance(x, (int, float)) and not (x != x) else 0.0 for x in band_levels]
+        valid_thresholds = [float(x) if isinstance(x, (int, float)) and not (x != x) else 0.1 for x in _audio_thresholds]
+
+        if app.logger.isEnabledFor(logging.DEBUG):
+            app.logger.debug(
+                f"[Audio] 推送音频数据: samples={len(samples)}, levels={[f'{l:.3f}' for l in valid_levels[:4]]}..."
+            )
+
+        # 通过 SSE 推送给前端
+        _amll_publish("audio_levels", {
+            "levels": valid_levels,
+            "thresholds": valid_thresholds,
+            "timestamp": time.time() * 1000
+        })
+
+    except Exception as e:
+        app.logger.warning(f"[Audio] 推送音频数据失败: {e}")
+
+def _calculate_band_levels(samples):
+    """
+    计算音频数据的频带能量
+    返回 16 个频带的能量值（0-1 范围）
+    """
+    try:
+        import numpy as np
+
+        # 转换为 numpy 数组
+        audio_array = np.array(samples)
+
+        # 计算 FFT
+        fft_result = np.fft.rfft(audio_array)
+        fft_magnitude = np.abs(fft_result)
+
+        # 分为 16 个频带
+        num_bands = 16
+        band_size = len(fft_magnitude) // num_bands
+        band_levels = []
+
+        for i in range(num_bands):
+            start = i * band_size
+            end = start + band_size
+            band_data = fft_magnitude[start:end]
+
+            if len(band_data) > 0:
+                # 计算该频带的能量
+                energy = float(np.mean(band_data))
+                # 归一化
+                normalized = np.log10(energy + 1) / np.log10(1000 + 1)
+                band_levels.append(float(np.clip(normalized, 0, 1)))
+            else:
+                band_levels.append(0.0)
+
+        return band_levels
+
+    except ImportError:
+        # 如果没有 numpy，使用简单的能量计算
+        num_bands = 16
+        band_size = len(samples) // num_bands
+        band_levels = []
+
+        for i in range(num_bands):
+            start = i * band_size
+            end = start + band_size
+            band_data = samples[start:end]
+
+            if len(band_data) > 0:
+                # 计算绝对值的平均值
+                energy = sum(abs(s) for s in band_data) / len(band_data)
+                # 归一化
+                normalized = min(energy / 0.5, 1.0)
+                band_levels.append(float(min(normalized, 1.0)))
+            else:
+                band_levels.append(0.0)
+
+        return band_levels
 
 def is_port_in_use(port):
     import socket
@@ -9181,9 +9538,10 @@ async def ws_handle(ws):
     print(f"[WS] 客户端连接: {peer}")
     try:
         async for raw in ws:
-            # 二进制帧：可能是 TTML
+            # 二进制帧：可能是 TTML、封面或音频数据
             if isinstance(raw, (bytes, bytearray)):
                 b = bytes(raw)
+                print(f"[WS] 收到二进制帧: {len(b)} bytes")
                 kind, payload = _try_parse_amll_binary_frame(b)
                 def _handle_cover(candidate: bytes, label: str) -> bool:
                     if not candidate:
@@ -9206,6 +9564,19 @@ async def ws_handle(ws):
                         song_patch["albumImgSrc"] = file_url
                     _amll_publish("song", {"song": song_patch})
                     return True
+
+                # 处理音频数据（magic=0）
+                try:
+                    magic_val, size = struct.unpack("<HI", b[:6])
+                    print(f"[WS] 二进制帧 magic={magic_val}, size={size}, payload_len={len(payload) if payload else 0}")
+                    if magic_val == 0:  # OnAudioData
+                        # 音频数据：解析并推送给前端用于律动背景
+                        print(f"[WS] 检测到音频数据帧，开始处理")
+                        _process_audio_data(payload)
+                        continue
+                except Exception as e:
+                    print(f"[WS] 解析二进制帧失败: {e}")
+                    pass
 
                 if _handle_cover(payload, "按payload "):
                     continue
@@ -9230,6 +9601,7 @@ async def ws_handle(ws):
                     (EXPORTS_DIR / name).write_text(txt, encoding="utf-8")
                     print(f"[WS] 收到二进制 TTML，已保存 exports/{name}")
                 else:
+                    # 只保存非音频数据的二进制帧
                     name = f"lyrics_binary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bin"
                     (EXPORTS_DIR / name).write_bytes(b)
                     print(f"[WS] 收到二进制帧（{len(b)} bytes），已保存 exports/{name}")
