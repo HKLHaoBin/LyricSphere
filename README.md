@@ -971,20 +971,22 @@ flowchart TD
     PromptConstruction["提示构建 系统 + 用户消息"]
     ThinkingModel["可选思维阶段 预分析模型"]
     StreamingResponse["流式响应 实时块"]
-    TimestampSync[时间戳同步]
-    LineValidation[行数验证]
-    IssueDetection["问题检测 未翻译/错误行"]
+    TimestampSync["时间戳同步"]
+    LineValidation["行数验证"]
+    IssueDetection["问题检测 未翻译或错误行"]
 
     BuildClient --> DeepSeek
     BuildClient --> OpenAI
     BuildClient --> OpenRouter
     BuildClient --> Together
     BuildClient --> Groq
+
     DeepSeek --> TranslateEndpoint
     OpenAI --> TranslateEndpoint
     OpenRouter --> TranslateEndpoint
     Together --> TranslateEndpoint
     Groq --> TranslateEndpoint
+
     StreamingResponse --> TimestampSync
 
     subgraph PostProcessing[后处理]
@@ -994,25 +996,10 @@ flowchart TD
     end
 
     subgraph TranslationPipeline[翻译流水线]
-        TranslateEndpoint
         PromptConstruction
         ThinkingModel
         StreamingResponse
-    end
-
-    subgraph SupportedProviders[支持的提供商]
-        DeepSeek
-        OpenAI
-        OpenRouter
-        Together
-        Groq
-    end
-
-    subgraph AIClientBuilder[AI 客户端构建器]
-        BuildClient
-        CleanupSSL
-        CertifiFallback
-        DisableSSLLastResort
+        PostProcessing
     end
 ```
 
