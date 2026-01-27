@@ -774,7 +774,7 @@ flowchart TD
     ExportsDir["exports/<br/>ZIP 导出包"]
     LogsDir["logs/<br/>upload.log 活动"]
     TemplatesDir["templates/<br/>Jinja2 HTML 模板"]
-    ResourceMap[{'static': STATIC_DIR,<br/>'songs': SONGS_DIR,<br/>'backups': BACKUP_DIR}]
+    ResourceMap["RESOURCE_DIRECTORIES<br/>映射字典"]
 
     BasePath --> StaticDir
     BasePath --> ExportsDir
@@ -3021,12 +3021,12 @@ flowchart TD
     IsAllowed["is_request_allowed()"]
     RequireUnlock["require_unlocked_device(operation_name)"]
     Deny403["abort(403)<br/>Forbidden"]
-    PasswordModal["返回 JSON 响应<br/>{status: locked, operation: ...}"]
+    PasswordModal["返回 JSON 响应<br/>status: locked"]
     ExecuteOp["执行受保护操作"]
     UserInput["用户输入密码"]
     PasswordVerify["bcrypt.checkpw()"]
     MarkTrusted["添加到可信列表<br/>session trusted=true"]
-    ErrorResponse["返回错误<br/>{status: error, message: ...}"]
+    ErrorResponse["返回错误<br/>status: error"]
     Result["返回操作结果"]
 
     Operation --> IsAllowed
@@ -3717,10 +3717,9 @@ ParseContent --> ReturnData
 ```mermaid
 flowchart TD
 OriginalLYS["原始 LYS 内容"]
-TranslationLYS["翻译 LYS 内容"]
-BuildDict["构建字典:<br>{original, translation}"]
-JSONEncode["json.dumps()"]
-LQEOutput["LQE JSON 字符串"]
+    TranslationLYS["翻译 LYS 内容"]
+    BuildDict["构建字典<br/>original, translation"]
+    JSONEncode["json.dumps()"]LQEOutput["LQE JSON 字符串"]
 OriginalLYS --> BuildDict
 TranslationLYS --> BuildDict
 BuildDict --> JSONEncode
