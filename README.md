@@ -478,6 +478,7 @@ flowchart TD
         QuickEditor
         OtherUI
     end
+
 ```
 
 **架构层次说明：**
@@ -548,6 +549,7 @@ flowchart TD
         RouteDecorator
         ContextVars
     end
+
 ```
 
 #### 文件管理架构
@@ -603,6 +605,7 @@ flowchart TD
         FileStorageAdapter
         FilesWrapper
     end
+
 ```
 
 **关键文件管理函数：**
@@ -682,6 +685,7 @@ flowchart TD
         AMMLPlayerV1
         QuickEditorUI
     end
+
 ```
 
 ---
@@ -760,6 +764,7 @@ flowchart TD
         DefaultSync
         UseComputedFlag
     end
+
 ```
 
 ---
@@ -805,6 +810,7 @@ flowchart TD
         SongsDir
         BackupsDir
     end
+
 ```
 
 **路径解析常量：**
@@ -853,6 +859,7 @@ flowchart TD
         FileWrite
         CreateBackup
     end
+
 ```
 
 **备份系统常量：**
@@ -935,6 +942,7 @@ flowchart TD
         PreflightHandler
         HeaderApplier
     end
+
 ```
 
 **安全函数和机制：**
@@ -1001,6 +1009,7 @@ flowchart TD
         StreamingResponse
         PostProcessing
     end
+
 ```
 
 **AI 集成组件：**
@@ -1051,6 +1060,7 @@ flowchart TD
         ScriptDetection
         FontMapping
     end
+
 ```
 
 **字体系统特性：**
@@ -1195,6 +1205,7 @@ sequenceDiagram
         WS-->>AMLL: 计算退出时序
         AMLL->>AMLL: 推送歌词行
     end
+
 ```
 
 ---
@@ -1262,6 +1273,7 @@ flowchart TD
         DevPath
         DevServer
     end
+
 ```
 
 **关键部署函数：**
@@ -1349,6 +1361,7 @@ flowchart TD
         CreateContext
         SetToken
     end
+
 ```
 
 `_request_context_middleware` 在 backend.py L1236-L1263 拦截每个请求，使用 `ContextVar` 建立请求上下文，实现线程安全的状态管理。同步路由处理器通过 `_run_sync_in_thread()` 在 `THREADPOOL_EXECUTOR` 中执行，以防止阻塞事件循环。
@@ -1621,6 +1634,7 @@ flowchart TD
         ResolvePath
         BoundaryCheck
     end
+
 ```
 
 #### 安全函数
@@ -1853,6 +1867,7 @@ flowchart TD
         Router --> EditorAPI
         Router --> RealtimeAPI
     end
+
 ```
 
 ### 标准响应格式
@@ -2249,6 +2264,7 @@ sequenceDiagram
         Middleware->>Middleware: {"unlock_required": true}
         Middleware->>Client: 返回错误
     end
+
 ```
 
 ### 路径安全和验证
@@ -2392,6 +2408,7 @@ flowchart TD
     subgraph Layer1Extraction[第1层：提取]
         ExtractRelative --> CheckScheme --> RemovePrefix
     end
+
 ```
 
 #### 文件名清理
@@ -2838,6 +2855,7 @@ flowchart TD
         DeviceID
         Client --> DeviceID
     end
+
 ```
 
 #### 可信设备管理
