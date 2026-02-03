@@ -2114,16 +2114,40 @@
             const exitDuration = 600;            // 歌词行退出动画时长（毫秒）
             const placeholderDuration = 50;      // 占位符（消失行）延时
             const lineDisplayOffset = 0.5;       // 歌词行提前显示时间（秒）
-            const takeoverAdvance = 0.1;
+            const takeoverAdvance = 0.5;         // 预览行提前切换时间（秒）
             const breathGapSeconds = 6;          // 呼吸点触发间隔（秒）
             const breathDisappearOffsetMs = 500; // 呼吸点消失时机偏移（毫秒，负数提前）
-            const breathExitDurationMs = 1000;   // 呼吸点退出动画时长（毫秒）
+            const breathExitDurationMs = 500;   // 呼吸点退出动画时长（毫秒）
             const useComputedDisappear = false;  // 是否使用后端计算的消失时机
             const SYLLABLE_FADE_RATIO = 0.3;     // 逐字渐变的淡入范围比例
             const SYLLABLE_FLOAT_ASCEND_EASING = 'cubic-bezier(0.55, 0.05, 0.85, 0.25)'; // 逐音节上浮阶段使用缓慢起步后逐渐加速的曲线
             const SYLLABLE_FLOAT_SETTLE_EASING = 'cubic-bezier(0.0, 0.6, 0.2, 1.0)';     // 逐音节悬停阶段使用深度缓出的曲线
-            const SYLLABLE_FLOAT_SETTLE_TAIL_MS = 100000000000; // 逐音节悬停阶段至少保留的时长（毫秒），制造“无限趋近”感
+            const SYLLABLE_FLOAT_SETTLE_TAIL_MS = 600; // 逐音节悬停阶段至少保留的时长（毫秒），制造“无限趋近”感
             const SYLLABLE_FLOAT_MAX_SPEED = 0.01314520; // 像素/毫秒，逐音节上浮速度上限，可按需求调整
+
+            // 预览歌词行样式配置
+            const PREVIEW_STYLES = {
+                initial: { opacity: 0, filter: 'blur(5px)', webkitFilter: 'blur(5px)' },
+                dimmed: { opacity: 0.35, filter: 'blur(0)', webkitFilter: 'blur(0)' },
+                active: { opacity: 1, filter: 'none', webkitFilter: 'none' },
+                desaturated: { opacity: 0.35, filter: 'saturate(0.92)', webkitFilter: 'saturate(0.92)' }
+            };
+
+            // 预览歌词行动画关键帧
+            const PREVIEW_KEYFRAMES = {
+                enter: [PREVIEW_STYLES.initial, PREVIEW_STYLES.dimmed],
+                exit: [PREVIEW_STYLES.desaturated, PREVIEW_STYLES.initial],
+                promote: [PREVIEW_STYLES.desaturated, PREVIEW_STYLES.active]
+            };
+
+            // 设置元素的预览样式（辅助函数）
+            function setPreviewStyle(element, styleName) {
+                const style = PREVIEW_STYLES[styleName];
+                if (!style) return;
+                Object.keys(style).forEach(key => {
+                    element.style[key] = style[key];
+                });
+            }
 
             async function syncAnimationConfig() {
                 try {
@@ -3861,99 +3885,36 @@
                     placeholderLines.delete(lineIndex);
                 }
 
+                // 检查是否有预览行可以复用
                 let incomingLine = null;
                 let previewOldRect = null;
-                let skipEnterAnimation = false;
-                if (nextLinePreviews.has(lineIndex)) {
+                const isFromPreview = nextLinePreviews.has(lineIndex);
+
+                if (isFromPreview) {
                     const previewEl = nextLinePreviews.get(lineIndex);
                     previewOldRect = previewEl.getBoundingClientRect();
                     incomingLine = detachPreviewLine(lineIndex);
-                    skipEnterAnimation = true;
                 }
 
+                // 如果没有预览行，创建新行
                 if (!incomingLine) {
                     incomingLine = createLineElement(lineIndex);
                 }
                 if (!incomingLine) return;
 
-                // 并发锁：如果动画未完成，不允许重复添加
+                // 并发锁：防止重复添加
                 if (incomingLine.animationLock) return;
                 incomingLine.animationLock = true;
 
-                // 找到下一个比当前 lineIndex 大的歌词行
-                let inserted = false;
-                const children = Array.from(lyricsContainer.children).filter((child) => (
-                    child !== nextLinePreviewHost
-                    && child !== nextLinePreviewHostTop
-                    && child.dataset.breathDots !== '1'
-                ));
-                for (let i = 0; i < children.length; i++) {
-                    const childIndex = parseInt(children[i].dataset.lineIndex, 10);
-                    if (childIndex > lineIndex) {
-                        lyricsContainer.insertBefore(incomingLine, children[i]);
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
-                        lyricsContainer.insertBefore(incomingLine, nextLinePreviewHostTop);
-                    } else if (nextLinePreviewHost) {
-                        lyricsContainer.insertBefore(incomingLine, nextLinePreviewHost);
-                    } else {
-                        lyricsContainer.appendChild(incomingLine);
-                    }
-                }
+                // 插入歌词行到正确位置
+                insertLineAtPosition(incomingLine, lineIndex);
 
                 const lineInfo = { element: incomingLine };
                 displayedLines.set(lineIndex, lineInfo);
                 observeLineHeight(incomingLine);
 
-                if (!suppressAnimations && !skipEnterAnimation) {
-                    const animation = safeAnimate(incomingLine, [
-                        { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
-                        { opacity: 1, filter: 'blur(0)', '-webkit-filter': 'blur(0)' }
-                    ], {
-                        duration: enterDuration,
-                        easing: customEasing,
-                        fill: 'forwards'
-                    });
-                    animation.onfinish = () => {
-                        incomingLine.animationLock = false;
-                    };
-                } else {
-                    incomingLine.style.opacity = '1';
-                    incomingLine.style.filter = 'none';
-                    incomingLine.style.webkitFilter = 'none';
-                    incomingLine.animationLock = false;
-                }
-
-                if (!suppressAnimations && skipEnterAnimation && previewOldRect) {
-                    const newRect = incomingLine.getBoundingClientRect();
-                    const deltaX = previewOldRect.left - newRect.left;
-                    const deltaY = previewOldRect.top - newRect.top;
-                    runFlipTransition(incomingLine, deltaX, deltaY);
-                }
-                
-                if (!suppressAnimations && skipEnterAnimation) {
-                    incomingLine.style.opacity = '0.35';
-                    incomingLine.style.filter = 'saturate(0.92)';
-                    incomingLine.style.webkitFilter = 'saturate(0.92)';
-                    incomingLine.__previewPromoteAnimation = safeAnimate(incomingLine, [
-                        { opacity: 0.35, filter: 'saturate(0.92)', '-webkit-filter': 'saturate(0.92)' },
-                        { opacity: 1, filter: 'none', '-webkit-filter': 'none' }
-                    ], {
-                        duration: enterDuration,
-                        easing: customEasing,
-                        fill: 'forwards'
-                    });
-                    incomingLine.__previewPromoteAnimation.onfinish = () => {
-                        incomingLine.style.opacity = '';
-                        incomingLine.style.filter = '';
-                        incomingLine.style.webkitFilter = '';
-                        delete incomingLine.__previewPromoteAnimation;
-                    };
-                }
+                // 处理动画逻辑
+                handleLineAnimation(incomingLine, isFromPreview, previewOldRect);
 
                 const lineData = lyricsData[lineIndex];
                 if (lineData) {
@@ -4167,34 +4128,41 @@
             function detachPreviewLine(lineIndex) {
                 const previewEl = nextLinePreviews.get(lineIndex);
                 if (!previewEl) return null;
-                if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
+
+                // 取消进入动画
+                if (previewEl.__previewEnterAnimation?.cancel) {
                     previewEl.__previewEnterAnimation.cancel();
+                    delete previewEl.__previewEnterAnimation;
                 }
-                delete previewEl.__previewEnterAnimation;
+
+                // 从预览集合中移除
                 nextLinePreviews.delete(lineIndex);
+
+                // 清理预览样式和类
                 previewEl.classList.remove('next-line-preview');
                 previewEl.removeAttribute('data-preview');
-                previewEl.style.opacity = '';
-                previewEl.style.filter = '';
+                setPreviewStyle(previewEl, 'active');
                 previewEl.style.pointerEvents = '';
+
                 return previewEl;
             }
             
             function startPreviewExitAnimation(lineIndex, previewEl) {
                 if (!previewEl || previewEl.__previewExitAnimation) return;
-                if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
+
+                // 取消进入动画
+                if (previewEl.__previewEnterAnimation?.cancel) {
                     previewEl.__previewEnterAnimation.cancel();
+                    delete previewEl.__previewEnterAnimation;
                 }
-                delete previewEl.__previewEnterAnimation;
+
                 previewEl.dataset.previewExiting = '1';
-                previewEl.__previewExitAnimation = safeAnimate(previewEl, [
-                    { opacity: 0.35, filter: 'saturate(0.92)', '-webkit-filter': 'saturate(0.92)' },
-                    { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' }
-                ], {
+                previewEl.__previewExitAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.exit, {
                     duration: exitDuration,
                     easing: customEasing,
                     fill: 'forwards'
                 });
+
                 previewEl.__previewExitAnimation.onfinish = () => {
                     if (previewEl.parentElement) {
                         previewEl.remove();
@@ -4206,15 +4174,141 @@
             }
 
             function cancelPreviewExitAnimation(previewEl) {
-                if (!previewEl || !previewEl.__previewExitAnimation) return;
+                if (!previewEl?.__previewExitAnimation) return;
+
                 try {
                     previewEl.__previewExitAnimation.cancel();
-                } catch (e) { /* 忽略 */ }
+                } catch (e) { /* 忽略取消错误 */ }
+
                 delete previewEl.__previewExitAnimation;
                 delete previewEl.dataset.previewExiting;
-                previewEl.style.opacity = '';
-                previewEl.style.filter = '';
-                previewEl.style.webkitFilter = '';
+                setPreviewStyle(previewEl, 'active');
+            }
+
+            /**
+             * 计算预览交接索引（确定哪一行应该从预览状态切换到主显示）
+             * @param {number} currentTime - 当前播放时间
+             * @param {number|null} activeIndex - 当前活动行索引
+             * @param {number|null} nextIndex - 下一行索引
+             * @returns {number|null} 需要交接的行索引，如果没有则为 null
+             */
+            function calculateTakeoverIndex(currentTime, activeIndex, nextIndex) {
+                if (!alwaysShowNextLine || activeIndex == null || nextIndex == null) {
+                    return null;
+                }
+
+                const activeTiming = getLineTiming(lyricsData[activeIndex]);
+                const activeLineVisible = activeIndex != null && !isLineTextEmpty(lyricsData[activeIndex]);
+
+                // 交接条件：
+                // 1. 主歌词行即将消失（提前 takeoverAdvance 时间）
+                // 2. 或者主歌词行不可见
+                if (activeTiming && currentTime >= (activeTiming.disappearTime - takeoverAdvance)) {
+                    return nextIndex;
+                }
+                if (!activeLineVisible) {
+                    return nextIndex;
+                }
+
+                return null;
+            }
+
+            /**
+             * 将歌词行插入到正确的位置
+             * @param {HTMLElement} lineElement - 要插入的歌词行元素
+             * @param {number} lineIndex - 歌词行索引
+             */
+            function insertLineAtPosition(lineElement, lineIndex) {
+                // 过滤掉预览宿主和呼吸点元素
+                const children = Array.from(lyricsContainer.children).filter((child) => (
+                    child !== nextLinePreviewHost
+                    && child !== nextLinePreviewHostTop
+                    && child.dataset.breathDots !== '1'
+                ));
+
+                // 找到第一个索引大于当前行的元素
+                const insertBefore = children.find(child => {
+                    const childIndex = parseInt(child.dataset.lineIndex, 10);
+                    return childIndex > lineIndex;
+                });
+
+                if (insertBefore) {
+                    lyricsContainer.insertBefore(lineElement, insertBefore);
+                    return;
+                }
+
+                // 如果没有找到，插入到预览宿主之前或追加到容器末尾
+                if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
+                    lyricsContainer.insertBefore(lineElement, nextLinePreviewHostTop);
+                } else if (nextLinePreviewHost) {
+                    lyricsContainer.insertBefore(lineElement, nextLinePreviewHost);
+                } else {
+                    lyricsContainer.appendChild(lineElement);
+                }
+            }
+
+            /**
+             * 处理歌词行的动画效果
+             * @param {HTMLElement} lineElement - 歌词行元素
+             * @param {boolean} isFromPreview - 是否来自预览行
+             * @param {DOMRect|null} previewOldRect - 预览行的原始位置（用于 Flip 动画）
+             */
+            function handleLineAnimation(lineElement, isFromPreview, previewOldRect) {
+                // 清除之前的交接动画
+                if (lineElement.__previewPromoteAnimation) {
+                    lineElement.__previewPromoteAnimation.cancel();
+                    delete lineElement.__previewPromoteAnimation;
+                }
+
+                const unlock = () => {
+                    lineElement.animationLock = false;
+                };
+
+                // 来自预览行的处理逻辑
+                if (isFromPreview) {
+                    // 应用 Flip 动画（位置过渡）
+                    if (!suppressAnimations && previewOldRect) {
+                        const newRect = lineElement.getBoundingClientRect();
+                        const deltaX = previewOldRect.left - newRect.left;
+                        const deltaY = previewOldRect.top - newRect.top;
+                        runFlipTransition(lineElement, deltaX, deltaY);
+                    }
+
+                    // 应用交接动画（从暗淡到激活）
+                    if (!suppressAnimations) {
+                        setPreviewStyle(lineElement, 'desaturated');
+                        lineElement.__previewPromoteAnimation = safeAnimate(lineElement, PREVIEW_KEYFRAMES.promote, {
+                            duration: enterDuration,
+                            easing: customEasing,
+                            fill: 'forwards'
+                        });
+
+                        lineElement.__previewPromoteAnimation.onfinish = () => {
+                            setPreviewStyle(lineElement, 'active');
+                            delete lineElement.__previewPromoteAnimation;
+                            unlock();
+                        };
+                    } else {
+                        setPreviewStyle(lineElement, 'active');
+                        unlock();
+                    }
+                    return;
+                }
+
+                // 新建行的处理逻辑
+                if (!suppressAnimations) {
+                    setPreviewStyle(lineElement, 'initial');
+                    const animation = safeAnimate(lineElement, [PREVIEW_STYLES.initial, PREVIEW_STYLES.active], {
+                        duration: enterDuration,
+                        easing: customEasing,
+                        fill: 'forwards'
+                    });
+
+                    animation.onfinish = unlock;
+                } else {
+                    setPreviewStyle(lineElement, 'active');
+                    unlock();
+                }
             }
 
             function getLineTiming(line) {
@@ -4403,30 +4497,28 @@
                 }
                 sortedIndices.forEach((index) => {
                     if (nextLinePreviews.has(index)) return;
+
                     const previewEl = createLineElement(index, { isPreview: true });
                     if (!previewEl) return;
+
                     nextLinePreviews.set(index, previewEl);
+
+                    // 确定预览宿主容器
                     const host = (anchorIndex != null && index < anchorIndex && nextLinePreviewHostTop)
                         ? nextLinePreviewHostTop
                         : nextLinePreviewHost;
                     host.appendChild(previewEl);
 
+                    // 应用进入动画或直接设置最终状态
                     if (!suppressAnimations) {
-                        previewEl.style.opacity = '0';
-                        previewEl.style.filter = 'blur(5px)';
-                        previewEl.style.webkitFilter = 'blur(5px)';
-                        previewEl.__previewEnterAnimation = safeAnimate(previewEl, [
-                            { opacity: 0, filter: 'blur(5px)', '-webkit-filter': 'blur(5px)' },
-                            { opacity: 0.35, filter: 'blur(0)', '-webkit-filter': 'blur(0)' }
-                        ], {
+                        setPreviewStyle(previewEl, 'initial');
+                        previewEl.__previewEnterAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.enter, {
                             duration: enterDuration,
                             easing: customEasing,
                             fill: 'forwards'
                         });
                     } else {
-                        previewEl.style.opacity = '1';
-                        previewEl.style.filter = 'none';
-                        previewEl.style.webkitFilter = 'none';
+                        setPreviewStyle(previewEl, 'active');
                     }
                 });
 
@@ -4456,20 +4548,18 @@
             }
 
             function updateLyricsDisplay() {
-                const currentTime = audioPlayer.currentTime;
-                const oldPositions = suppressAnimations ? new Map() : new Map();
-                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
-                const activeLineVisible = activeIndex != null
-                    && !isLineTextEmpty(lyricsData[activeIndex]);
-                let takeoverIndex = null;
-                if (alwaysShowNextLine && activeIndex != null && nextIndex != null) {
-                    const activeTiming = getLineTiming(lyricsData[activeIndex]);
-                    if (activeTiming && currentTime >= (activeTiming.disappearTime - takeoverAdvance)) {
-                        takeoverIndex = nextIndex;
-                    } else if (!activeLineVisible) {
-                        takeoverIndex = nextIndex;
-                    }
-                }
+
+                            const currentTime = audioPlayer.currentTime;
+
+                            const oldPositions = suppressAnimations ? new Map() : new Map();
+
+                            const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+
+            
+
+                            // 计算预览交接索引
+
+                            const takeoverIndex = calculateTakeoverIndex(currentTime, activeIndex, nextIndex);
                 if (!suppressAnimations) {
                     // FIRST: 记录所有当前显示行和占位符的位置
                     displayedLines.forEach((lineInfo, lineIndex) => {
@@ -4498,11 +4588,7 @@
                     // 正常模式，使用后端计算好的消失时机
                     lyricsData.forEach((line, index) => {
                         const timing = getLineTiming(line);
-                        if (!timing) {
-                            if (displayedLines.has(index)) removeLine(index);
-                            return;
-                        }
-                        if (isLineTextEmpty(line)) {
+                        if (!timing || isLineTextEmpty(line)) {
                             if (displayedLines.has(index)) removeLine(index);
                             return;
                         }
@@ -4510,12 +4596,16 @@
                         const isLineDisplayed = displayedLines.has(index);
                         const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
                             && (currentTime < timing.disappearTime);
-                        const shouldForceDisplay = takeoverIndex === index
+
+                        // 预览交接：提前显示下一行，避免主歌词行消失时出现空白
+                        const isTakeoverLine = takeoverIndex === index
                             && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
 
-                        if ((isLineActive || shouldForceDisplay) && !isLineDisplayed) {
+                        const shouldDisplay = isLineActive || isTakeoverLine;
+
+                        if (shouldDisplay && !isLineDisplayed) {
                             addLine(index);
-                        } else if (!isLineActive && !shouldForceDisplay && isLineDisplayed) {
+                        } else if (!shouldDisplay && isLineDisplayed) {
                             removeLine(index);
                         }
                     });

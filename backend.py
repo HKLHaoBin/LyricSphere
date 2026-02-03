@@ -985,6 +985,49 @@ def cleanup_amll_cover_images() -> int:
 
 cleanup_amll_cover_images()
 
+
+def cleanup_exports_dir(max_keep: int = 20) -> int:
+    """清理 exports 目录，保留最新的 N 个文件
+
+    Args:
+        max_keep: 保留的最新文件数量，默认为20
+
+    Returns:
+        返回删除的文件数量
+    """
+    removed = 0
+    if not EXPORTS_DIR.exists():
+        return removed
+
+    # 获取所有文件并按修改时间排序
+    files = []
+    for path in EXPORTS_DIR.iterdir():
+        if path.is_file():
+            try:
+                stat = path.stat()
+                files.append((stat.st_mtime, path))
+            except Exception as exc:
+                app.logger.warning("Failed to stat export file: %s (%s)", path, exc)
+
+    # 按修改时间倒序排列（最新的在前）
+    files.sort(reverse=True, key=lambda x: x[0])
+
+    # 保留最新的 max_keep 个文件，删除其余的
+    for timestamp, path in files[max_keep:]:
+        try:
+            path.unlink()
+            removed += 1
+        except Exception as exc:
+            app.logger.warning("Failed to remove export file: %s (%s)", path, exc)
+
+    if removed:
+        app.logger.info("清理 exports 目录：删除了 %d 个旧文件，保留了最新的 %d 个", removed, max_keep)
+
+    return removed
+
+
+cleanup_exports_dir(max_keep=20)
+
 RESOURCE_DIRECTORIES = {
     'static': STATIC_DIR,
     'songs': SONGS_DIR,
@@ -6353,9 +6396,11 @@ def extract_lyrics():
         
         # 遍历每行，提取每行中的歌词并去除时间戳
         for line in lines:
-            # 使用正则表达式去掉所有中括号及其内容，以及时间戳部分
-            line_lyrics = re.sub(r'\[.*?\]', '', line)  # 去掉所有中括号及其内容
-            line_lyrics = re.sub(r'\([0-9,]+\)', '', line_lyrics)  # 去掉时间戳部分
+            # 使用正则表达式去掉所有中括号及其内容（对齐标记如[1]、[5]等）
+            line_lyrics = re.sub(r'\[.*?\]', '', line)
+            # 只去掉时间戳格式的括号内容 (数字,数字)，保留其他括号内容如(20)
+            # 时间戳格式：一个或多个数字，逗号，一个或多个数字
+            line_lyrics = re.sub(r'\(\d+,\d+\)', '', line_lyrics)
             line_lyrics = line_lyrics.strip()  # 去掉首尾空白字符
             if line_lyrics:  # 如果该行有歌词内容
                 extracted_lyrics.append(line_lyrics)

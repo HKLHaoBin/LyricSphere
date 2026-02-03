@@ -5025,7 +5025,8 @@
             const cleaned = [];
             for (const line of lines) {
                 let text = line.replace(/\[.*?\]/g, '');
-                text = text.replace(/\([0-9,]+\)/g, '');
+                // 只去掉时间戳格式的括号内容 (数字,数字)，保留其他括号内容如(20)
+                text = text.replace(/\(\d+,\d+\)/g, '');
                 text = text.trim();
                 if (!text) {
                     continue;
