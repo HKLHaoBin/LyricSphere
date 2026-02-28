@@ -1,0 +1,118 @@
+name: Build Backend EXE and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-backend.txt
+          pip install pyinstaller
+
+      - name: Build backend.exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --onefile --console --add-data ".\static;static/" --add-data ".\templates;templates/" ".\backend.py"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend.exe
+          path: dist/backend.exe
+          if-no-files-found: error
+
+      - name: Resolve release tag and message
+        id: version
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+
+          $latestMsg = git log -1 --pretty=%s
+          if (-not $latestMsg) {
+            $latestMsg = "No commit message"
+          }
+          $releaseBody = "HKLHaoBin $latestMsg"
+
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+            Write-Host "Tag trigger detected, use existing tag: $tag"
+          } else {
+            $tags = git tag --list "v*.*.*"
+            $versionTags = @()
+            foreach ($t in $tags) {
+              if ($t -match '^v(\d+)\.(\d+)\.(\d+)$') {
+                $versionTags += [PSCustomObject]@{
+                  Tag = $t
+                  Major = [int]$matches[1]
+                  Minor = [int]$matches[2]
+                  Patch = [int]$matches[3]
+                }
+              }
+            }
+
+            if ($versionTags.Count -eq 0) {
+              $tag = "v1.0.0"
+            } else {
+              $latest = $versionTags |
+                Sort-Object -Property @{Expression = 'Major'; Descending = $true}, @{Expression = 'Minor'; Descending = $true}, @{Expression = 'Patch'; Descending = $true} |
+                Select-Object -First 1
+              $nextMinor = $latest.Minor + 1
+              $tag = "v$($latest.Major).$nextMinor.0"
+            }
+
+            Write-Host "Create and push new tag: $tag"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag $tag
+            git push origin $tag
+          }
+
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_body=$releaseBody" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Prepare release zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release -Force | Out-Null
+          New-Item -ItemType Directory -Path release/LyricSphere.exe -Force | Out-Null
+
+          Copy-Item dist/backend.exe release/LyricSphere.exe/backend.exe -Force
+          Copy-Item static release/LyricSphere.exe/static -Recurse -Force
+          Copy-Item templates release/LyricSphere.exe/templates -Recurse -Force
+
+          if (Test-Path LyricSphere.exe.zip) {
+            Remove-Item LyricSphere.exe.zip -Force
+          }
+          Compress-Archive -Path release/LyricSphere.exe/* -DestinationPath LyricSphere.exe.zip -Force
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: LyricSphere.exe
+          body: ${{ steps.version.outputs.release_body }}
+          files: LyricSphere.exe.zip
+          fail_on_unmatched_files: true
