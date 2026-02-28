@@ -4881,36 +4881,65 @@ def _append_creator_line_to_lys_file(
     return True
 
 
-def _inject_creator_line_into_ttml(
+def _append_creator_line_to_ttml(
     ttml_text: str,
     artists: Optional[List[str]] = None,
     song_end_ms: Optional[int] = None
 ) -> Optional[str]:
     if not artists:
         return None
+    if re.search(rf'{re.escape(CREATOR_LABEL)}\s*:', ttml_text):
+        return ttml_text
+    creator_text = _format_creator_text(_normalize_artists(artists))
+    if not creator_text:
+        return None
     try:
-        SONGS_DIR.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=str(SONGS_DIR)) as temp_dir:
-            temp_dir_path = Path(temp_dir)
-            input_path = temp_dir_path / "source.ttml"
-            input_path.write_text(ttml_text, encoding='utf-8')
-
-            success, lyric_path, _ = ttml_to_lys(str(input_path), str(temp_dir_path))
-            if not success or not lyric_path:
-                return None
-            lyric_path = Path(lyric_path)
-            lys_content = lyric_path.read_text(encoding='utf-8', errors='ignore')
-            updated_lys = _ensure_creator_line_in_lys(lys_content, artists, song_end_ms)
-            if updated_lys != lys_content:
-                lyric_path.write_text(updated_lys, encoding='utf-8')
-
-            output_path = temp_dir_path / "creator.ttml"
-            success, _ = lys_to_ttml(str(lyric_path), str(output_path))
-            if not success or not output_path.exists():
-                return None
-            return output_path.read_text(encoding='utf-8', errors='ignore')
+        dom: Document = xml.dom.minidom.parseString(ttml_text)
     except Exception:
         return None
+
+    bodies = dom.getElementsByTagName('body')
+    if not bodies:
+        return None
+    body = bodies[0]
+    div_nodes = body.getElementsByTagName('div')
+    container = div_nodes[0] if div_nodes else body
+
+    last_end_ms = 0
+    for p_node in body.getElementsByTagName('p'):
+        end_attr = p_node.getAttribute('end')
+        if end_attr:
+            try:
+                end_ms = ttml_time_to_ms(end_attr)
+                if end_ms > last_end_ms:
+                    last_end_ms = end_ms
+            except Exception:
+                continue
+
+    start_ms = max(0, last_end_ms)
+    total_end_ms = max(start_ms, int(song_end_ms or 0), last_end_ms)
+    begin_str = ms_to_ttml_time(start_ms)
+    end_str = ms_to_ttml_time(total_end_ms)
+
+    creator_p = dom.createElement('p')
+    creator_p.setAttribute('begin', begin_str)
+    creator_p.setAttribute('end', end_str)
+    creator_span = dom.createElement('span')
+    creator_span.appendChild(dom.createTextNode(creator_text))
+    creator_p.appendChild(creator_span)
+    container.appendChild(creator_p)
+    return dom.toxml()
+
+
+def _inject_creator_line_into_ttml(
+    ttml_text: str,
+    artists: Optional[List[str]] = None,
+    song_end_ms: Optional[int] = None
+) -> Optional[str]:
+    appended = _append_creator_line_to_ttml(ttml_text, artists, song_end_ms)
+    if appended:
+        return appended
+    return None
 
 
 def _extract_artists_from_meta(meta: Optional[Dict[str, Any]]) -> List[str]:

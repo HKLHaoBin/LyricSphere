@@ -1660,6 +1660,9 @@
                             <button class="lyrics-action-btn path-update-btn" onclick="translateLyrics()">
                                 🤖 AI翻译
                             </button>
+                            <button class="lyrics-action-btn path-update-btn" onclick="toggleExtraPrompt()" id="extraPromptToggleBtn" title="展开/折叠附加提示词">
+                                ➕ 附加提示词
+                            </button>
                             <button class="lyrics-action-btn path-update-btn" onclick="copyTranslationPrompt()">
                                 📋 复制提示词
                             </button>
@@ -1671,6 +1674,23 @@
                                 <input type="file" id="translationUpload" accept=".lrc,.lys,.ttml" style="display:none;"
                                     onchange="handleTranslationUpload()">
                             </label>
+                        </div>
+                        <div id="extraPromptContainer" style="display: none; margin-top: 10px; padding: 10px; border: 1px dashed var(--border-color); border-radius: 8px; background: var(--input-bg); max-height: 400px; overflow-y: auto;">
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: var(--text-color); font-weight: 600;">附加翻译提示词：</label>
+                                <textarea id="extraTranslationPrompt" style="width: 100%; height: 100px; resize: vertical; border-radius: 6px; border: 1px solid var(--border-color); padding: 8px; background: var(--modal-bg); color: var(--text-color); font-family: inherit; box-sizing: border-box;" placeholder="在此输入附加的翻译要求，例如：&#10;- 请使用更文艺的翻译风格&#10;- 注意押韵&#10;- 这首歌是关于..."></textarea>
+                            </div>
+                            <div style="margin-bottom: 8px;">
+                                <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: var(--text-color); font-weight: 600;">附加思考提示词：</label>
+                                <textarea id="extraThinkingPrompt" style="width: 100%; height: 100px; resize: vertical; border-radius: 6px; border: 1px solid var(--border-color); padding: 8px; background: var(--modal-bg); color: var(--text-color); font-family: inherit; box-sizing: border-box;" placeholder="在此输入附加的思考指导，例如：&#10;- 这是一首关于爱情的歌曲&#10;- 歌手想要表达的是..."></textarea>
+                            </div>
+                            <div style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 0.8em; color: #888;">此内容仅本次有效，关闭窗口后自动清空</span>
+                                <div style="display: flex; gap: 8px;">
+                                    <button class="lyrics-action-btn path-update-btn" onclick="clearExtraPrompt()" style="padding: 4px 12px; font-size: 0.85em;">清空</button>
+                                    <button class="lyrics-action-btn path-update-btn" onclick="toggleExtraPrompt()" style="padding: 4px 12px; font-size: 0.85em;">收起</button>
+                                </div>
+                            </div>
                         </div>
                         <div id="translationStatusMessage" class="status-message">
                             <!-- From Uiverse.io by neerajbaniwal -->
@@ -3788,7 +3808,41 @@
 
         function closeLyricsModal() {
             document.getElementById('lyricsModal').style.display = 'none'
+            clearExtraPrompt()
+            const extraContainer = document.getElementById('extraPromptContainer')
+            const toggleBtn = document.getElementById('extraPromptToggleBtn')
+            if (extraContainer) extraContainer.style.display = 'none'
+            if (toggleBtn) toggleBtn.innerHTML = '➕ 附加提示词'
             location.reload()
+        }
+
+        function toggleExtraPrompt() {
+            const container = document.getElementById('extraPromptContainer')
+            const toggleBtn = document.getElementById('extraPromptToggleBtn')
+            if (container.style.display === 'none') {
+                container.style.display = 'block'
+                toggleBtn.innerHTML = '➖ 附加提示词'
+            } else {
+                container.style.display = 'none'
+                toggleBtn.innerHTML = '➕ 附加提示词'
+            }
+        }
+
+        function clearExtraPrompt() {
+            const transInput = document.getElementById('extraTranslationPrompt')
+            const thinkInput = document.getElementById('extraThinkingPrompt')
+            if (transInput) transInput.value = ''
+            if (thinkInput) thinkInput.value = ''
+        }
+
+        function getExtraTranslationPrompt() {
+            const input = document.getElementById('extraTranslationPrompt')
+            return input ? input.value.trim() : ''
+        }
+
+        function getExtraThinkingPrompt() {
+            const input = document.getElementById('extraThinkingPrompt')
+            return input ? input.value.trim() : ''
         }
 
         function editMusicPath(path, jsonFile) {
@@ -5597,6 +5651,30 @@
                 const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
                 const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
 
+                // 获取并追加附加提示词
+                const extraTranslationPrompt = getExtraTranslationPrompt();
+                const extraThinkingPrompt = getExtraThinkingPrompt();
+                let finalSystemPrompt = systemPrompt;
+                let finalThinkingPrompt = thinkingPrompt;
+
+                // 追加翻译附加提示词
+                if (extraTranslationPrompt) {
+                    if (finalSystemPrompt) {
+                        finalSystemPrompt = finalSystemPrompt + '\n\n' + extraTranslationPrompt;
+                    } else {
+                        finalSystemPrompt = extraTranslationPrompt;
+                    }
+                }
+
+                // 追加思考附加提示词
+                if (extraThinkingPrompt) {
+                    if (finalThinkingPrompt) {
+                        finalThinkingPrompt = finalThinkingPrompt + '\n\n' + extraThinkingPrompt;
+                    } else {
+                        finalThinkingPrompt = extraThinkingPrompt;
+                    }
+                }
+
                 let thinkingRequestAcknowledged = !thinkingEnabled;
                 let thinkingOutputCompleted = !thinkingEnabled;
                 let translationRequestActivated = false;
@@ -5624,7 +5702,7 @@
                     body: JSON.stringify({
                         content: processedLyricsContent,
                         api_key: apiKey,
-                        system_prompt: systemPrompt,
+                        system_prompt: finalSystemPrompt,
                         provider: provider,
                         base_url: baseUrl,
                         model: model,
@@ -5635,7 +5713,7 @@
                         thinking_provider: thinkingProvider,
                         thinking_base_url: thinkingBaseUrl,
                         thinking_model: thinkingModel,
-                        thinking_system_prompt: thinkingPrompt,
+                        thinking_system_prompt: finalThinkingPrompt,
                         strip_brackets: stripBrackets
                     })
                 });

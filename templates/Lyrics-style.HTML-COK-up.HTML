@@ -264,12 +264,16 @@
             --blur-safe-pad: 24px; /* 更大的垂直安全边距以适配高 x-height 字体 */
             top: calc(var(--blur-safe-pad) * -0.5);
             height: calc(100% + var(--blur-safe-pad));
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: inherit;
-            align-items: inherit;
+            /* 不使用 flex 布局，保持与主歌词层一致的文本流 */
+            display: block;
+            text-align: inherit;
             z-index: -1;
             pointer-events: none;
+        }
+
+        /* 模糊层中的 span 元素保持行内显示 */
+        .blur-layer span {
+            display: inline;
         }
 
         .lyric-line.allow-overflow .blur-layer {
@@ -997,7 +1001,7 @@
                 globalEnergy: 0,
                 beatCurve: null
             };
-            let amllBeatEnabled = false;
+            let amllBeatEnabled = true;
             const AMLL_PALETTE_PIXELATE = 10;
             const AMLL_PALETTE_TARGET = 16;
             const AMLL_LIGHTNESS_MIN_DELTA = -25;
@@ -1617,7 +1621,12 @@
             function attachAmllPaletteDriver(background) {
                 amllColorState.background = background;
                 if (!amllBeatEnabled) return;
-                const renderer = background && (background.renderer || background._renderer || background['renderer']);
+                const renderer = background && (
+                    (typeof background.getRenderer === 'function' ? background.getRenderer() : null)
+                    || background.renderer
+                    || background._renderer
+                    || background['renderer']
+                );
                 if (!renderer) return;
                 amllColorState.renderer = renderer;
                 amllColorState.enabled = true;
@@ -2011,6 +2020,9 @@
                     background.setRenderScale(dpr);
                     background.resume();
                     attachAmllPaletteDriver(background);
+                    if (amllBeatEnabled) {
+                        ensureBeatCurveAuto();
+                    }
                     return true;
                 } catch (error) {
                     console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
@@ -3750,55 +3762,61 @@
                     lineEl.dataset.endTime = parseFloat(lastSyllable.startTime) + parseFloat(lastSyllable.duration);
                 }
                 const isSmallFont = (lineStyle.fontSize === 'small');
-                
-                // 创建模糊层（在翻译渲染之前，以便计算正确的高度）
-                let blurLayer = null;
-                if (!disableBlurLayer) {
-                    blurLayer = document.createElement('div');
-                    blurLayer.className = 'blur-layer';
-                    
-                    // 复制上层歌词的样式
-                    blurLayer.style.justifyContent = getComputedStyle(lineEl).justifyContent;
-                    blurLayer.style.alignItems = getComputedStyle(lineEl).alignItems;
-                    
-                    // 为每个音节创建模糊文本
-                    line.syllables.forEach((syllable) => {
-                        const blurText = document.createElement('span');
-                        blurText.className = 'blur-text';
-                        blurText.textContent = syllable.text;
-                        blurText.style.fontSize = getComputedStyle(lineEl).fontSize;
-                        blurText.style.fontWeight = getComputedStyle(lineEl).fontWeight;
-                        blurText.style.lineHeight = getComputedStyle(lineEl).lineHeight;
-                        const hasPresetFont = Object.prototype.hasOwnProperty.call(syllable, 'fontFamily');
-                        const presetFont = hasPresetFont ? (syllable.fontFamily || '') : '';
-                        const chosenFont = hasPresetFont ? presetFont : '';
-                        const allowFallback = Boolean(chosenFont);
-                        const blurFontValue = buildFontValue(chosenFont, dedupAliases, bodyFont, allowFallback);
-                        if (blurFontValue) {
-                            blurText.style.fontFamily = blurFontValue;
-                            const chosenClass = chosenFont ? ensureFontClass(chosenFont, blurFontValue) : '';
-                            if (chosenClass) blurText.classList.add(chosenClass);
-                        }
-                        
-                        // 复制间距
-                        if (syllable.text && syllable.text.includes(' ')) {
-                            blurText.style.marginRight = '0.28em';
-                        }
-                        
-                        blurLayer.appendChild(blurText);
-                    });
-                    
-                    lineEl.appendChild(blurLayer);
-                }
-                
+
+                // 先创建主歌词层
                 const mainLineEl = document.createElement('div');
                 mainLineEl.className = 'amll-main-line';
                 lineEl.appendChild(mainLineEl);
                 const amllMeta = buildAmllWords(line, mainLineEl, { aliases: dedupAliases, bodyFont });
                 lineEl.__amllData = amllMeta;
 
+                // 创建模糊层：通过克隆主歌词层的 DOM 结构来确保一致性
+                let blurLayer = null;
+                if (!disableBlurLayer) {
+                    blurLayer = document.createElement('div');
+                    blurLayer.className = 'blur-layer';
 
-                groupSyllablesIntoWords(blurLayer, 'blur-text');
+                    // 克隆主歌词层的 DOM 结构
+                    const clonedMainLine = mainLineEl.cloneNode(true);
+
+                    // 将克隆的 DOM 转换为模糊层格式
+                    // 1. 移除所有动画相关的类和属性，将元素转换为 blur-text
+                    const allElements = clonedMainLine.querySelectorAll('*');
+                    allElements.forEach((el) => {
+                        // 移除动画相关的类
+                        el.classList.remove('amll-emphasize', 'amll-emphasize-wrapper');
+                        // 保留原始标签，但添加 blur-text 类
+                        if (el.tagName.toLowerCase() === 'span') {
+                            el.classList.add('blur-text');
+                        }
+                    });
+
+                    // 2. 处理最外层的 amll-main-line - 保持其结构，但移除类名
+                    clonedMainLine.className = '';
+                    // 不设置 display: contents，保持自然的块级/行内流布局
+
+                    // 3. 将处理后的内容添加到模糊层
+                    // 先清空 blurLayer 的默认内容
+                    while (blurLayer.firstChild) {
+                        blurLayer.removeChild(blurLayer.firstChild);
+                    }
+                    // 将克隆的内容直接添加到模糊层
+                    Array.from(clonedMainLine.childNodes).forEach((child) => {
+                        blurLayer.appendChild(child);
+                    });
+
+                    // 4. 如果没有提取到任何元素，使用备用方案
+                    if (blurLayer.childNodes.length === 0) {
+                        line.syllables.forEach((syllable) => {
+                            const blurText = document.createElement('span');
+                            blurText.className = 'blur-text';
+                            blurText.textContent = syllable.text;
+                            blurLayer.appendChild(blurText);
+                        });
+                    }
+
+                    lineEl.insertBefore(blurLayer, mainLineEl);
+                }
 
                 // 翻译渲染：在歌词行下方插入翻译
                 if (translationData.length > 0 && line.syllables && line.syllables.length > 0) {
@@ -4247,6 +4265,17 @@
                 }
             }
 
+            function requestPrepareForElement(lineElement) {
+                if (!lineElement) return;
+                const idx = parseInt(lineElement.dataset.lineIndex, 10);
+                if (!Number.isFinite(idx)) return;
+                const lineInfo = displayedLines.get(idx);
+                const lineData = lyricsData[idx];
+                if (lineInfo && lineData) {
+                    prepareSyllableAnimations(idx, lineElement, lineInfo, lineData);
+                }
+            }
+
             /**
              * 处理歌词行的动画效果
              * @param {HTMLElement} lineElement - 歌词行元素
@@ -4287,10 +4316,12 @@
                             setPreviewStyle(lineElement, 'active');
                             delete lineElement.__previewPromoteAnimation;
                             unlock();
+                            requestPrepareForElement(lineElement);
                         };
                     } else {
                         setPreviewStyle(lineElement, 'active');
                         unlock();
+                        requestPrepareForElement(lineElement);
                     }
                     return;
                 }
@@ -4708,9 +4739,15 @@
             });
             audioPlayer.addEventListener('seeking', () => {
                 syncBackgroundVideo(true);
+                withAnimationsSuppressed(() => {
+                    updateLyricsDisplay();
+                });
             });
             audioPlayer.addEventListener('seeked', () => {
                 syncBackgroundVideo(true);
+                withAnimationsSuppressed(() => {
+                    updateLyricsDisplay();
+                });
             });
             // 监听暂停/播放事件，切换展示模式
             audioPlayer.addEventListener('pause', () => {
