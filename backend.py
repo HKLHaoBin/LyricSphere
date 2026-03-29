@@ -1034,17 +1034,109 @@ RESOURCE_DIRECTORIES = {
     'backups': BACKUP_DIR,
 }
 
-SAFE_FILENAME_PATTERN = re.compile(r'[^\w\u4e00-\u9fa5\-_. ]')
+WINDOWS_STRICT_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+WINDOWS_RESERVED_FILENAMES = {
+    'CON', 'PRN', 'AUX', 'NUL',
+    'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+}
 
 
 def sanitize_filename(value: Optional[str]) -> str:
-    """Normalize filenames while preserving spaces and safe punctuation."""
-    if not value:
+    """Apply Windows-strict filename sanitization by deleting invalid characters."""
+    if value is None:
         return ''
 
-    cleaned = SAFE_FILENAME_PATTERN.sub('', value)
-    cleaned = cleaned.replace('"', '＂').replace("'", '＂')
-    return cleaned.strip()
+    cleaned = WINDOWS_STRICT_INVALID_FILENAME_CHARS.sub('', str(value))
+    cleaned = cleaned.strip()
+    cleaned = cleaned.rstrip(' .')
+    if cleaned in {'', '.', '..'}:
+        return ''
+
+    stem = cleaned.split('.', 1)[0]
+    if stem.rstrip(' .').upper() in WINDOWS_RESERVED_FILENAMES:
+        return ''
+
+    return cleaned
+
+
+def _validate_windows_strict_filename(raw_filename: Optional[str],
+                                      *,
+                                      required_suffix: Optional[str] = None) -> str:
+    """Validate that the provided filename already satisfies Windows-strict rules."""
+    if raw_filename is None:
+        raise ValueError('文件名不能为空')
+
+    candidate = str(raw_filename)
+    if not candidate:
+        raise ValueError('文件名不能为空')
+
+    safe_filename = sanitize_filename(candidate)
+    if not safe_filename:
+        raise ValueError('文件名在清理后为空，或命中了 Windows 保留名')
+
+    if candidate != safe_filename:
+        raise ValueError('文件名不符合 Windows 严格模式')
+
+    if required_suffix and Path(safe_filename).suffix.lower() != required_suffix.lower():
+        raise ValueError(f'文件名必须以 {required_suffix} 结尾')
+
+    return safe_filename
+
+
+def _resolve_new_filename_in_directory(base_dir: Path,
+                                       raw_filename: Optional[str],
+                                       *,
+                                       required_suffix: Optional[str] = None) -> Tuple[str, Path]:
+    """Sanitize a filename for creation/upload and keep the target inside the base directory."""
+    safe_filename = sanitize_filename(raw_filename)
+    if not safe_filename:
+        raise ValueError('文件名在清理后为空，或命中了 Windows 保留名')
+
+    if required_suffix and Path(safe_filename).suffix.lower() != required_suffix.lower():
+        raise ValueError(f'文件名必须以 {required_suffix} 结尾')
+
+    base_resolved = base_dir.resolve()
+    target_path = (base_resolved / safe_filename).resolve()
+    try:
+        relative = target_path.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError('文件路径越界') from exc
+
+    if len(relative.parts) != 1:
+        raise ValueError('文件名不能包含子目录')
+
+    return safe_filename, target_path
+
+
+def _resolve_existing_filename_in_directory(base_dir: Path,
+                                            raw_filename: Optional[str],
+                                            *,
+                                            required_suffix: Optional[str] = None) -> Tuple[str, Path]:
+    """Resolve an existing filename only if the original input is already Windows-strict."""
+    safe_filename = _validate_windows_strict_filename(raw_filename, required_suffix=required_suffix)
+
+    base_resolved = base_dir.resolve()
+    target_path = (base_resolved / safe_filename).resolve()
+    try:
+        relative = target_path.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError('文件路径越界') from exc
+
+    if len(relative.parts) != 1:
+        raise ValueError('文件名不能包含子目录')
+
+    return safe_filename, target_path
+
+
+def _resolve_new_static_json_filename(raw_filename: Optional[str]) -> Tuple[str, Path]:
+    """Resolve a JSON filename inside static/ for create/rename targets."""
+    return _resolve_new_filename_in_directory(STATIC_DIR, raw_filename, required_suffix='.json')
+
+
+def _resolve_existing_static_json_filename(raw_filename: Optional[str]) -> Tuple[str, Path]:
+    """Resolve a JSON filename inside static/ for lookup/update/delete operations."""
+    return _resolve_existing_filename_in_directory(STATIC_DIR, raw_filename, required_suffix='.json')
 
 def _normalize_relative_path(value: str) -> str:
     cleaned = (value or '').replace('\\', '/').strip('/')
@@ -2386,6 +2478,81 @@ def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=None):
     return lines
 
 
+PROGRESSIVE_TIMESTAMP_TOKEN_RE = re.compile(r'([^(]*)\((\d+)\s*,\s*(\d+)\)')
+
+
+def expand_progressive_timestamp_lines(lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Expand inline timestamp lines, e.g.:
+    "Do (34026,208)you (34234,192)plan (34426,272)"
+    into progressive cumulative lines:
+    "Do", "Do you", "Do you plan", ...
+    """
+    if not isinstance(lines, list) or not lines:
+        return lines
+
+    expanded_lines: List[Dict[str, Any]] = []
+
+    for line in lines:
+        if not isinstance(line, dict):
+            expanded_lines.append(line)
+            continue
+
+        syllables = line.get('syllables') or []
+        if not syllables:
+            expanded_lines.append(line)
+            continue
+
+        raw_line = str(
+            line.get('rawTimedLine')
+            or line.get('line')
+            or ''.join(str(s.get('text', '')) for s in syllables if isinstance(s, dict))
+        )
+        if '(' not in raw_line or ')' not in raw_line:
+            expanded_lines.append(line)
+            continue
+
+        raw_body = raw_line
+        marker_match = re.match(r'^\s*\[(\d*)\]\s*', raw_line)
+        if marker_match:
+            raw_body = raw_line[marker_match.end():]
+
+        parts: List[Tuple[str, int, int]] = []
+        for match in PROGRESSIVE_TIMESTAMP_TOKEN_RE.finditer(raw_body):
+            fragment = (match.group(1) or '')
+            start_ms = int(match.group(2))
+            duration_ms = max(1, int(match.group(3)))
+            if not fragment.strip():
+                continue
+            parts.append((fragment, start_ms, duration_ms))
+
+        if len(parts) < 2:
+            expanded_lines.append(line)
+            continue
+
+        base_syllable = copy.deepcopy(syllables[0]) if isinstance(syllables[0], dict) else {}
+        cumulative = ''
+        for fragment, start_ms, duration_ms in parts:
+            cumulative = f"{cumulative}{fragment}"
+            normalized = ' '.join(cumulative.split()).strip()
+            full_text = normalized
+
+            expanded_line = copy.deepcopy(line)
+            expanded_line['line'] = full_text
+            expanded_line['progressiveExpanded'] = True
+            expanded_line['syllables'] = [{
+                **base_syllable,
+                'text': full_text,
+                'startTime': start_ms / 1000.0,
+                'duration': duration_ms / 1000.0
+            }]
+            # Set a deterministic disappearTime for this generated segment.
+            expanded_line['disappearTime'] = start_ms + duration_ms
+            expanded_lines.append(expanded_line)
+
+    return expanded_lines
+
+
 def parse_lys(lys_content):
     """
     解析.lys格式的逐音节歌词文件，并计算每行的消失时机（disappearTime，单位毫秒）。
@@ -2497,6 +2664,8 @@ def parse_lys(lys_content):
 
             lyrics_data.append({
                 'line': full_line_text,
+                'rawTimedLine': content,
+                'marker': marker,
                 'syllables': syllables,
                 'style': style,
                 'isBackground': is_background
@@ -2525,6 +2694,18 @@ def favicon():
     if fallback_ico.exists():
         return send_from_directory(STATIC_DIR, 'favicon.ico')
     return send_from_directory(STATIC_DIR / 'assets', 'icon-128x128.png', mimetype='image/png')
+
+
+@app.route('/service-worker.js')
+def service_worker():
+    """Serve the AMLL service worker from the origin root so it can control app-shell routes."""
+    return send_from_directory(STATIC_DIR / 'public', 'service-worker.js', mimetype='application/javascript')
+
+
+@app.route('/amll-web/service-worker.js')
+def amll_web_service_worker():
+    """Compatibility route for AMLL pages that register the worker relative to /amll-web/."""
+    return send_from_directory(STATIC_DIR / 'public', 'service-worker.js', mimetype='application/javascript')
 
 
 @app.route('/amll-web')
@@ -2634,7 +2815,11 @@ def _qe_prepare_mutation(doc_id: str, base_version: Optional[int]) -> Tuple[Opti
 
 def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, int]]]:
     """加载并准备快速编辑所需数据，返回 (payload, error)。error: (message, status)."""
-    json_path = BASE_PATH / 'static' / json_file
+    try:
+        json_file, json_path = _resolve_existing_static_json_filename(json_file)
+    except ValueError as exc:
+        return None, (str(exc), 400)
+
     if not json_path.exists():
         return None, ('找不到对应的歌曲 JSON 文件', 404)
 
@@ -2650,7 +2835,7 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
 
     base_name = sanitize_filename(Path(json_file).stem or meta.get('title', ''))
     if not base_name:
-        base_name = sanitize_filename(meta.get('title', '')) or Path(json_file).stem
+        base_name = sanitize_filename(meta.get('title', '')) or f"lyrics_{int(time.time())}"
     if not base_name:
         base_name = f"lyrics_{int(time.time())}"
 
@@ -3310,9 +3495,12 @@ def delete_json():
     locked_response = require_unlocked_device('删除歌曲')
     if locked_response:
         return locked_response
-    data = request.json
-    filename = data['filename']
-    json_path = BASE_PATH / 'static' / filename
+    data = request.get_json(silent=True) or {}
+
+    try:
+        _, json_path = _resolve_existing_static_json_filename(data.get('filename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
         # 只备份和删除JSON文件本身，不删除关联的歌词、音乐等文件
@@ -3344,11 +3532,11 @@ def export_static_bundle():
         return locked_response
 
     payload = request.get_json(silent=True) or {}
-    filename = payload.get('filename')
-    if not filename:
-        return jsonify({'status': 'error', 'message': '缺少文件名参数'}), 400
+    try:
+        _, json_path = _resolve_existing_static_json_filename(payload.get('filename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
 
-    json_path = STATIC_DIR / filename
     if not json_path.exists():
         return jsonify({'status': 'error', 'message': 'JSON 文件不存在'}), 404
 
@@ -3623,8 +3811,12 @@ def update_json():
     locked_response = require_unlocked_device('更新歌曲信息')
     if locked_response:
         return locked_response
-    data = request.json
-    file_path = BASE_PATH / 'static' / data["filename"]
+    data = request.get_json(silent=True) or {}
+
+    try:
+        filename, file_path = _resolve_existing_static_json_filename(data.get('filename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
         # 确保备份目录存在
@@ -3632,14 +3824,14 @@ def update_json():
             BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
         # 备份原文件
-        backup_path = build_backup_path(data['filename'], int(time.time()))
+        backup_path = build_backup_path(file_path, int(time.time()))
         if file_path.exists():  # 只在文件存在时进行备份
             shutil.copy2(file_path, backup_path)
 
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data['content'], f, ensure_ascii=False, indent=2)
 
-        return jsonify({'status': 'success'})
+        return jsonify({'status': 'success', 'filename': filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -3847,10 +4039,14 @@ def update_file_path():
     locked_response = require_unlocked_device('修改文件路径')
     if locked_response:
         return locked_response
-    data = request.json
-    json_path = BASE_PATH / 'static' / data['jsonFile']
-    file_type = data['fileType']
-    new_path = data['newPath']
+    data = request.get_json(silent=True) or {}
+    file_type = data.get('fileType')
+    new_path = data.get('newPath')
+
+    try:
+        _, json_path = _resolve_existing_static_json_filename(data.get('jsonFile'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
@@ -3862,50 +4058,96 @@ def update_file_path():
 
         # 备份原文件
         timestamp = int(time.time())
-        backup_path = build_backup_path(data['jsonFile'], timestamp)
+        backup_path = build_backup_path(json_path, timestamp)
         if json_path.exists():  # 只在文件存在时进行备份
             shutil.copy2(json_path, backup_path)
 
+        is_url = new_path and (new_path.startswith('http://') or new_path.startswith('https://'))
         normalized_new_path = ''
         if new_path:
-            try:
-                normalized_new_path = _normalize_relative_path(new_path)
-            except ValueError:
-                return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
+            if is_url:
+                normalized_new_path = new_path
+            else:
+                try:
+                    normalized_new_path = _normalize_relative_path(new_path)
+                except ValueError:
+                    return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
 
         # 更新路径
         if file_type == 'music':
-            json_data['song'] = build_public_url('songs', normalized_new_path)
+            if is_url:
+                json_data['song'] = normalized_new_path
+            else:
+                json_data['song'] = build_public_url('songs', normalized_new_path)
         elif file_type == 'image':
-            json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
+            if is_url:
+                json_data['meta']['albumImgSrc'] = normalized_new_path
+            else:
+                json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
         elif file_type == 'background':
             meta = json_data.setdefault('meta', {})
             if new_path:
-                normalized_background_path = normalized_new_path
-                if normalized_background_path.startswith('songs/'):
-                    normalized_background_path = normalized_background_path[len('songs/'):]
-                meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
+                if is_url:
+                    meta['Background-image'] = normalized_new_path
+                else:
+                    normalized_background_path = normalized_new_path
+                    if normalized_background_path.startswith('songs/'):
+                        normalized_background_path = normalized_background_path[len('songs/'):]
+                    meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
             else:
                 meta['Background-image'] = ''
+        elif file_type == 'dynamicCover':
+            meta = json_data.setdefault('meta', {})
+            if new_path:
+                if is_url:
+                    meta['dynamicCoverSrc'] = normalized_new_path
+                else:
+                    normalized_dynamic_path = normalized_new_path
+                    if normalized_dynamic_path.startswith('songs/'):
+                        normalized_dynamic_path = normalized_dynamic_path[len('songs/'):]
+                    meta['dynamicCoverSrc'] = f"./songs/{normalized_dynamic_path}" if normalized_dynamic_path else ''
+            else:
+                meta['dynamicCoverSrc'] = ''
+        elif file_type == 'dynamicCoverPoster':
+            meta = json_data.setdefault('meta', {})
+            if new_path:
+                if is_url:
+                    meta['dynamicCoverPoster'] = normalized_new_path
+                else:
+                    normalized_poster_path = normalized_new_path
+                    if normalized_poster_path.startswith('songs/'):
+                        normalized_poster_path = normalized_poster_path[len('songs/'):]
+                    meta['dynamicCoverPoster'] = f"./songs/{normalized_poster_path}" if normalized_poster_path else ''
+            else:
+                meta['dynamicCoverPoster'] = ''
         elif file_type == 'lyrics':
             current_lyrics = json_data['meta']['lyrics'].split('::')
             if len(current_lyrics) >= 4:
                 if data.get('index') == 0:  # 歌词文件
-                    new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                    if is_url:
+                        new_lyrics_path = normalized_new_path if new_path else '!'
+                    else:
+                        new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[1] = new_lyrics_path
                 elif data.get('index') == 1:  # 歌词翻译
-                    new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                    if is_url:
+                        new_translation_path = normalized_new_path if new_path else '!'
+                    else:
+                        new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[2] = new_translation_path
                 elif data.get('index') == 2:  # 歌词音译
-                    new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                    if is_url:
+                        new_transliteration_path = normalized_new_path if new_path else '!'
+                    else:
+                        new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
                     current_lyrics[3] = new_transliteration_path
                 json_data['meta']['lyrics'] = '::'.join(current_lyrics)
 
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2)
 
-        # 在更新路径后添加文件创建逻辑
-        if normalized_new_path:
+        # 在更新路径后添加文件创建逻辑（仅对本地路径执行）
+        if normalized_new_path and not is_url:
             new_local_path = SONGS_DIR / normalized_new_path
             if not new_local_path.parent.exists():
                 new_local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3922,9 +4164,12 @@ def create_json():
     locked_response = require_unlocked_device('创建新歌')
     if locked_response:
         return locked_response
-    data = request.json
-    filename = data['filename']
-    file_path = BASE_PATH / 'static' / filename
+    data = request.get_json(silent=True) or {}
+
+    try:
+        filename, file_path = _resolve_new_static_json_filename(data.get('filename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
         if file_path.exists():
@@ -3936,7 +4181,7 @@ def create_json():
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data['content'], f, ensure_ascii=False, indent=2)
 
-        return jsonify({'status': 'success'})
+        return jsonify({'status': 'success', 'filename': filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -3948,20 +4193,24 @@ def rename_json():
     locked_response = require_unlocked_device('重命名歌曲')
     if locked_response:
         return locked_response
-    data = request.json
-    old_filename = data['oldFilename']
-    new_filename = data['newFilename']
-    title = data['title']
-    artists = data['artists']
-
-    old_path = BASE_PATH / 'static' / old_filename
-    # 清理文件名，替换全角引号
-    new_filename = sanitize_filename(new_filename)
-    if not new_filename:
-        return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-    new_path = BASE_PATH / 'static' / new_filename
+    data = request.get_json(silent=True) or {}
+    title = (data.get('title') or '').strip()
+    artists_raw = data.get('artists') or []
+    artists = [str(artist).strip() for artist in artists_raw if str(artist).strip()]
 
     try:
+        old_filename, old_path = _resolve_existing_static_json_filename(data.get('oldFilename'))
+        new_filename, new_path = _resolve_new_static_json_filename(data.get('newFilename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
+
+    if not title or not artists:
+        return jsonify({'status': 'error', 'message': '歌曲名和歌手名不能为空'})
+
+    try:
+        if not old_path.exists():
+            return jsonify({'status': 'error', 'message': '原文件不存在！'})
+
         # 检查新文件名是否已存在
         if new_path.exists() and str(old_path).lower() != str(new_path).lower():
             return jsonify({'status': 'error', 'message': '文件名已存在！'})
@@ -3976,7 +4225,7 @@ def rename_json():
 
         # 备份原文件
         timestamp = int(time.time())
-        backup_path = build_backup_path(old_filename, timestamp)
+        backup_path = build_backup_path(old_path, timestamp)
         shutil.copy2(old_path, backup_path)
 
         # 更新JSON内容
@@ -3991,7 +4240,7 @@ def rename_json():
         if str(old_path).lower() != str(new_path).lower():
             old_path.unlink()
 
-        return jsonify({'status': 'success'})
+        return jsonify({'status': 'success', 'filename': new_filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -4072,6 +4321,8 @@ def list_song_summaries():
             'song': song_value,
             'albumImgSrc': meta.get('albumImgSrc', ''),
             'backgroundImage': meta.get('Background-image', ''),
+            'dynamicCoverSrc': meta.get('dynamicCoverSrc', ''),
+            'dynamicCoverPoster': meta.get('dynamicCoverPoster', ''),
             'hasDuet': has_duet,
             'hasBackgroundVocals': has_background,
             'hasAudio': has_valid_audio(song_value),
@@ -4145,11 +4396,10 @@ async def upload_music():
         # 允许所有音频视频格式
         file_ext = Path(file.filename).suffix.lower()
 
-        # 清理文件名，保留空格与安全字符
-        clean_name = sanitize_filename(file.filename)
-        if not clean_name:
-            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-        save_path = SONGS_DIR / clean_name
+        try:
+            clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, file.filename)
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)})
 
         # 如果文件已存在则覆盖
         await save_upload_file(file, save_path)
@@ -4173,7 +4423,7 @@ async def upload_image():
             return jsonify({'status': 'error', 'message': '无效的文件名'})
 
         # 验证文件类型
-        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.webm', '.ogg', '.m4v', '.mov'}
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.apng', '.mp4', '.webm', '.ogg', '.m4v', '.mov'}
         file_ext = Path(file.filename).suffix.lower()
         if file_ext not in allowed_extensions:
             return jsonify({
@@ -4181,11 +4431,10 @@ async def upload_image():
                 'message': '只支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV 格式'
             })
 
-        # 清理文件名，保留空格与安全字符
-        clean_name = sanitize_filename(file.filename)
-        if not clean_name:
-            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-        save_path = SONGS_DIR / clean_name
+        try:
+            clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, file.filename)
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)})
 
         # 如果文件已存在则覆盖
         await save_upload_file(file, save_path)
@@ -4310,11 +4559,10 @@ async def upload_lyrics():
             )
             return jsonify({'status': 'error', 'message': '只支持 LRC/LYS/ttml 格式'})
 
-        # 清理文件名，保留空格与安全字符
-        clean_name = sanitize_filename(file.filename)
-        if not clean_name:
-            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-        save_path = SONGS_DIR / clean_name
+        try:
+            clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, file.filename)
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)})
 
         # 保存文件并计算大小/校验
         file_size, checksum = await save_upload_file_with_meta(file, save_path)
@@ -4360,11 +4608,10 @@ async def upload_translation():
             )
             return jsonify({'status': 'error', 'message': '只支持 LRC/LYS/ttml 格式'})
 
-        # 清理文件名，保留空格与安全字符
-        clean_name = sanitize_filename(file.filename)
-        if not clean_name:
-            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-        save_path = SONGS_DIR / clean_name
+        try:
+            clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, file.filename)
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)})
 
         # 保存文件并计算大小/校验
         file_size, checksum = await save_upload_file_with_meta(file, save_path)
@@ -5155,9 +5402,66 @@ def text_tail_space(txt):
     return txt, ""
 
 
-def find_translation_file(lyrics_path):
-    """查找关联的翻译文件"""
+def _translation_path_from_hint(translation_hint: Optional[str]) -> Optional[str]:
+    """根据显式传入的翻译路径提示解析实际文件。"""
+    if not translation_hint:
+        return None
+
+    try:
+        hint_path = resolve_resource_path(translation_hint, 'songs')
+    except ValueError:
+        return None
+
+    return str(hint_path) if hint_path.exists() else None
+
+
+def _translation_path_from_meta_json(lyrics_path: Path) -> Optional[str]:
+    """从 static 根目录的歌曲 JSON 元数据中查找显式配置的翻译文件。"""
+    target_path = lyrics_path.resolve()
+
+    for json_path in STATIC_DIR.glob('*.json'):
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+        except Exception:
+            continue
+
+        meta = payload.get('meta') if isinstance(payload, dict) else None
+        if not isinstance(meta, dict):
+            continue
+
+        lyrics_value = meta.get('lyrics')
+        if not lyrics_value:
+            continue
+
+        lyrics_url, translation_url, _, _ = parse_meta_lyrics(lyrics_value)
+        if not lyrics_url or not translation_url or translation_url == '!':
+            continue
+
+        try:
+            meta_lyrics_path = resolve_resource_path(lyrics_url, 'songs').resolve()
+            translation_path = resolve_resource_path(translation_url, 'songs')
+        except ValueError:
+            continue
+
+        if meta_lyrics_path == target_path and translation_path.exists():
+            return str(translation_path)
+
+    return None
+
+
+def find_translation_file(lyrics_path, translation_hint: Optional[str] = None):
+    """查找关联的翻译文件。优先使用显式路径，其次读取 JSON 元数据，最后再按文件名猜测。"""
+    hinted_path = _translation_path_from_hint(translation_hint)
+    if hinted_path:
+        return hinted_path
+
     lyrics_path = Path(lyrics_path)
+
+    meta_path = _translation_path_from_meta_json(lyrics_path)
+    if meta_path:
+        return meta_path
+
     # 尝试查找同名但带有_trans后缀的LRC文件
     trans_path = lyrics_path.parent / f"{lyrics_path.stem}_trans.lrc"
     if trans_path.exists():
@@ -5172,7 +5476,7 @@ def find_translation_file(lyrics_path):
     return None
 
 
-def lys_to_ttml(input_path, output_path):
+def lys_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
     """将LYS格式转换为TTML格式（Apple风格）"""
     try:
         with open(input_path, 'r', encoding='utf-8') as f:
@@ -5189,7 +5493,7 @@ def lys_to_ttml(input_path, output_path):
                 offset = 0
 
         # ---- 读取并解析翻译 LRC：转成 毫秒→文本 的字典，供"容差匹配" ----
-        trans_path = find_translation_file(input_path)
+        trans_path = find_translation_file(input_path, translation_hint)
         translation_dict_ms = {}
         trans_offset = 0
         translation_author = None
@@ -5814,7 +6118,7 @@ def calculate_lrc_end_time(begin_time_str, next_begin_time_str=None, default_dur
     return f"{end_min:02d}:{end_sec:02d}.{end_ms_part:03d}"
 
 
-def lrc_to_ttml(input_path, output_path):
+def lrc_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
     """将LRC格式转换为TTML格式（Apple风格）"""
     try:
         with open(input_path, 'r', encoding='utf-8') as f:
@@ -5822,7 +6126,7 @@ def lrc_to_ttml(input_path, output_path):
         author_name = extract_tag_value(lrc_content, 'by')
 
         # ---- 读取并解析翻译 LRC：转成 毫秒→文本 的字典，供"精确匹配" ----
-        trans_path = find_translation_file(input_path)
+        trans_path = find_translation_file(input_path, translation_hint)
         translation_dict_ms = {}
         translation_author = None
         if trans_path:
@@ -6043,11 +6347,10 @@ def convert_ttml():
         if file_ext != '.ttml':
             return jsonify({'status': 'error', 'message': '只支持TTML格式'})
 
-        # 清理文件名
-        clean_name = sanitize_filename(file.filename)
-        if not clean_name:
-            return jsonify({'status': 'error', 'message': '文件名包含非法字符或为空'})
-        temp_path = SONGS_DIR / f"temp_{clean_name}"
+        try:
+            _, temp_path = _resolve_new_filename_in_directory(SONGS_DIR, f"temp_{file.filename}", required_suffix='.ttml')
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)})
 
         # 保存临时文件
         file.save(temp_path)
@@ -6138,6 +6441,7 @@ def convert_to_ttml():
     try:
         data = request.get_json()
         lyrics_path = data.get('path')
+        translation_path = data.get('translationPath')
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
 
@@ -6162,9 +6466,9 @@ def convert_to_ttml():
         success = False
         error_msg = None
         if file_ext == '.lys':
-            success, error_msg = lys_to_ttml(str(input_path), str(output_path))
+            success, error_msg = lys_to_ttml(str(input_path), str(output_path), translation_path)
         elif file_ext == '.lrc':
-            success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
+            success, error_msg = lrc_to_ttml(str(input_path), str(output_path), translation_path)
 
         if success:
             target_relative = resource_relative_from_path(output_path, 'songs')
@@ -6188,6 +6492,7 @@ def convert_to_ttml_temp():
     try:
         data = request.get_json()
         lyrics_path = data.get('path')
+        translation_path = data.get('translationPath')
         if not lyrics_path:
             return jsonify({'status': 'error', 'message': '请提供歌词文件路径'})
 
@@ -6212,9 +6517,9 @@ def convert_to_ttml_temp():
         success = False
         error_msg = None
         if file_ext == '.lys':
-            success, error_msg = lys_to_ttml(str(input_path), str(output_path))
+            success, error_msg = lys_to_ttml(str(input_path), str(output_path), translation_path)
         elif file_ext == '.lrc':
-            success, error_msg = lrc_to_ttml(str(input_path), str(output_path))
+            success, error_msg = lrc_to_ttml(str(input_path), str(output_path), translation_path)
 
         if success:
             target_relative = resource_relative_from_path(output_path, 'songs')
@@ -7048,6 +7353,10 @@ def lyrics_animate():
     style = request.args.get('style', 'Kok')  # 默认为 'Kok'
     if not file:
         return "缺少文件参数", 400
+    try:
+        file, _ = _resolve_existing_static_json_filename(file)
+    except ValueError as exc:
+        return str(exc), 400
 
     # ✅ 读取临时转换得到的参数，并存入 session，供 /lyrics 使用
     lys_override = request.args.get('lys')
@@ -7062,13 +7371,15 @@ def lyrics_animate():
     cover_override = request.args.get('cover')
     background_override = request.args.get('background')
     if cover_override:
-        session['override_cover_url'] = cover_override
+        session['amll_reference_cover_url'] = cover_override
     else:
-        session.pop('override_cover_url', None)
+        session.pop('amll_reference_cover_url', None)
     if background_override:
-        session['override_background_url'] = background_override
+        session['amll_direct_background_url'] = background_override
     else:
-        session.pop('override_background_url', None)
+        session.pop('amll_direct_background_url', None)
+    session.pop('override_cover_url', None)
+    session.pop('override_background_url', None)
 
     for_player = request.args.get('for_player')
     if for_player in ('1', 'true', 'True'):
@@ -7077,8 +7388,12 @@ def lyrics_animate():
         session['for_player'] = False
 
     session['lyrics_json_file'] = file
+    normalized_style = (style or '').strip().lower()
+    session['lyrics_style'] = normalized_style
     if style == '亮起':
         return render_template('Lyrics-style.HTML')
+    if normalized_style == 'junp':
+        return render_template('Lyrics-style.HTML-JUNP.HTML')
     else:  # 默认为 'Kok' 或其他值
         return render_template('Lyrics-style.HTML-COK-up.HTML')
 
@@ -7090,7 +7405,10 @@ def get_lyrics():
     """
     json_file = session.get('lyrics_json_file', '测试 - 测试.json')
     meta_data = {}
-    json_path = os.path.join(app.static_folder, json_file)
+    try:
+        _, json_path = _resolve_existing_static_json_filename(json_file)
+    except ValueError:
+        json_path = STATIC_DIR / '测试 - 测试.json'
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             meta_data = json.load(f)
@@ -7142,6 +7460,10 @@ def get_lyrics():
         duration_ms = _get_song_duration_ms_from_json(meta_data)
         lys_content = _ensure_creator_line_in_lys(lys_content, artists, duration_ms)
     parsed_lyrics = parse_lys(lys_content)
+    style_hint = (request.args.get('style') or session.get('lyrics_style') or '').strip().lower()
+    if style_hint in ('junp', 'jump'):
+        parsed_lyrics = expand_progressive_timestamp_lines(parsed_lyrics)
+    compute_disappear_times(parsed_lyrics, delta1=500, delta2=0)
 
     # 新增：提取 offset
     offset = 0
@@ -7199,11 +7521,11 @@ def get_json_data():
         locked_response = require_unlocked_device('查看歌曲数据')
         if locked_response:
             return locked_response
-    filename = request.args.get('filename')
-    if not filename:
-        return jsonify({'status': 'error', 'message': '缺少文件名参数'}), 400
-    
-    json_path = BASE_PATH / 'static' / filename
+    try:
+        _, json_path = _resolve_existing_static_json_filename(request.args.get('filename'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
+
     if not json_path.exists():
         return jsonify({'status': 'error', 'message': 'JSON文件未找到'}), 404
     
@@ -7537,7 +7859,10 @@ def _submit_beat_curve_job(
 @app.route('/song-info')
 def song_info():
     json_file = session.get('lyrics_json_file', '测试 - 测试.json')
-    json_path = os.path.join(app.static_folder, json_file)
+    try:
+        _, json_path = _resolve_existing_static_json_filename(json_file)
+    except ValueError:
+        json_path = STATIC_DIR / '测试 - 测试.json'
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data_str = f.read()
@@ -7552,8 +7877,8 @@ def song_info():
         data = json.loads(data_str)
         meta = data.setdefault('meta', {}) if isinstance(data, dict) else {}
 
-        override_background = session.get('override_background_url')
-        override_cover = session.get('override_cover_url')
+        amll_direct_background = session.get('amll_direct_background_url')
+        amll_reference_cover = session.get('amll_reference_cover_url')
 
         def normalize_media_url(raw_value: Optional[str]) -> str:
             if not raw_value or raw_value == '!':
@@ -7589,22 +7914,17 @@ def song_info():
                     meta[key] = normalized
 
         # 应用前端传入的临时覆盖
-        normalized_override_background = normalize_media_url(override_background)
-        if normalized_override_background:
-            meta['Background-image'] = normalized_override_background
+        normalized_amll_background = normalize_media_url(amll_direct_background)
+        if normalized_amll_background:
+            data['amll_direct_background_url'] = normalized_amll_background
 
-        normalized_override_cover = normalize_media_url(override_cover)
-        if normalized_override_cover:
-            if not meta.get('albumImgSrc') or meta.get('albumImgSrc') == '!':
-                meta['albumImgSrc'] = normalized_override_cover
-            if not meta.get('cover') or meta.get('cover') == '!':
-                meta['cover'] = normalized_override_cover
-            if not meta.get('coverUrl') or meta.get('coverUrl') == '!':
-                meta['coverUrl'] = normalized_override_cover
-            data['cover'] = normalized_override_cover
-            data['coverUrl'] = normalized_override_cover
+        normalized_amll_cover = normalize_media_url(amll_reference_cover)
+        if normalized_amll_cover:
+            data['amll_reference_cover_url'] = normalized_amll_cover
+            data['cover'] = normalized_amll_cover
+            data['coverUrl'] = normalized_amll_cover
 
-        if 'cover' not in data or not data['cover'] or data['cover'] == '!':
+        if ('cover' not in data or not data['cover'] or data['cover'] == '!') and not normalized_amll_cover:
             cover_candidates = [
                 meta.get('albumImgSrc') if isinstance(meta, dict) else None,
                 meta.get('cover') if isinstance(meta, dict) else None,
@@ -7626,6 +7946,312 @@ def song_info():
         return jsonify({'error': 'Song info file not found'}), 404
     except json.JSONDecodeError:
         return jsonify({'error': 'Error decoding JSON'}), 500
+
+
+@app.route('/api/extract_frame', methods=['POST'])
+def extract_frame():
+    """提取视频或动图的指定时间帧作为静态图片
+
+    用于 AMLL 歌词系统的封面和背景静态化，支持：
+    - 视频文件 (MP4, WebM, OGG, M4V, MOV)
+    - 动图文件 (GIF, APNG, WebP)
+
+    请求体: { "source_url": "源文件URL或路径", "seek_seconds": 0 }
+    响应: { "frame_url": "提取的首帧图片URL", "status", "success" }
+    
+    向后兼容：仍支持 "video_url"/"videoUrl" 作为参数名
+    """
+    if not is_request_allowed():
+        return abort(403)
+
+    def is_mvod_preview_url(value):
+        raw = str(value or '').strip().lower()
+        if not raw:
+            return False
+        if 'mvod.itunes.apple.com' in raw:
+            return True
+        try:
+            parsed = urlparse(raw)
+            return (parsed.hostname or '').lower() == 'mvod.itunes.apple.com'
+        except Exception:
+            return False
+
+    def normalize_seek_seconds(raw_value, source_value):
+        default_seek = 10.0 if is_mvod_preview_url(source_value) else 0.0
+        if raw_value in (None, ''):
+            return default_seek
+        try:
+            seek_value = float(raw_value)
+        except (TypeError, ValueError):
+            return default_seek
+        return max(0.0, seek_value)
+
+    def is_probably_video_source(value):
+        raw = str(value or '').strip().lower()
+        if not raw:
+            return False
+        if is_mvod_preview_url(raw):
+            return True
+        path_part = raw.split('?', 1)[0].split('#', 1)[0]
+        return path_part.endswith(('.mp4', '.webm', '.ogg', '.m4v', '.mov'))
+
+    def build_seek_attempts(raw_value, source_value):
+        requested_seek = normalize_seek_seconds(raw_value, source_value)
+        if not is_probably_video_source(source_value):
+            return [requested_seek]
+
+        default_attempts = [10.0, 12.0, 15.0, 18.0] if is_mvod_preview_url(source_value) else [0.0, 1.0, 3.0, 5.0]
+        seek_attempts = []
+        for candidate in [requested_seek, *default_attempts]:
+            try:
+                normalized_candidate = max(0.0, float(candidate))
+            except (TypeError, ValueError):
+                continue
+            if any(abs(normalized_candidate - existing) < 0.01 for existing in seek_attempts):
+                continue
+            seek_attempts.append(normalized_candidate)
+        return seek_attempts or [requested_seek]
+
+    def format_ffmpeg_seek_timestamp(seconds):
+        total_ms = max(0, int(round(float(seconds) * 1000)))
+        hours, remainder = divmod(total_ms, 3600000)
+        minutes, remainder = divmod(remainder, 60000)
+        whole_seconds, milliseconds = divmod(remainder, 1000)
+        return f'{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}'
+
+    def detect_temp_suffix(source_value):
+        lower_source = str(source_value or '').lower()
+        for suffix in ('.gif', '.apng', '.webp', '.webm', '.ogg', '.m4v', '.mov'):
+            if lower_source.endswith(suffix) or f'{suffix}?' in lower_source:
+                return suffix
+        return '.mp4'
+
+    def download_remote_source_to_temp(source_value):
+        import requests
+
+        response = requests.get(source_value, timeout=30)
+        response.raise_for_status()
+        temp_source = tempfile.NamedTemporaryFile(delete=False, suffix=detect_temp_suffix(source_value))
+        temp_source.write(response.content)
+        temp_source.close()
+        return temp_source.name
+
+    def analyze_reference_image(image_path: Path):
+        from PIL import ImageStat
+
+        try:
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')
+                width, height = img.size
+                if width < 64 or height < 64:
+                    return False, {
+                        'reason': 'too_small',
+                        'width': width,
+                        'height': height
+                    }
+
+                sample = img.copy()
+                sample.thumbnail((128, 128))
+                grayscale = sample.convert('L')
+                gray_stat = ImageStat.Stat(grayscale)
+                mean_brightness = float(gray_stat.mean[0]) if gray_stat.mean else 0.0
+                gray_stddev = float(gray_stat.stddev[0]) if gray_stat.stddev else 0.0
+
+                quantized = sample.quantize(colors=16, method=Image.MEDIANCUT)
+                color_counts = quantized.getcolors(16) or []
+                total_pixels = sum(count for count, _ in color_counts)
+                dominant_ratio = (max((count for count, _ in color_counts), default=0) / total_pixels) if total_pixels else 1.0
+                color_count = len(color_counts)
+
+                quality = {
+                    'width': width,
+                    'height': height,
+                    'mean_brightness': round(mean_brightness, 2),
+                    'gray_stddev': round(gray_stddev, 2),
+                    'color_count': color_count,
+                    'dominant_ratio': round(dominant_ratio, 4)
+                }
+
+                if mean_brightness < 10 and gray_stddev < 12:
+                    quality['reason'] = 'near_black_frame'
+                    return False, quality
+                if mean_brightness > 245 and gray_stddev < 12:
+                    quality['reason'] = 'near_white_frame'
+                    return False, quality
+                if gray_stddev < 8:
+                    quality['reason'] = 'low_gray_stddev'
+                    return False, quality
+                if color_count <= 2:
+                    quality['reason'] = 'too_few_colors'
+                    return False, quality
+                if dominant_ratio > 0.92:
+                    quality['reason'] = 'dominant_color_ratio_too_high'
+                    return False, quality
+
+                quality['reason'] = 'ok'
+                return True, quality
+        except Exception as exc:
+            return False, {'reason': f'analysis_failed: {exc}'}
+
+    payload = request.get_json(silent=True) or {}
+    source_url = payload.get('source_url') or payload.get('sourceUrl') or payload.get('video_url') or payload.get('videoUrl')
+    requested_seek_seconds = payload.get('seek_seconds', payload.get('seekSeconds'))
+    seek_attempts = build_seek_attempts(requested_seek_seconds, source_url)
+
+    if not source_url:
+        return jsonify({'status': 'error', 'message': '缺少 source_url 或 video_url 参数'}), 400
+
+    try:
+        # 解析源路径
+        source_path = source_url
+        is_temp_file = False
+        downloaded_source_path = None
+        
+        # 检测是否为URL（包括畸形URL）
+        is_url = source_url.startswith('http://') or source_url.startswith('https://') or \
+                 '://' in source_url or source_url.startswith('http:/') or source_url.startswith('https:/')
+        
+        if not is_url:
+            # 本地路径，尝试解析
+            try:
+                source_path = resolve_resource_path(source_url, 'static')
+            except ValueError:
+                # 如果解析失败，尝试直接使用
+                source_path = source_url
+                if not os.path.exists(source_path):
+                    # 尝试在 static/songs 目录下查找
+                    alt_path = os.path.join('static', 'songs', source_url.lstrip('/'))
+                    if os.path.exists(alt_path):
+                        source_path = alt_path
+
+        if not is_url and not os.path.exists(source_path):
+            return jsonify({'status': 'error', 'message': f'源文件不存在: {source_url}'}), 404
+
+        def ensure_local_source_path():
+            nonlocal source_path, is_temp_file, downloaded_source_path
+            if not is_url:
+                return source_path
+            if downloaded_source_path and os.path.exists(downloaded_source_path):
+                return downloaded_source_path
+            downloaded_source_path = download_remote_source_to_temp(source_url)
+            source_path = downloaded_source_path
+            is_temp_file = True
+            return downloaded_source_path
+
+        # 生成输出图片路径
+        source_name_source = urlparse(source_url).path if is_url else source_path
+        source_name = Path(source_name_source).stem or 'frame'
+        output_dir = Path(STATIC_DIR) / 'temp' / 'frames'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        import subprocess
+        attempt_results = []
+        last_error_message = ''
+
+        for seek_seconds in seek_attempts:
+            seek_suffix = int(round(seek_seconds * 1000))
+            output_path = output_dir / f'{source_name}_frame_{seek_suffix}.jpg'
+            ffmpeg_success = False
+
+            try:
+                result = subprocess.run(
+                    ['ffmpeg', '-y', '-ss', format_ffmpeg_seek_timestamp(seek_seconds), '-i', str(source_path), '-vframes', '1', str(output_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                ffmpeg_success = (result.returncode == 0)
+                if not ffmpeg_success:
+                    last_error_message = result.stderr.strip() or 'ffmpeg failed'
+            except FileNotFoundError:
+                last_error_message = 'ffmpeg_not_found'
+            except subprocess.TimeoutExpired:
+                last_error_message = 'ffmpeg_timeout'
+
+            if not ffmpeg_success and is_url:
+                try:
+                    local_source_path = ensure_local_source_path()
+                    result = subprocess.run(
+                        ['ffmpeg', '-y', '-ss', format_ffmpeg_seek_timestamp(seek_seconds), '-i', str(local_source_path), '-vframes', '1', str(output_path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    ffmpeg_success = (result.returncode == 0)
+                    if not ffmpeg_success:
+                        last_error_message = result.stderr.strip() or 'ffmpeg download fallback failed'
+                except FileNotFoundError:
+                    last_error_message = 'ffmpeg_not_found'
+                except subprocess.TimeoutExpired:
+                    last_error_message = 'ffmpeg_timeout'
+                except Exception as e:
+                    last_error_message = f'download_fallback_failed: {str(e)}'
+
+            if not ffmpeg_success:
+                try:
+                    image_source_path = ensure_local_source_path() if is_url else source_path
+                    img = Image.open(image_source_path)
+                    if img.mode not in ['RGB', 'L']:
+                        img = img.convert('RGB')
+                    img.save(output_path, 'JPEG')
+                    ffmpeg_success = True
+                except Exception as e:
+                    last_error_message = f'fallback_failed: {str(e)}'
+
+            if not ffmpeg_success or not output_path.exists():
+                attempt_results.append({
+                    'seek_seconds': seek_seconds,
+                    'status': 'extract_failed',
+                    'message': last_error_message
+                })
+                continue
+
+            is_valid_frame, quality = analyze_reference_image(output_path)
+            attempt_results.append({
+                'seek_seconds': seek_seconds,
+                'status': 'ok' if is_valid_frame else 'invalid',
+                'quality': quality
+            })
+
+            if not is_valid_frame:
+                try:
+                    output_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                continue
+
+            frame_filename = f'{source_name}_frame_{seek_suffix}.jpg'
+            frame_url = build_public_url('temp', f'frames/{frame_filename}')
+            return jsonify({
+                'status': 'success',
+                'frame_url': frame_url,
+                'frame_path': str(output_path),
+                'seek_seconds': seek_seconds,
+                'attempts': attempt_results,
+                'quality': quality
+            })
+
+        return jsonify({
+            'status': 'error',
+            'message': '未找到有效参考帧',
+            'attempts': attempt_results,
+            'seek_attempts': seek_attempts
+        }), 422
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'提取帧失败: {str(e)}'}), 500
+    finally:
+        # 清理临时下载的源文件
+        if 'is_temp_file' in locals() and is_temp_file and 'source_path' in locals():
+            try:
+                os.unlink(source_path)
+            except Exception:
+                pass
+
+
+# 向后兼容：保持旧 API 名称可用
+@app.route('/api/extract_video_frame', methods=['POST'])
+def extract_video_frame_backward_compat():
+    return extract_frame()
 
 
 @app.route('/amll/generate_beat_curve', methods=['POST'])
@@ -7656,11 +8282,10 @@ def generate_beat_curve():
             return jsonify({'status': 'error', 'message': f'路径不合法: {exc}'}), 400
     else:
         json_file = session.get('lyrics_json_file', '测试 - 测试.json')
-        json_real = (STATIC_DIR / json_file).resolve()
         try:
-            json_real.relative_to(STATIC_DIR.resolve())
-        except ValueError:
-            return jsonify({'status': 'error', 'message': 'json 文件路径不合法'}), 400
+            _, json_real = _resolve_existing_static_json_filename(json_file)
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'json 文件路径不合法: {exc}'}), 400
 
     if not json_real.exists():
         return jsonify({'status': 'error', 'message': 'json 文件未找到'}), 404
@@ -8411,13 +9036,16 @@ def amll_create_song():
         return jsonify({'status': 'error', 'message': 'AMLL源暂无歌词数据，无法创建。'})
 
     title = (snapshot_song.get("musicName") or "AMLL 未命名").strip()
-    artists = snapshot_song.get("artists") or []
-    album = snapshot_song.get("album", "")
+    artists = [str(item).strip() for item in (snapshot_song.get("artists") or []) if str(item).strip()]
+    album = (snapshot_song.get("album") or "").strip()
     duration_ms = int(snapshot_song.get("duration") or 0)
 
     # 生成基础文件名
-    artists_part = " _ ".join([sanitize_filename(a) for a in artists if sanitize_filename(a)]) or "AMLL"
-    base_stem_raw = sanitize_filename(f"{title} - {artists_part}") or "AMLL_Song"
+    sanitized_artists = [sanitize_filename(artist) for artist in artists]
+    artists_part = " _ ".join([artist for artist in sanitized_artists if artist]) or "AMLL"
+    base_stem_raw = sanitize_filename(f"{title} - {artists_part}")
+    if not base_stem_raw:
+        base_stem_raw = sanitize_filename(title) or sanitize_filename(artists_part) or "AMLL_Song"
     json_filename = _ensure_unique_filename(STATIC_DIR, f"{base_stem_raw}.json")
     base_stem = os.path.splitext(json_filename)[0]
 
@@ -8740,6 +9368,20 @@ def _extract_palette_from_bytes(image_bytes: bytes, max_colors: int = 128) -> Op
     colors = [item[1] for item in extracted]
     return {"counts": counts, "colors": colors, "color_count": len(colors)}
 
+def _is_video_file(filename: Optional[str]) -> bool:
+    if not filename:
+        return False
+    
+    # 处理URL情况
+    if isinstance(filename, str):
+        if filename.startswith('http://') or filename.startswith('https://'):
+            # 移除查询参数和片段标识符
+            path_part = filename.split('?')[0].split('#')[0]
+            return Path(path_part.lower()).suffix in {'.mp4', '.webm', '.ogg', '.m4v', '.mov'}
+    
+    # 处理本地文件
+    return Path(str(filename).lower()).suffix in {'.mp4', '.webm', '.ogg', '.m4v', '.mov'}
+
 def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
     cover_data_url = ""
     if isinstance(data, dict):
@@ -8751,8 +9393,17 @@ def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
         cover_candidates.extend([data.get("cover"), data.get("coverUrl")])
     if isinstance(meta, dict):
         cover_candidates.extend([meta.get("albumImgSrc"), meta.get("cover"), meta.get("coverUrl")])
+        # 优先使用 dynamicCoverPoster 作为色盘提取源，其次是 albumImgSrc
+        if meta.get("dynamicCoverPoster"):
+            cover_candidates.insert(0, meta.get("dynamicCoverPoster"))
 
-    cover_url = next((c for c in cover_candidates if c), None)
+    # 过滤掉视频文件，避免色盘提取失败
+    cover_url = None
+    for candidate in cover_candidates:
+        if candidate and not _is_video_file(candidate):
+            cover_url = candidate
+            break
+
     image_bytes = _load_cover_image_bytes(cover_url, cover_data_url)
     if not image_bytes:
         return {}
@@ -9063,6 +9714,11 @@ def _normalize_song_for_host(song: dict, host: str) -> dict:
     apply(meta, "Background-image")
 
     for key in ("albumImgSrc", "cover", "coverUrl", "cover_file_url"):
+        apply(meta, key)
+        apply(normalized, key)
+
+    # 动态封面字段也需要 host 规范化
+    for key in ("dynamicCoverSrc", "dynamicCoverPoster"):
         apply(meta, key)
         apply(normalized, key)
 

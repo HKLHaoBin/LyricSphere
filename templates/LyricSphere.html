@@ -359,6 +359,7 @@
         }
 
         .file-name {
+            --song-cover-size: 120px;
             color: var(--text-color);
             font-size: 1.4rem;
             font-weight: 600;
@@ -366,21 +367,51 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            min-width: 0;
         }
 
         .file-name.has-cover {
-            justify-content: space-between;
+            justify-content: flex-start;
         }
 
         .file-name-text {
-            flex: 0 1 auto;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+
+        .album-cover-slot {
+            flex: 0 0 var(--song-cover-size);
+            width: var(--song-cover-size);
+            height: var(--song-cover-size);
+            min-width: var(--song-cover-size);
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .album-cover {
-            height: 120px;
-            width: auto;
+            flex-shrink: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
             object-fit: contain;
-            border-radius: 6px;
+            border-radius: inherit;
+        }
+
+        .album-cover-video {
+            overflow-clip-margin: content-box;
+            overflow: hidden;
+            object-fit: cover;
         }
 
         .file-name::before {
@@ -1283,9 +1314,10 @@
             }
 
             .file-name {
+                --song-cover-size: 88px;
                 font-size: 1.2rem;
                 line-height: 1.3;
-                flex-wrap: wrap;
+                align-items: flex-start;
             }
 
             .json-item-actions {
@@ -1660,6 +1692,7 @@
                             <button class="lyrics-action-btn path-update-btn" onclick="translateLyrics()">
                                 🤖 AI翻译
                             </button>
+
                             <button class="lyrics-action-btn path-update-btn" onclick="toggleExtraPrompt()" id="extraPromptToggleBtn" title="展开/折叠附加提示词">
                                 ➕ 附加提示词
                             </button>
@@ -1825,11 +1858,53 @@
                     提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名
                 </small>
             </div>
-            
+
+            <div style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                <h3>动态封面（实验性功能）</h3>
+                <label>动态封面路径（GIF/视频）：</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="dynamicCoverPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
+                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
+                        📤 上传动态封面
+                        <input type="file" id="dynamicCoverUpload" accept="image/*,video/*" style="display: none;"
+                            onchange="handleImageUpload(this.files[0], 'dynamicCover')">
+                    </label>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放
+                </small>
+
+                <label style="margin-top: 10px;">海报/静态封面（可选）：</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="dynamicCoverPosterPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
+                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;">
+                        📤 上传海报
+                        <input type="file" id="dynamicCoverPosterUpload" accept="image/*" style="display: none;"
+                            onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
+                    </label>
+                </div>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    提示：视频加载前显示的静态图片，建议用专辑图
+                </small>
+
+                <!-- 动态封面预览区域 -->
+                <div id="dynamicCoverPreviewContainer" style="margin-top: 15px; display: none;">
+                    <label>预览：</label>
+                    <div style="width: 200px; height: 200px; background: #222; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+                        <img id="dynamicCoverPreviewImg" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" alt="动态封面预览">
+                        <video id="dynamicCoverPreviewVideo" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" muted loop autoplay playsinline></video>
+                        <div id="dynamicCoverPreviewPlaceholder" style="color: #666; font-size: 12px; text-align: center; padding: 10px;">
+                            无预览
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="editor-buttons">
                 <button onclick="saveAllImagePaths()">保存全部</button>
                 <button onclick="updateImagePath()">保存专辑图</button>
                 <button onclick="updateBackgroundPath()">保存背景图</button>
+                <button onclick="updateDynamicCoverPath()">保存动态封面</button>
                 <button onclick="closeImagePathModal()">取消</button>
             </div>
         </div>
@@ -1869,12 +1944,13 @@
                     </div>
                     <div>
                         <label>歌曲名：</label>
-                        <input type="text" id="songTitle" class="file-path-input" onfocus="selectCreateMode('manual')">
+                        <input type="text" id="songTitle" class="file-path-input" onfocus="selectCreateMode('manual')" oninput="updateCreateFilenamePreview()">
                     </div>
                     <div>
                         <label>歌手名（多个歌手用逗号分隔）：</label>
-                        <input type="text" id="songArtists" class="file-path-input" placeholder="歌手1,歌手2" onfocus="selectCreateMode('manual')">
+                        <input type="text" id="songArtists" class="file-path-input" placeholder="歌手1,歌手2" onfocus="selectCreateMode('manual')" oninput="updateCreateFilenamePreview()">
                     </div>
+                    <div class="create-hint" id="createFileNamePreview">文件名预览：--</div>
                     <div class="create-hint">不使用 AMLL 源时，手动填写信息后创建。</div>
                 </div>
 
@@ -1907,12 +1983,13 @@
             <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div>
                     <label>歌曲名：</label>
-                    <input type="text" id="renameSongTitle" class="file-path-input">
+                    <input type="text" id="renameSongTitle" class="file-path-input" oninput="updateRenameFilenamePreview()">
                 </div>
                 <div>
                     <label>歌手名（多个歌手用逗号分隔）：</label>
-                    <input type="text" id="renameSongArtists" class="file-path-input" placeholder="歌手1,歌手2">
+                    <input type="text" id="renameSongArtists" class="file-path-input" placeholder="歌手1,歌手2" oninput="updateRenameFilenamePreview()">
                 </div>
+                <div class="create-hint" id="renameFileNamePreview">文件名预览：--</div>
                 <div class="editor-buttons">
                     <button onclick="renameJsonFile()">保存</button>
                     <button onclick="closeRenameModal()">取消</button>
@@ -2018,6 +2095,20 @@
         <div class="modal-content" style="max-width: 600px;">
             <h2>AI翻译设置</h2>
             <div style="display: flex; flex-direction: column; gap: 15px;">
+                <!-- 预设管理区域 -->
+                <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+                    <h3 style="margin: 0 0 8px 0;">预设管理</h3>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                        <select id="aiPresetSelect" class="file-path-input" style="flex: 1;">
+                            <option value="">选择预设...</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="saveAsAiPreset()" class="action-button" style="flex: 1;">另存为预设</button>
+                        <button onclick="updateCurrentAiPreset()" class="action-button" style="flex: 1;">更新当前预设</button>
+                        <button onclick="deleteAiPreset()" class="action-button" style="flex: 1;">删除预设</button>
+                    </div>
+                </div>
                 <div>
                     <label>API提供商：</label>
                     <select id="aiProvider" class="file-path-input">
@@ -2377,25 +2468,138 @@
                         }
                     }
 
-                    let coverPath = '';
-                    if (meta.albumImgSrc) {
-                        const resolvedCoverUrl = normalizeSongsUrl(meta.albumImgSrc);
-                        if (resolvedCoverUrl && resolvedCoverUrl !== '!') {
-                            const coverFileName = safeDecodeURIComponent((resolvedCoverUrl.split('/').pop() || '')).toLowerCase();
-                            if (coverFileName && coverFileName !== '专辑图.jpg' && coverFileName !== 'album_cover.jpg') {
-                                coverPath = encodeURIComponent(resolvedCoverUrl);
+                    const resolveMediaForAmll = (value) => {
+                        if (!value || value === '!') {
+                            return '';
+                        }
+                        try {
+                            const normalized = normalizeSongsUrl(value);
+                            if (normalized && normalized !== '!') {
+                                return normalized;
+                            }
+                        } catch (error) {
+                            console.warn('normalizeSongsUrl 解析失败，使用原值:', value, error);
+                        }
+                        return value;
+                    };
+
+                    const isMvodPreviewSource = (sourceUrl) => {
+                        const value = String(sourceUrl || '').trim().toLowerCase();
+                        return value.includes('mvod.itunes.apple.com');
+                    };
+
+                    const getPreferredFrameSeekSeconds = (sourceUrl) => (
+                        isMvodPreviewSource(sourceUrl) ? 10 : 0
+                    );
+
+                    const getAmllMediaType = (sourceUrl) => {
+                        if (!sourceUrl) {
+                            return 'none';
+                        }
+                        if (isMvodPreviewSource(sourceUrl) || isVideoFile(sourceUrl)) {
+                            return 'video';
+                        }
+                        if (isAnimatedImage(sourceUrl)) {
+                            return 'animated';
+                        }
+                        return 'image';
+                    };
+
+                    const filterPlaceholderAlbumAsset = (sourceUrl) => {
+                        if (!sourceUrl) {
+                            return '';
+                        }
+                        const fileName = safeDecodeURIComponent((sourceUrl.split('/').pop() || '')).toLowerCase();
+                        if (fileName === '专辑图.jpg' || fileName === 'album_cover.jpg') {
+                            return '';
+                        }
+                        return sourceUrl;
+                    };
+
+                    const pickFirstAvailableMedia = (candidates = []) => {
+                        for (const candidate of candidates) {
+                            if (candidate && candidate !== '!') {
+                                return candidate;
                             }
                         }
-                    }
+                        return '';
+                    };
 
-                    if (!coverPath && meta['Background-image']) {
-                        const resolvedBackgroundUrl = normalizeSongsUrl(meta['Background-image']);
-                        if (resolvedBackgroundUrl && resolvedBackgroundUrl !== '!') {
-                            coverPath = encodeURIComponent(resolvedBackgroundUrl);
+                    const resolveDynamicCoverFrame = async (sourceUrl, timeoutMs = 1800) => {
+                        if (!sourceUrl) {
+                            return '';
                         }
+
+                        let timeoutId = null;
+                        const timeoutPromise = new Promise((resolve) => {
+                            timeoutId = window.setTimeout(() => resolve(''), timeoutMs);
+                        });
+
+                        const framePromise = (async () => {
+                            try {
+                                const frameRes = await fetch('/api/extract_frame', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        source_url: sourceUrl,
+                                        seek_seconds: getPreferredFrameSeekSeconds(sourceUrl)
+                                    })
+                                });
+                                const frameData = await frameRes.json();
+                                if (frameData.status === 'success' && frameData.frame_url) {
+                                    return frameData.frame_url;
+                                }
+                            } catch (error) {
+                                console.warn('Failed to extract frame for AMLL cover:', error);
+                            }
+                            return '';
+                        })();
+
+                        try {
+                            return await Promise.race([framePromise, timeoutPromise]);
+                        } finally {
+                            if (timeoutId !== null) {
+                                window.clearTimeout(timeoutId);
+                            }
+                        }
+                    };
+
+                    const dynamicCoverSrc = resolveMediaForAmll(meta.dynamicCoverSrc);
+                    const dynamicCoverPoster = filterPlaceholderAlbumAsset(resolveMediaForAmll(meta.dynamicCoverPoster));
+                    const albumImgSrc = filterPlaceholderAlbumAsset(
+                        resolveMediaForAmll(meta.albumImgSrc) ||
+                        resolveMediaForAmll(meta.cover) ||
+                        resolveMediaForAmll(meta.coverUrl) ||
+                        resolveMediaForAmll(jsonData.cover) ||
+                        resolveMediaForAmll(jsonData.coverUrl)
+                    );
+                    const backgroundImage = resolveMediaForAmll(meta['Background-image']);
+                    const dynamicMediaType = getAmllMediaType(dynamicCoverSrc);
+                    const dynamicVideoSource = dynamicMediaType === 'video' ? dynamicCoverSrc : '';
+
+                    let coverSource = '';
+                    if (dynamicVideoSource) {
+                        coverSource = pickFirstAvailableMedia([
+                            dynamicCoverPoster,
+                            albumImgSrc,
+                            backgroundImage
+                        ]);
+                        if (!coverSource) {
+                            coverSource = await resolveDynamicCoverFrame(dynamicVideoSource);
+                        }
+                    } else if (dynamicCoverSrc) {
+                        coverSource = dynamicCoverSrc;
+                    } else {
+                        coverSource = pickFirstAvailableMedia([
+                            dynamicCoverPoster,
+                            albumImgSrc,
+                            backgroundImage
+                        ]);
                     }
 
-                    const coverQuery = coverPath ? `&cover=${coverPath}` : '';
+                    const coverPath = coverSource ? encodeURIComponent(coverSource) : '';
+                    const dynamicCoverPath = dynamicVideoSource ? encodeURIComponent(dynamicVideoSource) : '';
+                    const dynamicCoverPosterPath = dynamicCoverPoster ? encodeURIComponent(dynamicCoverPoster) : '';
 
                     const openAmllPlayer = (encodedLyricPath) => {
                         const styleQuery = styleQuerySnapshot;
@@ -2405,6 +2609,11 @@
                         if (title) params.push(`title=${title}`);
                         if (artists) params.push(`artist=${artists}`);
                         if (coverPath) params.push(`cover=${coverPath}`);
+                        if (dynamicCoverPath) {
+                            params.push(`dynamicCover=${dynamicCoverPath}`);
+                            params.push(`dynamicCoverSrc=${dynamicCoverPath}`);
+                        }
+                        if (dynamicCoverPosterPath) params.push(`dynamicCoverPoster=${dynamicCoverPosterPath}`);
                         const baseQuery = params.join('&');
                         const mergedQuery = baseQuery
                             ? `${baseQuery}${styleQuery}`
@@ -2864,16 +3073,15 @@
                     const cover = entry.target
                     const dataSrc = cover.getAttribute('data-src')
                     const dataVideo = cover.getAttribute('data-video-src')
-                    if (dataVideo && !cover.src) {
+                    const dataDynamicVideo = cover.getAttribute('data-dynamic-video-src')
+                    const dataPoster = cover.getAttribute('data-poster-src')
+
+                    if (dataDynamicVideo) {
+                        replaceCoverWithVideo(cover, dataDynamicVideo, dataPoster)
+                    } else if (dataVideo && !cover.src) {
                         captureVideoMiddleFrame(dataVideo).then(dataUrl => {
                             if (!dataUrl) {
-                                if (cover.parentElement) {
-                                    cover.parentElement.removeChild(cover)
-                                }
-                                const container = cover.closest('.file-name')
-                                if (container) {
-                                    container.classList.remove('has-cover')
-                                }
+                                removeSongItemCover(cover)
                                 return
                             }
                             cover.src = dataUrl
@@ -2884,6 +3092,89 @@
                     albumCoverObserver.unobserve(cover)
                 })
             }, { rootMargin: '150px 0px' })
+        }
+
+        function createAlbumCoverImage(src = '') {
+            const img = document.createElement('img')
+            img.className = 'album-cover'
+            img.alt = 'album cover'
+            img.loading = 'lazy'
+            if (src) {
+                img.src = src
+            }
+            return img
+        }
+
+        function removeSongItemCover(mediaEl) {
+            if (!mediaEl) return
+            const coverSlot = mediaEl.closest('.album-cover-slot')
+            const container = mediaEl.closest('.file-name')
+            if (coverSlot && coverSlot.parentElement) {
+                coverSlot.parentElement.removeChild(coverSlot)
+            }
+            if (container) {
+                container.classList.remove('has-cover')
+                container.classList.remove('has-dynamic-video-cover')
+            }
+        }
+
+        function replaceCoverWithVideo(coverEl, videoSrc, posterSrc = '') {
+            if (!coverEl || !videoSrc) return
+            const coverSlot = coverEl.closest('.album-cover-slot')
+            const container = coverEl.closest('.file-name')
+            if (!coverSlot || !container) return
+
+            container.classList.add('has-cover')
+            container.classList.add('has-dynamic-video-cover')
+
+            const videoEl = document.createElement('video')
+            videoEl.className = 'album-cover album-cover-video'
+            videoEl.muted = true
+            videoEl.loop = true
+            videoEl.autoplay = true
+            videoEl.playsInline = true
+            videoEl.preload = 'metadata'
+            if (posterSrc) {
+                videoEl.poster = posterSrc
+            }
+            videoEl.src = videoSrc
+            videoEl.addEventListener('error', () => {
+                container.classList.remove('has-dynamic-video-cover')
+                if (posterSrc) {
+                    const fallbackImg = createAlbumCoverImage(posterSrc)
+                    fallbackImg.addEventListener('error', () => removeSongItemCover(fallbackImg), { once: true })
+                    coverSlot.replaceChildren(fallbackImg)
+                    return
+                }
+                removeSongItemCover(videoEl)
+            })
+
+            coverSlot.replaceChildren(videoEl)
+            videoEl.play().catch(() => {
+                // 自动播放被阻止时，video poster 会继续作为占位图显示
+            })
+        }
+
+        function getPathFromUrl(url) {
+            if (!url) return ''
+            const path = url.split('?')[0].split('#')[0]
+            return path
+        }
+
+        function isVideoFile(filename) {
+            if (!filename) return false
+            const actualPath = filename.startsWith('http') ? getPathFromUrl(filename) : filename
+            const videoExtensions = ['.mp4', '.webm', '.ogg', '.m4v', '.mov']
+            const lower = actualPath.toLowerCase()
+            return videoExtensions.some(ext => lower.endsWith(ext))
+        }
+
+        function isAnimatedImage(filename) {
+            if (!filename) return false
+            const actualPath = filename.startsWith('http') ? getPathFromUrl(filename) : filename
+            const animatedExtensions = ['.gif', '.webp', '.apng']
+            const lower = actualPath.toLowerCase()
+            return animatedExtensions.some(ext => lower.endsWith(ext))
         }
 
         function createSongItem(summary) {
@@ -2901,41 +3192,80 @@
             fileNameText.className = 'file-name-text'
             fileNameText.textContent = displayName
             fileNameDiv.appendChild(fileNameText)
-            const coverUrl = summary.albumImgSrc ? resolveCoverUrl(summary.albumImgSrc) : ''
-            const backgroundImageUrl = coverUrl ? '' : resolveBackgroundImageUrl(summary.backgroundImage || '')
-            const backgroundVideoUrl = (coverUrl || backgroundImageUrl)
+
+            // 优先级：dynamicCoverPoster > dynamicCoverSrc(如果是动图) > albumImgSrc > backgroundImage
+            let coverUrl = ''
+            let posterUrl = ''
+            let dynamicVideoUrl = ''
+
+            if (summary.dynamicCoverPoster) {
+                posterUrl = resolveCoverUrl(summary.dynamicCoverPoster)
+            }
+
+            if (summary.dynamicCoverSrc) {
+                if (isVideoFile(summary.dynamicCoverSrc)) {
+                    dynamicVideoUrl = resolveCoverUrl(summary.dynamicCoverSrc)
+                } else if (isAnimatedImage(summary.dynamicCoverSrc)) {
+                    coverUrl = resolveCoverUrl(summary.dynamicCoverSrc)
+                }
+            }
+
+            if (!coverUrl && !posterUrl && !dynamicVideoUrl) {
+                coverUrl = summary.albumImgSrc ? resolveCoverUrl(summary.albumImgSrc) : ''
+            }
+
+            const backgroundImageUrl = (coverUrl || posterUrl || dynamicVideoUrl) ? '' : resolveBackgroundImageUrl(summary.backgroundImage || '')
+            const backgroundVideoUrl = (coverUrl || posterUrl || dynamicVideoUrl || backgroundImageUrl)
                 ? ''
                 : resolveBackgroundVideoUrl(summary.backgroundImage || '')
-            if (coverUrl || backgroundImageUrl || backgroundVideoUrl) {
+
+            const finalCoverUrl = posterUrl || coverUrl || backgroundImageUrl
+
+            if (finalCoverUrl || backgroundVideoUrl || dynamicVideoUrl) {
                 fileNameDiv.classList.add('has-cover')
-                const coverImg = document.createElement('img')
-                coverImg.className = 'album-cover'
-                coverImg.alt = 'album cover'
-                coverImg.loading = 'lazy'
-                if (coverUrl || backgroundImageUrl) {
-                    coverImg.setAttribute('data-src', coverUrl || backgroundImageUrl)
+                const coverSlot = document.createElement('div')
+                coverSlot.className = 'album-cover-slot'
+
+                // 创建占位符 img 元素，用于懒加载
+                const coverImg = createAlbumCoverImage()
+
+                if (dynamicVideoUrl) {
+                    // 动态封面视频：使用 data 属性标记，由 IntersectionObserver 处理
+                    coverImg.setAttribute('data-dynamic-video-src', dynamicVideoUrl)
+                    if (posterUrl) {
+                        coverImg.setAttribute('data-poster-src', posterUrl)
+                        // 先显示 poster 作为占位符
+                        coverImg.src = posterUrl
+                    } else if (summary.albumImgSrc) {
+                        // 没有 poster，使用专辑图作为占位符
+                        const albumUrl = resolveCoverUrl(summary.albumImgSrc)
+                        coverImg.setAttribute('data-poster-src', albumUrl)
+                        coverImg.src = albumUrl
+                    }
+                    coverImg.addEventListener('error', () => {
+                        coverImg.removeAttribute('src')
+                    })
+                } else if (finalCoverUrl) {
+                    coverImg.setAttribute('data-src', finalCoverUrl)
+                    coverImg.addEventListener('error', () => removeSongItemCover(coverImg), { once: true })
                 } else {
                     coverImg.setAttribute('data-video-src', backgroundVideoUrl)
+                    coverImg.addEventListener('error', () => removeSongItemCover(coverImg), { once: true })
                 }
-                coverImg.addEventListener('error', () => {
-                    if (coverImg.parentElement) {
-                        coverImg.parentElement.removeChild(coverImg)
-                    }
-                    fileNameDiv.classList.remove('has-cover')
-                })
-                fileNameDiv.appendChild(coverImg)
+
+                coverSlot.appendChild(coverImg)
+                fileNameDiv.appendChild(coverSlot)
                 ensureAlbumCoverObserver()
                 if (albumCoverObserver) {
                     albumCoverObserver.observe(coverImg)
-                } else if (coverUrl || backgroundImageUrl) {
-                    coverImg.src = coverUrl || backgroundImageUrl
+                } else if (dynamicVideoUrl) {
+                    replaceCoverWithVideo(coverImg, dynamicVideoUrl, coverImg.getAttribute('data-poster-src') || '')
+                } else if (finalCoverUrl) {
+                    coverImg.src = finalCoverUrl
                 } else if (backgroundVideoUrl) {
                     captureVideoMiddleFrame(backgroundVideoUrl).then(dataUrl => {
                         if (!dataUrl) {
-                            if (coverImg.parentElement) {
-                                coverImg.parentElement.removeChild(coverImg)
-                            }
-                            fileNameDiv.classList.remove('has-cover')
+                            removeSongItemCover(coverImg)
                             return
                         }
                         coverImg.src = dataUrl
@@ -2985,11 +3315,17 @@
             C_okBtn.textContent = 'C_ok'
             C_okBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, 'C_ok'))
 
+            //const junpBtn = document.createElement('button')
+            //junpBtn.className = 'action-button'
+            //junpBtn.textContent = 'JUNP'
+            //junpBtn.addEventListener('click', () => openLyricsAnimate(summary.filename, 'JUNP'))
+
             styleButtons.appendChild(fsBtn)
             styleButtons.appendChild(fslrBtn)
             styleButtons.appendChild(amllBtn)
             styleButtons.appendChild(brightBtn)
             styleButtons.appendChild(C_okBtn)
+            //styleButtons.appendChild(junpBtn)
 
             const fileActions = document.createElement('div')
             fileActions.className = 'file-actions'
@@ -3213,6 +3549,7 @@
             updateSortButtons()
             bindEditorValueProxy()
             loadSongSummaries()
+            updateQuickAiPresetSelect() // 初始化快速预设选择框
         })
 
         function viewFile(type, path) {
@@ -3665,10 +4002,11 @@
             }
 
             try {
+                const translationPath = document.getElementById('translationPath').value;
                 const response = await fetch('/convert_to_ttml', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: lyricsPath })
+                    body: JSON.stringify({ path: lyricsPath, translationPath })
                 });
                 const data = await response.json();
                 if (data.status !== 'success' || !data.ttmlPath) {
@@ -3894,10 +4232,10 @@
             document.getElementById('musicPathModal').style.display = 'none'
         }
 
-        const VALID_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        const VALID_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.apng']
         const VALID_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.ogg', '.m4v', '.mov']
         const VALID_BACKGROUND_EXTENSIONS = [
-            '.jpg', '.jpeg', '.png', '.gif', '.webp',
+            '.jpg', '.jpeg', '.png', '.gif', '.webp', '.apng',
             '.mp4', '.webm', '.ogg', '.m4v', '.mov'
         ]
 
@@ -3905,7 +4243,8 @@
             if (!path) {
                 return false
             }
-            const lower = path.toLowerCase()
+            const actualPath = path.startsWith('http') ? getPathFromUrl(path) : path
+            const lower = actualPath.toLowerCase()
             return VALID_IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))
         }
 
@@ -3913,7 +4252,8 @@
             if (!path) {
                 return false
             }
-            const lower = path.toLowerCase()
+            const actualPath = path.startsWith('http') ? getPathFromUrl(path) : path
+            const lower = actualPath.toLowerCase()
             return VALID_VIDEO_EXTENSIONS.some(ext => lower.endsWith(ext))
         }
 
@@ -3921,7 +4261,8 @@
             if (!path) {
                 return false
             }
-            const lower = path.toLowerCase()
+            const actualPath = path.startsWith('http') ? getPathFromUrl(path) : path
+            const lower = actualPath.toLowerCase()
             return VALID_BACKGROUND_EXTENSIONS.some(ext => lower.endsWith(ext))
         }
 
@@ -3933,20 +4274,34 @@
             const newPathInput = document.getElementById('newImagePath')
             const backgroundPathInput = document.getElementById('backgroundPath')
             const newBackgroundPathInput = document.getElementById('newBackgroundPath')
+            const dynamicCoverPathInput = document.getElementById('dynamicCoverPath')
+            const dynamicCoverPosterPathInput = document.getElementById('dynamicCoverPosterPath')
 
             // 显示当前路径（去掉前缀）
             currentPathInput.value = stripSongsPrefix(path)
             newPathInput.value = currentPathInput.value
-            
-            // 获取当前背景图片路径
+
+            // 获取当前背景图片路径和动态封面路径
             fetch('/get_json_data?filename=' + encodeURIComponent(jsonFile))
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        const backgroundPath = data.jsonData.meta['Background-image'] || ''
+                        const meta = data.jsonData.meta || {}
+                        const backgroundPath = meta['Background-image'] || ''
                         backgroundPathInput.value = backgroundPath
                         const editableBackgroundPath = backgroundPath === '!' ? '' : stripSongsPrefix(backgroundPath)
                         newBackgroundPathInput.value = editableBackgroundPath
+
+                        // 加载动态封面路径
+                        const dynamicCoverPath = meta['dynamicCoverSrc'] || ''
+                        dynamicCoverPathInput.value = dynamicCoverPath === '!' ? '' : stripSongsPrefix(dynamicCoverPath)
+
+                        // 加载海报路径
+                        const dynamicCoverPosterPath = meta['dynamicCoverPoster'] || ''
+                        dynamicCoverPosterPathInput.value = dynamicCoverPosterPath === '!' ? '' : stripSongsPrefix(dynamicCoverPosterPath)
+
+                        // 更新预览
+                        updateDynamicCoverPreview()
                     }
                 })
 
@@ -4025,20 +4380,145 @@
                 })
         }
 
-        async function saveAllImagePaths() {
-            const albumPathInput = document.getElementById('newImagePath')
-            const backgroundPathInput = document.getElementById('newBackgroundPath')
-            const albumPath = albumPathInput.value.trim()
-            const rawBackgroundPath = backgroundPathInput.value.trim()
+        function updateDynamicCoverPreview() {
+            const dynamicPath = document.getElementById('dynamicCoverPath').value.trim()
+            const posterPath = document.getElementById('dynamicCoverPosterPath').value.trim()
+            const container = document.getElementById('dynamicCoverPreviewContainer')
+            const imgEl = document.getElementById('dynamicCoverPreviewImg')
+            const videoEl = document.getElementById('dynamicCoverPreviewVideo')
+            const placeholderEl = document.getElementById('dynamicCoverPreviewPlaceholder')
 
-            if (!albumPath) {
-                alert('请输入新的专辑图路径！')
+            // 重置所有元素
+            imgEl.style.display = 'none'
+            imgEl.src = ''
+            videoEl.style.display = 'none'
+            videoEl.src = ''
+            videoEl.poster = ''
+            placeholderEl.style.display = 'none'
+
+            if (!dynamicPath) {
+                container.style.display = 'none'
                 return
             }
 
-            if (!hasValidImageExtension(albumPath)) {
-                alert('请输入有效的专辑图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+            container.style.display = 'block'
+
+            const fullDynamicUrl = resolveCoverUrl(dynamicPath)
+            const fullPosterUrl = posterPath ? resolveCoverUrl(posterPath) : ''
+
+            if (isVideoFile(dynamicPath)) {
+                // 视频类型
+                videoEl.src = fullDynamicUrl
+                if (fullPosterUrl) {
+                    videoEl.poster = fullPosterUrl
+                }
+                videoEl.style.display = 'block'
+                videoEl.load()
+                videoEl.play().catch(() => {
+                    // 自动播放被阻止，显示海报或占位符
+                    if (!fullPosterUrl) {
+                        videoEl.style.display = 'none'
+                        placeholderEl.textContent = '视频（点击播放）'
+                        placeholderEl.style.display = 'block'
+                    }
+                })
+            } else if (isAnimatedImage(dynamicPath)) {
+                // 动图类型
+                imgEl.src = fullDynamicUrl
+                imgEl.style.display = 'block'
+            } else {
+                // 普通图片
+                imgEl.src = fullDynamicUrl
+                imgEl.style.display = 'block'
+            }
+        }
+
+        function updateDynamicCoverPath() {
+            const dynamicPath = document.getElementById('dynamicCoverPath').value.trim()
+            const posterPath = document.getElementById('dynamicCoverPosterPath').value.trim()
+
+            // 验证动态封面路径
+            if (dynamicPath) {
+                const isValidDynamic = hasValidImageExtension(dynamicPath) || hasValidVideoExtension(dynamicPath)
+                if (!isValidDynamic) {
+                    alert('请输入有效的动态封面文件名（支持.gif、.webp、.apng、.mp4、.webm、.m4v、.mov）')
+                    return
+                }
+            }
+
+            // 验证海报路径
+            if (posterPath && !hasValidImageExtension(posterPath)) {
+                alert('请输入有效的海报文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
                 return
+            }
+
+            const requests = []
+
+            // 保存动态封面
+            if (dynamicPath || dynamicPath === '') {
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'dynamicCover',
+                            newPath: stripSongsPrefix(dynamicPath)
+                        })
+                    })
+                )
+            }
+
+            // 保存海报
+            if (posterPath || posterPath === '') {
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'dynamicCoverPoster',
+                            newPath: stripSongsPrefix(posterPath)
+                        })
+                    })
+                )
+            }
+
+            Promise.all(requests)
+                .then(responses => Promise.all(responses.map(r => r.json())))
+                .then(results => {
+                    const allSuccess = results.every(r => r.status === 'success')
+                    if (allSuccess) {
+                        closeImagePathModal()
+                        location.reload()
+                    } else {
+                        const errorMsg = results.find(r => r.status !== 'success')?.message || '更新失败'
+                        alert('更新失败：' + errorMsg)
+                    }
+                })
+                .catch(error => {
+                    alert('更新失败：' + error)
+                })
+        }
+
+        async function saveAllImagePaths() {
+            const albumPathInput = document.getElementById('newImagePath')
+            const backgroundPathInput = document.getElementById('newBackgroundPath')
+            const dynamicCoverPathInput = document.getElementById('dynamicCoverPath')
+            const dynamicCoverPosterPathInput = document.getElementById('dynamicCoverPosterPath')
+
+            const albumPath = albumPathInput.value.trim()
+            const rawBackgroundPath = backgroundPathInput.value.trim()
+            const rawDynamicCoverPath = dynamicCoverPathInput.value.trim()
+            const rawDynamicCoverPosterPath = dynamicCoverPosterPathInput.value.trim()
+
+            let normalizedAlbumPath = ''
+            if (albumPath && albumPath !== '!') {
+                if (!hasValidImageExtension(albumPath)) {
+                    alert('请输入有效的专辑图片文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                    return
+                }
+                normalizedAlbumPath = stripSongsPrefix(albumPath)
             }
 
             let normalizedBackgroundPath = ''
@@ -4050,43 +4530,89 @@
                 normalizedBackgroundPath = stripSongsPrefix(rawBackgroundPath)
             }
 
+            // 验证动态封面路径
+            let normalizedDynamicCoverPath = ''
+            if (rawDynamicCoverPath && rawDynamicCoverPath !== '!') {
+                const isValidDynamic = hasValidImageExtension(rawDynamicCoverPath) || hasValidVideoExtension(rawDynamicCoverPath)
+                if (!isValidDynamic) {
+                    alert('请输入有效的动态封面文件名（支持.gif、.webp、.apng、.mp4、.webm、.m4v、.mov）')
+                    return
+                }
+                normalizedDynamicCoverPath = stripSongsPrefix(rawDynamicCoverPath)
+            }
+
+            // 验证海报路径
+            let normalizedDynamicCoverPosterPath = ''
+            if (rawDynamicCoverPosterPath && rawDynamicCoverPosterPath !== '!') {
+                if (!hasValidImageExtension(rawDynamicCoverPosterPath)) {
+                    alert('请输入有效的海报文件名（支持.jpg、.jpeg、.png、.gif、.webp）')
+                    return
+                }
+                normalizedDynamicCoverPosterPath = stripSongsPrefix(rawDynamicCoverPosterPath)
+            }
+
             try {
-                const albumResponse = await fetch('/update_file_path', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        jsonFile: currentImageJsonFile,
-                        fileType: 'image',
-                        newPath: albumPath
+                const requests = []
+
+                // 保存专辑图
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'image',
+                            newPath: normalizedAlbumPath
+                        })
                     })
-                })
+                )
 
-                if (!albumResponse.ok) {
-                    throw new Error('专辑图保存失败')
-                }
-
-                const albumResult = await albumResponse.json()
-                if (albumResult.status !== 'success') {
-                    throw new Error(albumResult.message || '专辑图保存失败')
-                }
-
-                const backgroundResponse = await fetch('/update_file_path', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        jsonFile: currentImageJsonFile,
-                        fileType: 'background',
-                        newPath: normalizedBackgroundPath
+                // 保存背景图
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'background',
+                            newPath: normalizedBackgroundPath
+                        })
                     })
-                })
+                )
 
-                if (!backgroundResponse.ok) {
-                    throw new Error('背景图保存失败')
-                }
+                // 保存动态封面（总是发送请求，空值会清空字段）
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'dynamicCover',
+                            newPath: normalizedDynamicCoverPath
+                        })
+                    })
+                )
 
-                const backgroundResult = await backgroundResponse.json()
-                if (backgroundResult.status !== 'success') {
-                    throw new Error(backgroundResult.message || '背景图保存失败')
+                // 保存海报（总是发送请求，空值会清空字段）
+                requests.push(
+                    fetch('/update_file_path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            jsonFile: currentImageJsonFile,
+                            fileType: 'dynamicCoverPoster',
+                            newPath: normalizedDynamicCoverPosterPath
+                        })
+                    })
+                )
+
+                const responses = await Promise.all(requests)
+                const results = await Promise.all(responses.map(r => r.json()))
+
+                const allSuccess = results.every(r => r.status === 'success')
+                if (!allSuccess) {
+                    const errorMsg = results.find(r => r.status !== 'success')?.message || '保存失败'
+                    throw new Error(errorMsg)
                 }
 
                 closeImagePathModal()
@@ -4170,10 +4696,11 @@
                 return;
             }
 
+            const translationPath = document.getElementById('translationPath').value;
             fetch('/convert_to_ttml', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: lyricsPath })
+                body: JSON.stringify({ path: lyricsPath, translationPath })
             })
             .then(response => response.json())
             .then(data => {
@@ -4317,11 +4844,72 @@
             document.getElementById('songTitle').value = ''
             document.getElementById('songArtists').value = ''
             selectCreateMode('manual')
+            updateCreateFilenamePreview()
             refreshAmllSnapshot()
         }
 
         function closeCreateModal() {
             document.getElementById('createJsonModal').style.display = 'none'
+        }
+
+        const WINDOWS_RESERVED_FILENAME_STEMS = new Set([
+            'CON', 'PRN', 'AUX', 'NUL',
+            'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+            'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+        ])
+
+        function sanitizeWindowsStrictFilename(value) {
+            let cleaned = String(value ?? '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '')
+            cleaned = cleaned.trim().replace(/[ .]+$/g, '')
+            if (!cleaned || cleaned === '.' || cleaned === '..') {
+                return ''
+            }
+            const stem = cleaned.split('.', 1)[0].replace(/[ .]+$/g, '')
+            if (WINDOWS_RESERVED_FILENAME_STEMS.has(stem.toUpperCase())) {
+                return ''
+            }
+            return cleaned
+        }
+
+        function buildStrictSongJsonFilename(title, artists) {
+            const cleanTitle = sanitizeWindowsStrictFilename(title)
+            const cleanArtists = artists
+                .map(artist => sanitizeWindowsStrictFilename(artist))
+                .filter(artist => artist)
+
+            if (!cleanTitle || cleanArtists.length === 0) {
+                return ''
+            }
+
+            return sanitizeWindowsStrictFilename(`${cleanTitle} - ${cleanArtists.join(' _ ')}.json`)
+        }
+
+        function renderFilenamePreview(elementId, fileName) {
+            const previewEl = document.getElementById(elementId)
+            if (!previewEl) {
+                return
+            }
+            previewEl.textContent = fileName
+                ? `文件名预览：${fileName}`
+                : '文件名预览：清理后为空或命中 Windows 保留名'
+        }
+
+        function updateCreateFilenamePreview() {
+            const title = document.getElementById('songTitle')?.value.trim() || ''
+            const artists = (document.getElementById('songArtists')?.value || '')
+                .split(',')
+                .map(artist => artist.trim())
+                .filter(artist => artist)
+            renderFilenamePreview('createFileNamePreview', buildStrictSongJsonFilename(title, artists))
+        }
+
+        function updateRenameFilenamePreview() {
+            const title = document.getElementById('renameSongTitle')?.value.trim() || ''
+            const artists = (document.getElementById('renameSongArtists')?.value || '')
+                .split(',')
+                .map(artist => artist.trim())
+                .filter(artist => artist)
+            renderFilenamePreview('renameFileNamePreview', buildStrictSongJsonFilename(title, artists))
         }
 
         function buildSongJsonData(title, artists, baseName, songFileName) {
@@ -4362,11 +4950,11 @@
                 return
             }
 
-            // 清理文件名，移除不允许的特殊字符，替换全角引号
-            const cleanTitle = title.replace(/[\\/:*<>|]/g, '').replace(/[\"\']/g, '＂')
-            const cleanArtists = artists.map(artist => artist.replace(/[\\/:*<>|]/g, '').replace(/[\"\']/g, '＂'))
-            // 构建文件名
-            const fileName = `${cleanTitle} - ${cleanArtists.join(' _ ')}.json`
+            const fileName = buildStrictSongJsonFilename(title, artists)
+            if (!fileName) {
+                alert('文件名在清理后为空或命中了 Windows 保留名，请调整歌曲名或歌手名。')
+                return
+            }
 
             const jsonData = buildSongJsonData(title, artists, '歌词', '音乐.mp3')
 
@@ -4480,9 +5068,9 @@
                         continue
                     }
                     const cleanName = uploadData.filename
-                    const jsonName = `${cleanName}.json`
-                    const parsed = parseTitleArtistFromName(cleanName)
-                    const title = parsed.title || getFileBaseName(cleanName)
+                    const jsonName = `${getFileBaseName(cleanName)}.json`
+                    const parsed = parseTitleArtistFromName(file.name)
+                    const title = parsed.title || getFileBaseName(file.name)
                     const artists = parsed.artists.length ? parsed.artists : ['未知歌手']
                     const jsonData = buildSongJsonData(title, artists, getFileBaseName(cleanName), cleanName)
                     const createResp = await fetch('/create_json', {
@@ -4621,11 +5209,9 @@
             const titleInput = document.getElementById('renameSongTitle')
             const artistsInput = document.getElementById('renameSongArtists')
 
-            // 清理文件名，替换全角引号
-            const cleanTitle = title.replace(/[\"\']/g, '＂')
-            const cleanArtists = artists.split(',').map(artist => artist.trim().replace(/[\"\']/g, '＂')).join(',')
-            titleInput.value = cleanTitle
-            artistsInput.value = cleanArtists
+            titleInput.value = title || ''
+            artistsInput.value = artists || ''
+            updateRenameFilenamePreview()
 
             modal.style.display = 'block'
         }
@@ -4650,8 +5236,11 @@
                 return
             }
 
-            // 构建新文件名
-            const newFileName = `${title} - ${artists.join(' _ ')}.json`
+            const newFileName = buildStrictSongJsonFilename(title, artists)
+            if (!newFileName) {
+                alert('文件名在清理后为空或命中了 Windows 保留名，请调整歌曲名或歌手名。')
+                return
+            }
 
             fetch('/rename_json', {
                 method: 'POST',
@@ -4709,11 +5298,8 @@
                 return
             }
 
-            // 清理文件名（替换特殊字符）
-            const cleanFileName = file.name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5\-_.]/g, '')
-
             const formData = new FormData()
-            formData.append('file', file, cleanFileName)
+            formData.append('file', file)
 
             fetch('/upload_music', {
                 method: 'POST',
@@ -4722,7 +5308,7 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        document.getElementById('newMusicPath').value = cleanFileName
+                        document.getElementById('newMusicPath').value = data.filename
                         updateMusicPath() // 自动触发保存
                     } else {
                         alert('上传失败: ' + data.message)
@@ -4752,6 +5338,12 @@
                         document.getElementById('newImagePath').value = result.filename
                     } else if (type === 'background') {
                         document.getElementById('newBackgroundPath').value = result.filename
+                    } else if (type === 'dynamicCover') {
+                        document.getElementById('dynamicCoverPath').value = result.filename
+                        updateDynamicCoverPreview()
+                    } else if (type === 'dynamicCoverPoster') {
+                        document.getElementById('dynamicCoverPosterPath').value = result.filename
+                        updateDynamicCoverPreview()
                     }
                 } else {
                     alert('上传失败: ' + result.message)
@@ -6089,8 +6681,7 @@
                         document.getElementById('aiThinkingApiKey').value = savedThinkingApiKey || data.settings.thinking_api_key || '';
                         document.getElementById('aiThinkingPrompt').value = savedThinkingPrompt || data.settings.thinking_system_prompt || '';
                         document.getElementById('aiSettingsModal').style.display = 'block';
-                        updateBaseUrlAndModel(); // 根据选择的提供商更新URL和模型
-                        updateThinkingBaseUrlAndModel();
+                        updateAiPresetSelect(); // 更新预设选择框
                     }
                 })
                 .catch(error => {
@@ -6126,8 +6717,337 @@
             }
         };
 
-        // 根据选择的提供商更新基础URL和模型
-        function applyProviderPreset(providerSelectId, baseInputId, modelInputId) {
+        // 预设相关常量
+        const AI_PRESETS_STORAGE_KEY = 'aiTranslationPresets';
+        const ACTIVE_AI_PRESET_KEY = 'activeAiPresetId';
+
+        // 收集表单状态
+        function collectAIFormState() {
+            return {
+                translation: {
+                    provider: document.getElementById('aiProvider').value,
+                    base_url: document.getElementById('aiBaseUrl').value,
+                    model: document.getElementById('aiModel').value,
+                    api_key: document.getElementById('aiApiKey').value,
+                    system_prompt: document.getElementById('aiSystemPrompt').value,
+                    expect_reasoning: document.getElementById('aiExpectReasoning').checked,
+                    compat_mode: document.getElementById('aiCompatMode').checked,
+                    strip_brackets: document.getElementById('aiStripBrackets').checked
+                },
+                thinking: {
+                    enabled: document.getElementById('aiThinkingEnabled').checked,
+                    provider: document.getElementById('aiThinkingProvider').value,
+                    base_url: document.getElementById('aiThinkingBaseUrl').value,
+                    model: document.getElementById('aiThinkingModel').value,
+                    api_key: document.getElementById('aiThinkingApiKey').value,
+                    system_prompt: document.getElementById('aiThinkingPrompt').value
+                }
+            };
+        }
+
+        // 填入表单状态
+        function fillAIFormState(settings) {
+            if (settings.translation) {
+                document.getElementById('aiProvider').value = settings.translation.provider || 'deepseek';
+                document.getElementById('aiBaseUrl').value = settings.translation.base_url || '';
+                document.getElementById('aiModel').value = settings.translation.model || '';
+                document.getElementById('aiApiKey').value = settings.translation.api_key || '';
+                document.getElementById('aiSystemPrompt').value = settings.translation.system_prompt || '';
+                document.getElementById('aiExpectReasoning').checked = settings.translation.expect_reasoning || false;
+                document.getElementById('aiCompatMode').checked = settings.translation.compat_mode || false;
+                document.getElementById('aiStripBrackets').checked = settings.translation.strip_brackets || false;
+            }
+            if (settings.thinking) {
+                document.getElementById('aiThinkingEnabled').checked = settings.thinking.enabled !== undefined ? settings.thinking.enabled : true;
+                document.getElementById('aiThinkingProvider').value = settings.thinking.provider || '';
+                document.getElementById('aiThinkingBaseUrl').value = settings.thinking.base_url || '';
+                document.getElementById('aiThinkingModel').value = settings.thinking.model || '';
+                document.getElementById('aiThinkingApiKey').value = settings.thinking.api_key || '';
+                document.getElementById('aiThinkingPrompt').value = settings.thinking.system_prompt || '';
+            }
+            // 更新UI状态
+            updateBaseUrlAndModel();
+            updateThinkingBaseUrlAndModel();
+        }
+
+        // 写入当前设置到 localStorage
+        function writeAIStateToLocalStorage(settings) {
+            const translation = settings.translation;
+            const thinking = settings.thinking;
+
+            localStorage.setItem('aiProvider', translation.provider);
+            localStorage.setItem('aiBaseUrl', translation.base_url);
+            localStorage.setItem('aiModel', translation.model);
+            if (translation.api_key) {
+                localStorage.setItem('aiApiKey', translation.api_key);
+            } else {
+                localStorage.removeItem('aiApiKey');
+            }
+            if (translation.system_prompt) {
+                localStorage.setItem('aiSystemPrompt', translation.system_prompt);
+            } else {
+                localStorage.removeItem('aiSystemPrompt');
+            }
+            localStorage.setItem('aiExpectReasoning', translation.expect_reasoning);
+            localStorage.setItem('aiCompatMode', translation.compat_mode);
+            localStorage.setItem('aiStripBrackets', translation.strip_brackets);
+
+            localStorage.setItem('aiThinkingEnabled', thinking.enabled);
+            localStorage.setItem('aiThinkingProvider', thinking.provider);
+            if (thinking.base_url) {
+                localStorage.setItem('aiThinkingBaseUrl', thinking.base_url);
+            } else {
+                localStorage.removeItem('aiThinkingBaseUrl');
+            }
+            if (thinking.model) {
+                localStorage.setItem('aiThinkingModel', thinking.model);
+            } else {
+                localStorage.removeItem('aiThinkingModel');
+            }
+            if (thinking.api_key) {
+                localStorage.setItem('aiThinkingApiKey', thinking.api_key);
+            } else {
+                localStorage.removeItem('aiThinkingApiKey');
+            }
+            if (thinking.system_prompt) {
+                localStorage.setItem('aiThinkingPrompt', thinking.system_prompt);
+            } else {
+                localStorage.removeItem('aiThinkingPrompt');
+            }
+        }
+
+        // 从 localStorage 读取当前设置
+        function readAIStateFromLocalStorage() {
+            return {
+                translation: {
+                    provider: localStorage.getItem('aiProvider') || 'deepseek',
+                    base_url: localStorage.getItem('aiBaseUrl') || '',
+                    model: localStorage.getItem('aiModel') || '',
+                    api_key: localStorage.getItem('aiApiKey') || '',
+                    system_prompt: localStorage.getItem('aiSystemPrompt') || '',
+                    expect_reasoning: localStorage.getItem('aiExpectReasoning') === 'true',
+                    compat_mode: localStorage.getItem('aiCompatMode') === 'true',
+                    strip_brackets: localStorage.getItem('aiStripBrackets') === 'true'
+                },
+                thinking: {
+                    enabled: localStorage.getItem('aiThinkingEnabled') !== 'false',
+                    provider: localStorage.getItem('aiThinkingProvider') || '',
+                    base_url: localStorage.getItem('aiThinkingBaseUrl') || '',
+                    model: localStorage.getItem('aiThinkingModel') || '',
+                    api_key: localStorage.getItem('aiThinkingApiKey') || '',
+                    system_prompt: localStorage.getItem('aiThinkingPrompt') || ''
+                }
+            };
+        }
+
+        // 加载预设列表
+        function loadAiPresets() {
+            try {
+                const raw = localStorage.getItem(AI_PRESETS_STORAGE_KEY);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (error) {
+                console.warn('Failed to load AI presets:', error);
+                return [];
+            }
+        }
+
+        // 保存预设列表
+        function saveAiPresets(presets) {
+            try {
+                localStorage.setItem(AI_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+            } catch (error) {
+                console.error('Failed to save AI presets:', error);
+            }
+        }
+
+        // 应用预设
+        function applyAiPreset(preset) {
+            if (!preset) {
+                const select = document.getElementById('aiPresetSelect');
+                const presetId = select.value;
+                if (!presetId) {
+                    alert('请选择一个预设');
+                    return;
+                }
+                const presets = loadAiPresets();
+                preset = presets.find(p => p.id === presetId);
+                if (!preset) {
+                    alert('预设不存在');
+                    return;
+                }
+            }
+
+            // 填入表单
+            fillAIFormState(preset);
+
+            // 写入 localStorage（使用回填后的当前表单值，确保状态一致）
+            writeAIStateToLocalStorage(collectAIFormState());
+
+            // 设置活动预设
+            localStorage.setItem(ACTIVE_AI_PRESET_KEY, preset.id);
+
+            // 静默应用，不再弹出提示
+            updateQuickAiPresetSelect(); // 更新快速选择框
+        }
+
+        // 更新预设选择框
+        function updateAiPresetSelect() {
+            const select = document.getElementById('aiPresetSelect');
+            const presets = loadAiPresets();
+            const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
+
+            select.innerHTML = '<option value="">选择预设...</option>';
+            presets.forEach(preset => {
+                const option = document.createElement('option');
+                option.value = preset.id;
+                option.textContent = preset.name;
+                if (preset.id === activeId) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+
+            // 添加 onchange 事件监听器，实现选择后自动应用
+            select.onchange = function() {
+                const presetId = this.value;
+                if (presetId) {
+                    applyAiPreset();
+                }
+            };
+        }
+
+        // 另存为预设
+        function saveAsAiPreset() {
+            const name = prompt('请输入预设名称：');
+            if (!name || !name.trim()) {
+                return;
+            }
+
+            const settings = collectAIFormState();
+            const preset = {
+                id: 'preset_' + Date.now(),
+                name: name.trim(),
+                ...settings,
+                updated_at: Date.now()
+            };
+
+            const presets = loadAiPresets();
+            presets.push(preset);
+            saveAiPresets(presets);
+            
+            // 设置为活动预设（在刷新下拉之前）
+            localStorage.setItem(ACTIVE_AI_PRESET_KEY, preset.id);
+            
+            updateAiPresetSelect();
+
+            alert(`预设 "${name}" 已保存`);
+            updateQuickAiPresetSelect(); // 更新快速选择框
+        }
+
+        // 更新当前预设
+        function updateCurrentAiPreset() {
+            const select = document.getElementById('aiPresetSelect');
+            const presetId = select.value;
+            if (!presetId) {
+                alert('请先选择要更新的预设');
+                return;
+            }
+
+            const presets = loadAiPresets();
+            const index = presets.findIndex(p => p.id === presetId);
+            if (index === -1) {
+                alert('预设不存在');
+                return;
+            }
+
+            const settings = collectAIFormState();
+            presets[index] = {
+                ...presets[index],
+                ...settings,
+                updated_at: Date.now()
+            };
+            saveAiPresets(presets);
+
+            localStorage.setItem(ACTIVE_AI_PRESET_KEY, presetId);
+            updateAiPresetSelect();
+
+            alert(`预设 "${presets[index].name}" 已更新`);
+            updateQuickAiPresetSelect(); // 更新快速选择框
+        }
+
+        // 删除预设
+        function deleteAiPreset() {
+            const select = document.getElementById('aiPresetSelect');
+            const presetId = select.value;
+            if (!presetId) {
+                alert('请先选择要删除的预设');
+                return;
+            }
+
+            if (!confirm('确定要删除这个预设吗？')) {
+                return;
+            }
+
+            const presets = loadAiPresets();
+            const filtered = presets.filter(p => p.id !== presetId);
+            saveAiPresets(filtered);
+            updateAiPresetSelect();
+
+            // 如果删除的是活动预设，清除活动预设
+            if (localStorage.getItem(ACTIVE_AI_PRESET_KEY) === presetId) {
+                localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
+            }
+
+            alert('预设已删除');
+            updateQuickAiPresetSelect(); // 更新快速选择框
+        }
+
+        // 更新快速预设选择框
+        function updateQuickAiPresetSelect() {
+            const select = document.getElementById('quickAiPresetSelect');
+            if (!select) return;
+
+            const presets = loadAiPresets();
+            const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
+
+            select.innerHTML = '<option value="">快速切换预设...</option>';
+            presets.forEach(preset => {
+                const option = document.createElement('option');
+                option.value = preset.id;
+                option.textContent = preset.name;
+                if (preset.id === activeId) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+        }
+
+        // 快速应用预设
+        function quickApplyAiPreset() {
+            const select = document.getElementById('quickAiPresetSelect');
+            if (!select) return;
+
+            const presetId = select.value;
+            if (!presetId) {
+                alert('请选择一个预设');
+                return;
+            }
+
+            const presets = loadAiPresets();
+            const preset = presets.find(p => p.id === presetId);
+            if (!preset) {
+                alert('预设不存在');
+                return;
+            }
+
+            applyAiPreset(preset);
+            updateQuickAiPresetSelect(); // 更新选择状态
+        }
+
+        // 根据选择的提供商更新基础URL和模型（仅在用户主动切换时）
+        function applyProviderPreset(providerSelectId, baseInputId, modelInputId, forceApply = false) {
             const providerSelect = document.getElementById(providerSelectId);
             const baseUrlInput = document.getElementById(baseInputId);
             const modelInput = document.getElementById(modelInputId);
@@ -6145,29 +7065,32 @@
                 return;
             }
 
-            baseUrlInput.value = preset.baseUrl;
-            modelInput.value = preset.model;
+            // 只有在强制应用或输入框为空时才自动填充
+            if (forceApply || !baseUrlInput.value.trim() || !modelInput.value.trim()) {
+                baseUrlInput.value = preset.baseUrl;
+                modelInput.value = preset.model;
+            }
             baseUrlInput.readOnly = true;
             modelInput.readOnly = true;
         }
 
-        function updateBaseUrlAndModel() {
-            applyProviderPreset('aiProvider', 'aiBaseUrl', 'aiModel');
+        function updateBaseUrlAndModel(forceApply = false) {
+            applyProviderPreset('aiProvider', 'aiBaseUrl', 'aiModel', forceApply);
         }
 
-        function updateThinkingBaseUrlAndModel() {
-            applyProviderPreset('aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel');
+        function updateThinkingBaseUrlAndModel(forceApply = false) {
+            applyProviderPreset('aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel', forceApply);
         }
 
         // 页面加载完成后添加事件监听器
         document.addEventListener('DOMContentLoaded', function() {
             const providerSelect = document.getElementById('aiProvider');
             if (providerSelect) {
-                providerSelect.addEventListener('change', updateBaseUrlAndModel);
+                providerSelect.addEventListener('change', () => updateBaseUrlAndModel(true));
             }
             const thinkingProviderSelect = document.getElementById('aiThinkingProvider');
             if (thinkingProviderSelect) {
-                thinkingProviderSelect.addEventListener('change', updateThinkingBaseUrlAndModel);
+                thinkingProviderSelect.addEventListener('change', () => updateThinkingBaseUrlAndModel(true));
             }
         });
 
@@ -6300,6 +7223,43 @@
                         stripBracketsInput.checked = resolvedStripBrackets;
                     }
 
+                    const activePresetId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
+                    if (activePresetId) {
+                        const presets = loadAiPresets();
+                        const activePreset = presets.find(p => p.id === activePresetId);
+                        if (activePreset) {
+                            const currentFormData = collectAIFormState();
+                            const formDataJson = JSON.stringify(currentFormData);
+                            const presetDataJson = JSON.stringify({
+                                translation: {
+                                    provider: activePreset.translation?.provider,
+                                    base_url: activePreset.translation?.base_url,
+                                    model: activePreset.translation?.model,
+                                    api_key: activePreset.translation?.api_key,
+                                    system_prompt: activePreset.translation?.system_prompt,
+                                    expect_reasoning: activePreset.translation?.expect_reasoning,
+                                    compat_mode: activePreset.translation?.compat_mode,
+                                    strip_brackets: activePreset.translation?.strip_brackets
+                                },
+                                thinking: {
+                                    enabled: activePreset.thinking?.enabled,
+                                    provider: activePreset.thinking?.provider,
+                                    base_url: activePreset.thinking?.base_url,
+                                    model: activePreset.thinking?.model,
+                                    api_key: activePreset.thinking?.api_key,
+                                    system_prompt: activePreset.thinking?.system_prompt
+                                }
+                            });
+                            if (formDataJson !== presetDataJson) {
+                                localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
+                            }
+                        } else {
+                            localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
+                        }
+                    }
+                    updateAiPresetSelect();
+                    updateQuickAiPresetSelect();
+
                     alert('设置已保存！');
                     closeAISettings();
                 } else {
@@ -6429,21 +7389,129 @@
                     return value;
                 };
 
-                const backgroundUrl = resolveMediaForAnimate(meta['Background-image']);
-                const coverCandidateSources = [
-                    meta.albumImgSrc,
-                    meta.cover,
-                    meta.coverUrl,
-                    data.jsonData?.cover,
-                    data.jsonData?.coverUrl
-                ];
-                let coverUrl = '';
-                for (const candidate of coverCandidateSources) {
-                    const resolved = resolveMediaForAnimate(candidate);
-                    if (resolved) {
-                        coverUrl = resolved;
-                        break;
+                // AMLL 输入链路区分“参考图”和“真正背景”：
+                // - cover: 动态封面静态化结果 / 专辑图 / poster / 背景图
+                // - background: 只在存在真正 Background-image 时才传
+                const dynamicCoverSrc = resolveMediaForAnimate(meta.dynamicCoverSrc);
+                const dynamicCoverPoster = resolveMediaForAnimate(meta.dynamicCoverPoster);
+                const albumImgSrc = resolveMediaForAnimate(meta.albumImgSrc) || 
+                                   resolveMediaForAnimate(meta.cover) || 
+                                   resolveMediaForAnimate(meta.coverUrl) ||
+                                   resolveMediaForAnimate(data.jsonData?.cover) ||
+                                   resolveMediaForAnimate(data.jsonData?.coverUrl);
+                const backgroundImage = resolveMediaForAnimate(meta['Background-image']);
+                const AMLL_FRAME_TIMEOUT_MS = 1800;
+                const isMvodPreviewSource = (sourceUrl) => {
+                    const value = String(sourceUrl || '').trim().toLowerCase();
+                    return value.includes('mvod.itunes.apple.com');
+                };
+                const getPreferredFrameSeekSeconds = (sourceUrl) => (
+                    isMvodPreviewSource(sourceUrl) ? 10 : 0
+                );
+                const getAmllMediaType = (sourceUrl) => {
+                    if (!sourceUrl) {
+                        return 'none';
                     }
+                    if (isMvodPreviewSource(sourceUrl) || isVideoFile(sourceUrl)) {
+                        return 'video';
+                    }
+                    if (isAnimatedImage(sourceUrl)) {
+                        return 'animated';
+                    }
+                    return 'image';
+                };
+                const pickImmediateStaticReference = (candidates = []) => {
+                    for (const candidate of candidates) {
+                        if (!candidate) {
+                            continue;
+                        }
+                        if (getAmllMediaType(candidate) !== 'image') {
+                            continue;
+                        }
+                        return candidate;
+                    }
+                    return '';
+                };
+
+                const extractedFrameCache = new Map();
+                const resolveAmllStaticAsset = async (sourceUrl) => {
+                    if (!sourceUrl) {
+                        return '';
+                    }
+                    if (!extractedFrameCache.has(sourceUrl)) {
+                        extractedFrameCache.set(sourceUrl, (async () => {
+                            try {
+                                const frameRes = await fetch('/api/extract_frame', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        source_url: sourceUrl,
+                                        seek_seconds: getPreferredFrameSeekSeconds(sourceUrl)
+                                    })
+                                });
+                                const frameData = await frameRes.json();
+                                if (frameData.status === 'success' && frameData.frame_url) {
+                                    return frameData.frame_url;
+                                }
+                            } catch (error) {
+                                console.warn('Failed to extract frame for AMLL background:', error);
+                            }
+                            extractedFrameCache.delete(sourceUrl);
+                            return '';
+                        })());
+                    }
+                    return await extractedFrameCache.get(sourceUrl);
+                };
+                const resolveAmllStaticAssetWithTimeout = async (sourceUrl, timeoutMs = AMLL_FRAME_TIMEOUT_MS) => {
+                    if (!sourceUrl) {
+                        return '';
+                    }
+                    let timeoutId = null;
+                    const timeoutPromise = new Promise((resolve) => {
+                        timeoutId = window.setTimeout(() => resolve(''), timeoutMs);
+                    });
+                    try {
+                        return await Promise.race([
+                            resolveAmllStaticAsset(sourceUrl),
+                            timeoutPromise
+                        ]);
+                    } finally {
+                        if (timeoutId !== null) {
+                            window.clearTimeout(timeoutId);
+                        }
+                    }
+                };
+
+                let coverUrl = '';
+                const dynamicMediaType = getAmllMediaType(dynamicCoverSrc);
+                const hasExtractableDynamicSource =
+                    Boolean(dynamicCoverSrc) &&
+                    (dynamicMediaType === 'video' || dynamicMediaType === 'animated');
+
+                if (isMvodPreviewSource(dynamicCoverSrc)) {
+                    coverUrl = pickImmediateStaticReference([
+                        dynamicCoverPoster,
+                        albumImgSrc,
+                        backgroundImage
+                    ]);
+                    if (!coverUrl && hasExtractableDynamicSource) {
+                        coverUrl = await resolveAmllStaticAssetWithTimeout(dynamicCoverSrc);
+                    }
+                } else {
+                    coverUrl = pickImmediateStaticReference([
+                        dynamicCoverSrc,
+                        dynamicCoverPoster,
+                        albumImgSrc,
+                        backgroundImage
+                    ]);
+                    if (!coverUrl && hasExtractableDynamicSource) {
+                        coverUrl = await resolveAmllStaticAssetWithTimeout(dynamicCoverSrc);
+                    }
+                }
+
+                let backgroundUrl = '';
+                if (backgroundImage) {
+                    backgroundUrl = backgroundImage;
                 }
 
                 openWithParams = (extra = {}) => {
@@ -6452,6 +7520,7 @@
                         params.set('background', backgroundUrl);
                     }
                     if (coverUrl) {
+                        params.set('coverUrl', coverUrl);
                         params.set('cover', coverUrl);
                     }
                     Object.entries(extra).forEach(([key, value]) => {

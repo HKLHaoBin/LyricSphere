@@ -51,9 +51,20 @@
             opacity: 0.45;
         }
 
+        #background-brightness-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0);
+            transition: background-color 0.2s ease, opacity 0.2s ease;
+        }
+
         .player-container {
             width: 90%;
             text-align: center;
+            position: relative;
+            z-index: 1;
         }
 
         :where(#albumSidePanel, #amll-stub-host, body) .song-info-container {
@@ -240,6 +251,7 @@
     </style>
 </head>
 <body>
+    <div id="background-brightness-overlay" aria-hidden="true"></div>
     <div class="player-container" id="player-container">
         <audio id="audio-player"></audio>
         <div id="lyrics-container"></div>
@@ -250,12 +262,39 @@
 
     <script>
         const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
+        const AMLL_BACKGROUND_BRIGHTNESS_KEY = 'backgroundBrightness';
+        const DEFAULT_AMLL_BACKGROUND_BRIGHTNESS = 1;
+        const MIN_AMLL_BACKGROUND_BRIGHTNESS = 0.4;
+        const MAX_AMLL_BACKGROUND_BRIGHTNESS = 1.6;
         const AMLL_STATE_URL = '/amll/state';
         const AMLL_STREAM_URL = '/amll/stream';
         const PROGRESS_RESYNC_INTERVAL_MS = 3000;
         const LAST_SONG_STORAGE_KEY = 'amll_last_song_meta';
         const LYRICS_REFETCH_INTERVAL_MS = 1200;
         const LYRICS_REFETCH_MAX_ATTEMPTS = 4;
+
+        function normalizeAmllBackgroundBrightness(value) {
+            const parsed = Number.parseFloat(value);
+            if (!Number.isFinite(parsed)) return DEFAULT_AMLL_BACKGROUND_BRIGHTNESS;
+            const clamped = Math.min(MAX_AMLL_BACKGROUND_BRIGHTNESS, Math.max(MIN_AMLL_BACKGROUND_BRIGHTNESS, parsed));
+            return Math.round(clamped * 100) / 100;
+        }
+
+        function readCachedAmllSettings() {
+            try {
+                const raw = window.localStorage.getItem(AMLL_SETTINGS_STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function readCachedAmllBackgroundBrightness() {
+            const settings = readCachedAmllSettings();
+            return normalizeAmllBackgroundBrightness(settings?.[AMLL_BACKGROUND_BRIGHTNESS_KEY]);
+        }
 
         function guardAmllSettingsStorage() {
             try {
@@ -467,10 +506,47 @@
                 }
             };
 
+            const backgroundBrightnessOverlay = document.getElementById('background-brightness-overlay');
+
+            function applyBackgroundBrightnessOverlay(value) {
+                const normalized = normalizeAmllBackgroundBrightness(value);
+                if (!backgroundBrightnessOverlay) {
+                    return normalized;
+                }
+
+                if (normalized === DEFAULT_AMLL_BACKGROUND_BRIGHTNESS) {
+                    backgroundBrightnessOverlay.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+                    backgroundBrightnessOverlay.style.opacity = '0';
+                    return normalized;
+                }
+
+                backgroundBrightnessOverlay.style.opacity = '1';
+                if (normalized < DEFAULT_AMLL_BACKGROUND_BRIGHTNESS) {
+                    const darkness = Math.min(0.7, (DEFAULT_AMLL_BACKGROUND_BRIGHTNESS - normalized) / 0.8);
+                    backgroundBrightnessOverlay.style.backgroundColor = `rgba(0, 0, 0, ${darkness.toFixed(3)})`;
+                    return normalized;
+                }
+
+                const lightness = Math.min(0.32, (normalized - DEFAULT_AMLL_BACKGROUND_BRIGHTNESS) / 2);
+                backgroundBrightnessOverlay.style.backgroundColor = `rgba(255, 255, 255, ${lightness.toFixed(3)})`;
+                return normalized;
+            }
+
+            window.setAmllBackgroundBrightness = (value) => {
+                return applyBackgroundBrightnessOverlay(value);
+            };
+
+            window.setAmllBackgroundBrightness(readCachedAmllBackgroundBrightness());
+
             window.addEventListener('message', (event) => {
                 const data = event && event.data;
-                if (!data || data.type !== 'amll-beat-toggle') return;
-                window.setAmllBeatEnabled(data.enabled);
+                if (!data || !data.type) return;
+                if (data.type === 'amll-beat-toggle') {
+                    window.setAmllBeatEnabled(data.enabled);
+                }
+                if (data.type === 'amll-background-brightness') {
+                    window.setAmllBackgroundBrightness(data.value);
+                }
             });
 
             const audioPlayer = document.getElementById('audio-player');

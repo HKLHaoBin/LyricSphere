@@ -1,5 +1,5 @@
 // Service Worker for AMLL Web Player
-const CACHE_NAME = "amll-web-player-v2";
+const CACHE_NAME = "amll-web-player-v3";
 const urlsToCache = [
   "/",
   "/index.html",
@@ -10,7 +10,10 @@ const urlsToCache = [
 
 const NETWORK_FIRST_EXT = [".js", ".css", ".html", ".wasm"];
 
-function shouldUseNetworkFirst(url) {
+function shouldUseNetworkFirst(request, url) {
+  if (request.mode === "navigate") {
+    return true;
+  }
   const path = url.pathname || "";
   return NETWORK_FIRST_EXT.some((ext) => path.endsWith(ext));
 }
@@ -50,7 +53,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
 
   // 对核心静态资源使用网络优先，避免升级后仍拿到旧缓存。
-  if (request.method === "GET" && shouldUseNetworkFirst(url)) {
+  if (request.method === "GET" && shouldUseNetworkFirst(request, url)) {
     event.respondWith(
       (async () => {
         try {
