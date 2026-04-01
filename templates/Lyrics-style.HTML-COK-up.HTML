@@ -912,6 +912,9 @@
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
             const amllBackgroundState = { promise: null, host: null, element: null };
             const urlParams = new URLSearchParams(window.location.search);
+            const queryFile = urlParams.get('file') || null;
+            const queryLys = urlParams.get('lys') || null;
+            const queryLrc = urlParams.get('lrc') || null;
             const queryBackground = urlParams.get('background') || null;
             const queryCover = urlParams.get('cover') || null;
             const AMLL_SKELETON_IDS = new Set([
@@ -3468,7 +3471,12 @@
 
             async function loadData() {
                 try {
-                    const songInfoRes = await fetch('/song-info');
+                    // 构建完整的查询参数
+                    const params = new URLSearchParams();
+                    if (queryFile) params.append('file', queryFile);
+                    const fileParam = params.toString() ? `?${params.toString()}` : '';
+                    
+                    const songInfoRes = await fetch(`/song-info${fileParam}`);
                     const songInfo = await songInfoRes.json();
                     currentSongInfo = songInfo;
                     audioPlayer.src = songInfo.song;
@@ -3517,7 +3525,14 @@
                         audioPlayer.play().catch(() => {});
                     }, 0);
 
-                    const lyricsRes = await fetch('/lyrics');
+                    // 为 /lyrics 构建完整的查询参数（包含 lys/lrc 覆盖参数）
+                    const lyricsParams = new URLSearchParams();
+                    if (queryFile) lyricsParams.append('file', queryFile);
+                    if (queryLys) lyricsParams.append('lys', queryLys);
+                    if (queryLrc) lyricsParams.append('lrc', queryLrc);
+                    const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
+                    
+                    const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
                     const lyricsJson = await lyricsRes.json();
                     lyricsData = lyricsJson.lyrics || [];
                     // 长词拆分仅应用于非自定义字体行或音节，避免特殊字体被拆成单字符

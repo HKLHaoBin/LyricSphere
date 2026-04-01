@@ -8,6 +8,7 @@ import functools
 import bcrypt
 import logging
 import math
+import subprocess
 import os
 import re
 import shutil
@@ -33,7 +34,7 @@ from starlette.datastructures import QueryParams, Headers, FormData, UploadFile
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import aiofiles
 from re import compile, Pattern, Match
-from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any
+from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any, Iterable
 from xml.dom.minicompat import NodeList
 from xml.dom import Node
 from xml.dom.minidom import Document, Element
@@ -4274,8 +4275,72 @@ def list_song_summaries():
         return abort(403)
     # 只读列表不要求解锁
 
+    def collect_static_json_files() -> List[Path]:
+        """在 static 目录内罗列 json 文件，多策略容错，兼容 Windows。"""
+
+        collected: Dict[str, Path] = {}
+
+        def add_paths(paths: Iterable[Path], label: str) -> None:
+            for p in paths:
+                try:
+                    if not p.exists() or not p.is_file():
+                        continue
+                    if not p.name.lower().endswith('.json'):
+                        continue
+                    collected[p.name] = p
+                except OSError as exc:
+                    app.logger.warning("%s 路径检查失败 %s: %s", label, p, exc)
+
+        # 策略1：正常 glob（可能部分缺失）
+        try:
+            add_paths(STATIC_DIR.glob('*.json'), 'glob')
+        except OSError as exc:
+            app.logger.warning("glob static/*.json 失败，进入降级：%s", exc)
+
+        # 策略2：os.scandir，逐条捕获错误，尽量拉齐缺漏
+        try:
+            with os.scandir(STATIC_DIR) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file() and entry.name.lower().endswith('.json'):
+                            add_paths([Path(entry.path)], 'scandir')
+                    except OSError as exc:
+                        app.logger.warning("scandir 处理 %s 失败: %s", entry.name, exc)
+        except OSError as exc:
+            app.logger.warning("scandir static 失败：%s", exc)
+
+        # 策略3：平台命令兜底（Windows/Posix 区分）
+        try:
+            if os.name == 'nt':
+                cmd = ['cmd', '/c', 'dir', '/b', '*.json']
+                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
+            else:
+                cmd = ['find', '.', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-print']
+                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
+
+            if proc.stdout:
+                lines = proc.stdout.splitlines()
+                parsed: List[Path] = []
+                for line in lines:
+                    name = line.strip()
+                    if not name:
+                        continue
+                    if os.name != 'nt' and name.startswith('./'):
+                        name = name[2:]
+                    parsed.append(STATIC_DIR / name)
+                add_paths(parsed, 'fallback-cmd')
+
+            if proc.returncode != 0:
+                app.logger.warning("fallback 命令 %s 返回码 %s, stderr=%s", cmd[0], proc.returncode, proc.stderr.strip())
+        except FileNotFoundError:
+            app.logger.warning("fallback 命令不可用（%s），跳过", 'cmd/dir' if os.name == 'nt' else 'find')
+        except Exception as exc:
+            app.logger.warning("fallback 命令列举 static/*.json 异常：%s", exc)
+
+        return list(collected.values())
+
     summaries: List[Dict[str, Any]] = []
-    for file in STATIC_DIR.glob('*.json'):
+    for file in collect_static_json_files():
         if file.name == 'artists.json':
             continue
 
@@ -7403,12 +7468,24 @@ def get_lyrics():
     获取歌词和音源信息
     支持的音乐格式：.mp3, .wav, .ogg, .mp4
     """
-    json_file = session.get('lyrics_json_file', '测试 - 测试.json')
+    requested_file = (request.args.get('file') or '').strip()
+    
+    # 问题修复：显式指定 file 时严格验证，不回退
+    if requested_file:
+        json_file = requested_file
+        try:
+            _, json_path = _resolve_existing_static_json_filename(json_file)
+        except ValueError:
+            return jsonify({'error': f'Song file not found: {requested_file}'}), 404
+    else:
+        # 仅在未指定时才使用 session
+        json_file = session.get('lyrics_json_file', '测试 - 测试.json')
+        try:
+            _, json_path = _resolve_existing_static_json_filename(json_file)
+        except ValueError:
+            json_path = STATIC_DIR / '测试 - 测试.json'
+    
     meta_data = {}
-    try:
-        _, json_path = _resolve_existing_static_json_filename(json_file)
-    except ValueError:
-        json_path = STATIC_DIR / '测试 - 测试.json'
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             meta_data = json.load(f)
@@ -7419,9 +7496,20 @@ def get_lyrics():
     except Exception:
         meta_data = {}
 
-    # ✅ 优先使用临时转换得到的覆盖地址（来自 /lyrics-animate）
-    lys_url = session.get('override_lys_url')
-    lrc_url = session.get('override_lrc_url')
+    # 修复：参数优先级清晰
+    # 1. 优先使用显式 lys/lrc 参数（无论是否传了 file）
+    # 2. 如果没有显式 lys/lrc：
+    #    - 若显式传了 file，只使用 JSON 配置（不吃 session 覆盖，避免串页）
+    #    - 若没有显式传 file（依赖 session），才可以吃 session 的 override_lys_url
+    # 3. 最后，如果都没有，从 JSON 的 meta.lyrics 读配置
+    
+    lys_url = request.args.get('lys')
+    lrc_url = request.args.get('lrc')
+    
+    # 只有在没有显式 lys/lrc 且没有显式 file 时，才从 session 读覆盖
+    if not lys_url and not lrc_url and not requested_file:
+        lys_url = session.get('override_lys_url')
+        lrc_url = session.get('override_lrc_url')
 
     # 如果没有覆盖地址，再走旧逻辑：从 JSON 的 meta.lyrics 里找
     if not lys_url:
@@ -7858,11 +7946,21 @@ def _submit_beat_curve_job(
 
 @app.route('/song-info')
 def song_info():
-    json_file = session.get('lyrics_json_file', '测试 - 测试.json')
-    try:
-        _, json_path = _resolve_existing_static_json_filename(json_file)
-    except ValueError:
-        json_path = STATIC_DIR / '测试 - 测试.json'
+    requested_file = (request.args.get('file') or '').strip()
+    
+    # 问题 1 & 2 修复：显式指定 file 时严格验证，不回退
+    if requested_file:
+        try:
+            _, json_path = _resolve_existing_static_json_filename(requested_file)
+        except ValueError:
+            return jsonify({'error': f'Song file not found: {requested_file}'}), 404
+    else:
+        # 仅在未指定 file 时才使用 session 或默认值
+        json_file = session.get('lyrics_json_file', '测试 - 测试.json')
+        try:
+            _, json_path = _resolve_existing_static_json_filename(json_file)
+        except ValueError:
+            json_path = STATIC_DIR / '测试 - 测试.json'
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data_str = f.read()
@@ -7877,8 +7975,11 @@ def song_info():
         data = json.loads(data_str)
         meta = data.setdefault('meta', {}) if isinstance(data, dict) else {}
 
-        amll_direct_background = session.get('amll_direct_background_url')
-        amll_reference_cover = session.get('amll_reference_cover_url')
+        # 问题 1 修复：仅当没有显式指定 file 时才使用 session 里的覆盖
+        # 这样可以防止 A 歌曲的 session 覆盖被应用到 B 歌曲
+        should_apply_session_overrides = not requested_file
+        amll_direct_background = session.get('amll_direct_background_url') if should_apply_session_overrides else None
+        amll_reference_cover = session.get('amll_reference_cover_url') if should_apply_session_overrides else None
 
         def normalize_media_url(raw_value: Optional[str]) -> str:
             if not raw_value or raw_value == '!':
@@ -7923,6 +8024,10 @@ def song_info():
             data['amll_reference_cover_url'] = normalized_amll_cover
             data['cover'] = normalized_amll_cover
             data['coverUrl'] = normalized_amll_cover
+            if isinstance(meta, dict):
+                meta['albumImgSrc'] = normalized_amll_cover
+                meta['cover'] = normalized_amll_cover
+                meta['coverUrl'] = normalized_amll_cover
 
         if ('cover' not in data or not data['cover'] or data['cover'] == '!') and not normalized_amll_cover:
             cover_candidates = [
