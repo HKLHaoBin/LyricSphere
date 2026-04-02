@@ -50,7 +50,7 @@ jobs:
         run: |
           git fetch --tags --force
 
-          $latestMsg = git log -1 --pretty=%s
+          $latestMsg = git log -1 --pretty=%B
           if (-not $latestMsg) {
             $latestMsg = "No commit message"
           }
@@ -91,7 +91,9 @@ jobs:
           }
 
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "release_body=$releaseBody" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_body<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $releaseBody | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Prepare release zip
         shell: pwsh
