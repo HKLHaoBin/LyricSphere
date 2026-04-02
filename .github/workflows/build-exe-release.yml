@@ -50,11 +50,12 @@ jobs:
         run: |
           git fetch --tags --force
 
-          $latestMsg = git log -1 --pretty=%B
+          $latestMsg = git log -1 --pretty=%B | Out-String
+          $latestMsg = $latestMsg.TrimEnd()
           if (-not $latestMsg) {
             $latestMsg = "No commit message"
           }
-          $releaseBody = "HKLHaoBin $latestMsg"
+          $releaseBody = "HKLHaoBin`n$latestMsg"
 
           if ("${{ github.ref_type }}" -eq "tag") {
             $tag = "${{ github.ref_name }}"
@@ -91,9 +92,10 @@ jobs:
           }
 
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "release_body<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $delimiter = [guid]::NewGuid().ToString()
+          "release_body<<$delimiter" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $releaseBody | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          $delimiter | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Prepare release zip
         shell: pwsh
