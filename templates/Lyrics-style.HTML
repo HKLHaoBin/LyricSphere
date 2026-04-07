@@ -243,6 +243,12 @@
             let lyricsData = [];
             let forceCenterAlign = false; // 新增
             let translationData = [];
+            
+            // 提取 URL 参数
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryFile = urlParams.get('file') || null;
+            const queryLys = urlParams.get('lys') || null;
+            const queryLrc = urlParams.get('lrc') || null;
 
             // 动画时长控制
             const enterDuration = 700;         // 歌词行进入动画时长（毫秒）
@@ -369,7 +375,12 @@
 
             async function loadData() {
                 try {
-                    const songInfoRes = await fetch('/song-info');
+                    // 构建完整的查询参数
+                    const params = new URLSearchParams();
+                    if (queryFile) params.append('file', queryFile);
+                    const fileParam = params.toString() ? `?${params.toString()}` : '';
+                    
+                    const songInfoRes = await fetch(`/song-info${fileParam}`);
                     const songInfo = await songInfoRes.json();
                     audioPlayer.src = songInfo.song;
                     
@@ -385,7 +396,14 @@
                         audioPlayer.play().catch(() => {});
                     }, 0);
 
-                    const lyricsRes = await fetch('/lyrics');
+                    // 为 /lyrics 构建完整的查询参数（包含 lys/lrc 覆盖参数）
+                    const lyricsParams = new URLSearchParams();
+                    if (queryFile) lyricsParams.append('file', queryFile);
+                    if (queryLys) lyricsParams.append('lys', queryLys);
+                    if (queryLrc) lyricsParams.append('lrc', queryLrc);
+                    const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
+                    
+                    const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
                     const lyricsJson = await lyricsRes.json();
                     lyricsData = lyricsJson.lyrics || [];
 

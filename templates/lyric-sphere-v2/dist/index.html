@@ -5,10 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/lyric-sphere-v2/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LyricSphere v2</title>
-    <script type="module" crossorigin src="/lyric-sphere-v2/assets/index-BEUc2vBJ.js"></script>
-    <link rel="stylesheet" crossorigin href="/lyric-sphere-v2/assets/index-DHsuibP3.css">
+    <script type="module" crossorigin src="/lyric-sphere-v2/assets/index-BrwQqqRk.js"></script>
+    <link rel="stylesheet" crossorigin href="/lyric-sphere-v2/assets/index-CDUMV-HY.css">
   </head>
   <body>
-    <div id="root"></div>
+    <script>
+      if ('paintWorklet' in CSS) {
+        document.documentElement.classList.add('has-squircle');
+        CSS.paintWorklet.addModule('https://www.unpkg.com/css-houdini-squircle/squircle.min.js');
+      }
+    </script>
+    <div id="root"></div>
   </body>
 </html>

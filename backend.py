@@ -1811,6 +1811,34 @@ AI_TRANSLATION_SETTINGS = {
 
 AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
 
+BATCH_TRANSLATION_FIXED_PROMPT = '''批量翻译固定规则：
+1. 每个歌曲块必须先输出对应的 [ID:xxx]。
+2. 每个 [ID:] 下只输出该歌曲的逐行翻译，格式必须是 1. 翻译内容。
+3. 不要删除编号，不要合并不同歌曲，不要把多个 ID 混在一起。
+4. 只输出翻译结果，不要额外解释或说明。'''
+
+
+def build_batch_system_prompt(system_prompt: str) -> str:
+    """Append the fixed batch-only contract to the editable prompt."""
+    parts = []
+    editable_prompt = system_prompt.strip() if isinstance(system_prompt, str) else ''
+    fixed_prompt = BATCH_TRANSLATION_FIXED_PROMPT.strip()
+    if editable_prompt:
+        parts.append(editable_prompt)
+    if fixed_prompt not in editable_prompt:
+        parts.append(fixed_prompt)
+    return '\n\n'.join(parts)
+
+
+def iter_complete_lines(buffer: str) -> Tuple[List[str], str]:
+    """Split a streaming buffer into complete lines and a trailing partial line."""
+    lines: List[str] = []
+    start = 0
+    for match in re.finditer(r'\r\n|\n|\r', buffer):
+        lines.append(buffer[start:match.start()])
+        start = match.end()
+    return lines, buffer[start:]
+
 # ===== 动画配置（前端共用） =====
 # 默认动画配置：控制歌词行进入、移动、退出及占位时长，以及歌词垂直偏移比例
 ANIMATION_CONFIG_DEFAULTS = {
@@ -4396,7 +4424,11 @@ def list_song_summaries():
         summaries.append(summary)
 
     summaries.sort(key=lambda item: item.get('mtime', 0), reverse=True)
-    return jsonify({'status': 'success', 'songs': summaries})
+    response = jsonify({'status': 'success', 'songs': summaries})
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route('/get_backups', methods=['POST'])
@@ -6641,127 +6673,121 @@ def merge_to_lqe():
         app.logger.error(f"合并LQE时出错: {str(e)}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'处理请求时出错: {str(e)}'})
 
+def _convert_milliseconds_to_time(milliseconds: int) -> str:
+    total_seconds = milliseconds // 1000
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    millis = milliseconds % 1000
+    return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
+
+
+def extract_timestamps_from_content(lyrics_content: str) -> List[str]:
+    timestamps: List[str] = []
+    lines = (lyrics_content or '').split('\n')
+    metadata_pattern = re.compile(r'^\s*\[(?:ar|ti|al|by|offset|id|from):', re.IGNORECASE)
+    qrc_pattern = re.compile(r'^\s*\[(\d+)\s*,\s*(\d+)\]')
+    lys_marker_pattern = re.compile(r'^\s*\[(\d*)\]')
+    lrc_pattern = re.compile(r'^\s*\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]')
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or metadata_pattern.match(line):
+            continue
+
+        qrc_match = qrc_pattern.match(line)
+        if qrc_match:
+            try:
+                start_ms = int(qrc_match.group(1))
+                timestamps.append(f"[{_convert_milliseconds_to_time(start_ms)}]")
+                continue
+            except ValueError:
+                continue
+
+        lrc_match = lrc_pattern.match(line)
+        if lrc_match:
+            try:
+                minutes = int(lrc_match.group(1))
+                seconds = int(lrc_match.group(2))
+                millis_str = lrc_match.group(3) or ''
+                millis = int((millis_str + '000')[:3]) if millis_str else 0
+                total_ms = (minutes * 60 + seconds) * 1000 + millis
+                timestamps.append(f"[{_convert_milliseconds_to_time(total_ms)}]")
+                continue
+            except ValueError:
+                continue
+
+        if lys_marker_pattern.match(line):
+            match = re.search(r'\((\d+),', line)
+            if match:
+                try:
+                    timestamp = int(match.group(1))
+                    timestamps.append(f"[{_convert_milliseconds_to_time(timestamp)}]")
+                    continue
+                except ValueError:
+                    continue
+    return timestamps
+
+
+def extract_lyrics_from_content(lyrics_content: str) -> List[str]:
+    extracted_lyrics: List[str] = []
+    for line in (lyrics_content or '').split('\n'):
+        line_lyrics = re.sub(r'\[.*?\]', '', line)
+        line_lyrics = re.sub(r'\(\d+,\d+\)', '', line_lyrics)
+        line_lyrics = line_lyrics.strip()
+        if line_lyrics:
+            extracted_lyrics.append(line_lyrics)
+    return extracted_lyrics
+
+
+def has_timestamp_markers(content: str) -> bool:
+    candidate_lines = [
+        line.strip()
+        for line in (content or '').splitlines()
+        if line.strip()
+        and not line.startswith('[by:')
+        and not line.startswith('[ti:')
+        and not line.startswith('[ar:')
+    ]
+    return any(
+        re.search(r'\(\d+,\d+\)', line)
+        or re.match(r'^\s*\[\d+\s*,\s*\d+\]', line)
+        or re.match(r'^\s*\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]', line)
+        for line in candidate_lines
+    )
+
+
+def parse_translations_by_id(raw_text: str) -> Dict[str, Dict[int, str]]:
+    id_pattern = re.compile(r'^\s*\[ID:(.+?)\]\s*$')
+    line_pattern = re.compile(r'^\s*(\d+)\.(.*)$')
+    grouped: Dict[str, Dict[int, str]] = {}
+    current_id: Optional[str] = None
+    for raw_line in (raw_text or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        id_match = id_pattern.match(line)
+        if id_match:
+            current_id = id_match.group(1).strip()
+            grouped.setdefault(current_id, {})
+            continue
+        if current_id is None:
+            continue
+        line_match = line_pattern.match(line)
+        if not line_match:
+            continue
+        idx = int(line_match.group(1)) - 1
+        if idx < 0:
+            continue
+        grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+    return grouped
+
+
 @app.route('/extract_timestamps', methods=['POST'])
 def extract_timestamps():
     try:
         data = request.json
         lyrics_content = data.get('content', '')
-        app.logger.info(f"收到歌词内容，长度: {len(lyrics_content)} 字符")
-        
-        # 记录内容摘要（前3行+后3行）
-        lines = lyrics_content.split('\n')
-        if lines:
-            preview_lines = lines[:3] + ['...'] + lines[-3:] if len(lines) > 6 else lines
-            app.logger.debug(f"内容预览: {preview_lines}")
-        
-        # 将毫秒转换为分:秒.毫秒格式
-        def convert_milliseconds_to_time(milliseconds):
-            total_seconds = milliseconds // 1000
-            minutes = total_seconds // 60
-            seconds = total_seconds % 60
-            millis = milliseconds % 1000
-            return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
-        
-        # 提取时间戳并转换为LRC格式
-        timestamps = []
-        lines = lyrics_content.split('\n')
-        app.logger.info(f"歌词总行数: {len(lines)}")
-
-        metadata_lines = 0
-        empty_lines = 0
-        processed_lines = 0
-
-        metadata_pattern = re.compile(r'^\s*\[(?:ar|ti|al|by|offset|id|from):', re.IGNORECASE)
-        qrc_pattern = re.compile(r'^\s*\[(\d+)\s*,\s*(\d+)\]')
-        lys_marker_pattern = re.compile(r'^\s*\[(\d*)\]')
-        lrc_pattern = re.compile(r'^\s*\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]')
-
-        def append_timestamp_from_ms(raw_ms: int, line_no: int, source: str):
-            nonlocal processed_lines
-            time_str = convert_milliseconds_to_time(raw_ms)
-            lrc_timestamp = f"[{time_str}]"
-            timestamps.append(lrc_timestamp)
-            processed_lines += 1
-            app.logger.debug(
-                f"第{line_no}行: {source} -> '{lrc_timestamp}' (原始值: {raw_ms}ms)"
-            )
-
-        for i, raw_line in enumerate(lines, 1):
-            line = raw_line.strip()
-            if not line:
-                empty_lines += 1
-                app.logger.debug(f"第{i}行: 空行，跳过")
-                continue
-
-            if metadata_pattern.match(line):
-                metadata_lines += 1
-                app.logger.debug(f"第{i}行: 元数据行 '{line[:50]}...'，跳过")
-                continue
-
-            # QRC: 行首为 [start,duration]
-            qrc_match = qrc_pattern.match(line)
-            if qrc_match:
-                try:
-                    start_ms = int(qrc_match.group(1))
-                    append_timestamp_from_ms(start_ms, i, 'QRC起始时间')
-                    app.logger.debug(
-                        f"第{i}行内容: '{raw_line[:100]}...'"
-                        if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
-                    )
-                    continue
-                except ValueError:
-                    app.logger.warning(f"第{i}行: QRC起始时间解析失败 '{qrc_match.group(1)}'")
-                    continue
-
-            # LRC: 行首为 [mm:ss.xxx]
-            lrc_match = lrc_pattern.match(line)
-            if lrc_match:
-                try:
-                    minutes = int(lrc_match.group(1))
-                    seconds = int(lrc_match.group(2))
-                    millis_str = lrc_match.group(3) or ''
-                    millis = int((millis_str + '000')[:3]) if millis_str else 0
-                    total_ms = (minutes * 60 + seconds) * 1000 + millis
-                    append_timestamp_from_ms(total_ms, i, 'LRC时间戳')
-                    app.logger.debug(
-                        f"第{i}行内容: '{raw_line[:100]}...'"
-                        if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
-                    )
-                    continue
-                except ValueError as e:
-                    app.logger.warning(f"第{i}行: LRC时间戳转换失败，错误: {str(e)}")
-                    continue
-
-            # LYS 逐字格式: 先检索行标记，再找 (start_ms, duration)
-            if lys_marker_pattern.match(line):
-                match = re.search(r'\((\d+),', line)
-                if match:
-                    try:
-                        timestamp = int(match.group(1))
-                        append_timestamp_from_ms(timestamp, i, 'LYS起始时间')
-                        app.logger.debug(
-                            f"第{i}行内容: '{raw_line[:100]}...'"
-                            if len(raw_line) > 100 else f"第{i}行内容: '{raw_line}'"
-                        )
-                        continue
-                    except ValueError as e:
-                        app.logger.warning(f"第{i}行: 时间戳转换失败 '{match.group(1)}', 错误: {str(e)}")
-                        continue
-
-            app.logger.debug(
-                f"第{i}行: 未识别的时间戳格式，跳过。内容: '{raw_line[:100]}...'"
-                if len(raw_line) > 100 else f"第{i}行: 未识别的时间戳格式，跳过。内容: '{raw_line}'"
-            )
-        
-        # 记录详细统计信息
-        app.logger.info(f"处理统计 - 总行数: {len(lines)}, 空行: {empty_lines}, 元数据行: {metadata_lines}, 处理行数: {processed_lines}")
-        app.logger.info(f"成功提取时间戳数量: {len(timestamps)}")
-        if timestamps:
-            app.logger.info(f"第一个时间戳: {timestamps[0]}")
-            app.logger.info(f"最后一个时间戳: {timestamps[-1]}")
-        else:
-            app.logger.warning("未提取到任何时间戳，请检查歌词格式")
-        
+        timestamps = extract_timestamps_from_content(lyrics_content)
         return jsonify({
             'status': 'success',
             'timestamps': timestamps
@@ -6775,48 +6801,8 @@ def extract_lyrics():
     try:
         data = request.json
         lyrics_content = data.get('content', '')
-        app.logger.info(f"收到歌词内容用于提取歌词文本，长度: {len(lyrics_content)} 字符")
-        
-        # 记录内容摘要
-        lines = lyrics_content.split('\n')
-        app.logger.info(f"原始歌词总行数: {len(lines)}")
-        if lines:
-            preview_lines = lines[:3] + ['...'] + lines[-3:] if len(lines) > 6 else lines
-            app.logger.debug(f"原始内容预览: {preview_lines}")
-        
-        # 使用正则表达式提取每行歌词（排除时间戳部分）
-        extracted_lyrics = []
-        empty_lines = 0
-        processed_lines = 0
-        filtered_lines = 0
-        
-        app.logger.info("开始处理歌词内容...")
-        extracted_lyrics = []
-        
-        # 遍历每行，提取每行中的歌词并去除时间戳
-        for line in lines:
-            # 使用正则表达式去掉所有中括号及其内容（对齐标记如[1]、[5]等）
-            line_lyrics = re.sub(r'\[.*?\]', '', line)
-            # 只去掉时间戳格式的括号内容 (数字,数字)，保留其他括号内容如(20)
-            # 时间戳格式：一个或多个数字，逗号，一个或多个数字
-            line_lyrics = re.sub(r'\(\d+,\d+\)', '', line_lyrics)
-            line_lyrics = line_lyrics.strip()  # 去掉首尾空白字符
-            if line_lyrics:  # 如果该行有歌词内容
-                extracted_lyrics.append(line_lyrics)
-        
-        # 将每行歌词添加换行符
+        extracted_lyrics = extract_lyrics_from_content(lyrics_content)
         cleaned_lyrics = '\n'.join(extracted_lyrics)
-        
-        # 记录详细统计信息
-        app.logger.info(f"提取统计 - 总行数: {len(lines)}, 空行: {empty_lines}, 过滤行: {filtered_lines}, 成功提取: {processed_lines}")
-        app.logger.info(f"最终提取歌词内容长度: {len(cleaned_lyrics)} 字符，行数: {len(extracted_lyrics)}")
-        
-        if extracted_lyrics:
-            preview_extracted = extracted_lyrics[:3] + ['...'] + extracted_lyrics[-3:] if len(extracted_lyrics) > 6 else extracted_lyrics
-            app.logger.debug(f"提取结果预览: {preview_extracted}")
-        else:
-            app.logger.warning("未提取到任何歌词内容")
-        
         return jsonify({
             'status': 'success',
             'content': cleaned_lyrics
@@ -6836,7 +6822,13 @@ def get_ai_settings():
         AI_TRANSLATION_SETTINGS['strip_brackets'] = AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)
     return jsonify({
         'status': 'success',
-        'settings': AI_TRANSLATION_SETTINGS
+        'settings': AI_TRANSLATION_SETTINGS,
+        'defaults': {
+            'system_prompt': AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
+            'thinking_system_prompt': AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
+            'strip_brackets': AI_TRANSLATION_DEFAULTS.get('strip_brackets', False),
+            'batch_fixed_prompt': BATCH_TRANSLATION_FIXED_PROMPT
+        }
     })
 
 @app.route('/save_ai_settings', methods=['POST'])
@@ -6904,9 +6896,14 @@ def probe_ai():
         if mode == 'thinking':
             api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('thinking_api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
             base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
+            model = request_data.get('model') or AI_TRANSLATION_SETTINGS.get('thinking_model') or AI_TRANSLATION_SETTINGS.get('model')
+            system_prompt = request_data.get('system_prompt') or ''
         else:
             api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
             base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
+            model = request_data.get('model') or AI_TRANSLATION_SETTINGS.get('model')
+            system_prompt = request_data.get('system_prompt') or ''
+        compat_mode = parse_bool(request_data.get('compat_mode'), False)
 
         # 规范化 base_url，去掉用户误填的 /chat/completions 等尾巴
         def _normalize_base_url(u: str) -> str:
@@ -6922,42 +6919,44 @@ def probe_ai():
         if not base_url:
             target = '思考模型' if mode == 'thinking' else '翻译模型'
             return jsonify({'status': 'error', 'message': f'未提供{target}的Base URL'})
+        if not model:
+            target = '思考模型' if mode == 'thinking' else '翻译模型'
+            return jsonify({'status': 'error', 'message': f'未提供{target}的模型名'})
 
         client = build_openai_client(api_key=api_key, base_url=base_url)
-        def _models_endpoint_missing(err: Exception) -> bool:
-            status_code = getattr(err, 'status_code', None)
-            if status_code == 404:
-                return True
-            resp = getattr(err, 'response', None)
-            if resp is not None and getattr(resp, 'status_code', None) == 404:
-                return True
-            text = str(err)
-            if not text:
-                return False
-            if '404' in text and '/v1/models' in text:
-                return True
-            return False
-
-        try:
-            models = client.models.list()
-            names = [m.id for m in getattr(models, 'data', [])]
-            return jsonify({'status': 'success', 'models': names[:200], 'base_url': base_url, 'mode': mode})
-        except Exception as probe_error:
-            if _models_endpoint_missing(probe_error):
-                app.logger.warning(
-                    "AI模型探活: 目标接口返回404，推测不支持 /v1/models 列表。继续返回成功状态。Base URL: %s, Mode: %s, 错误: %s",
-                    base_url,
-                    mode,
-                    probe_error
-                )
-                return jsonify({
-                    'status': 'success',
-                    'models': [],
-                    'base_url': base_url,
-                    'mode': mode,
-                    'note': 'models_endpoint_unavailable'
-                })
-            raise
+        if compat_mode:
+            probe_prompt = f"{system_prompt}\n\nping".strip() if system_prompt else 'ping'
+            probe_messages = [
+                {'role': 'user', 'content': probe_prompt}
+            ]
+        else:
+            probe_messages = []
+            if system_prompt:
+                probe_messages.append({'role': 'system', 'content': system_prompt})
+            probe_messages.append({'role': 'user', 'content': 'ping'})
+        probe_response = client.chat.completions.create(
+            model=model,
+            messages=probe_messages,
+            stream=True
+        )
+        first_chunk = None
+        for chunk in probe_response:
+            first_chunk = chunk
+            break
+        usage = getattr(first_chunk, 'usage', None) if first_chunk is not None else None
+        return jsonify({
+            'status': 'success',
+            'base_url': base_url,
+            'mode': mode,
+            'model': model,
+            'probe': 'chat.completions.stream',
+            'observed_chunk': first_chunk is not None,
+            'usage': {
+                'prompt_tokens': getattr(usage, 'prompt_tokens', None),
+                'completion_tokens': getattr(usage, 'completion_tokens', None),
+                'total_tokens': getattr(usage, 'total_tokens', None)
+            }
+        })
     except Exception as e:
         app.logger.error(f"探活AI服务时出错: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'探活失败: {e}', 'base_url': base_url_raw, 'mode': request_data.get('mode', 'translation')})
@@ -7021,9 +7020,6 @@ def translate_lyrics():
         base_url = _normalize_base_url(base_url)
         thinking_base_url = _normalize_base_url(thinking_base_url)
 
-        if not content:
-            return jsonify({'status': 'error', 'message': '未提供歌词内容'})
-
         if not api_key:
             return jsonify({'status': 'error', 'message': '请先设置API密钥'})
 
@@ -7038,29 +7034,189 @@ def translate_lyrics():
         app.logger.info(f"原始歌词内容长度: {len(content)} 字符")
         app.logger.info(f"API密钥: {api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '****'}")
 
-        def _coerce_json_payload(response_obj: Any) -> Dict[str, Any]:
-            if isinstance(response_obj, dict):
-                return response_obj
-            body = getattr(response_obj, "body", None)
-            if isinstance(body, (bytes, bytearray)):
-                try:
-                    return json.loads(body.decode("utf-8"))
-                except Exception:
-                    return {}
-            json_attr = getattr(response_obj, "json", None)
-            if isinstance(json_attr, dict):
-                return json_attr
-            return {}
+        items = request_data.get('items')
+        if isinstance(items, list) and items:
+            batch_thinking_enabled = parse_bool(request_data.get('thinking_enabled'), False)
+            valid_items: List[Dict[str, Any]] = []
+            for idx, raw_item in enumerate(items, 1):
+                item = raw_item if isinstance(raw_item, dict) else {}
+                item_id = str(item.get('id', idx)).strip() or str(idx)
+                item_content = item.get('content', '')
+                if not isinstance(item_content, str):
+                    item_content = str(item_content or '')
+                item_lyrics = extract_lyrics_from_content(item_content)
+                item_timestamps = extract_timestamps_from_content(item_content)
+                item_has_timestamps = len(item_timestamps) > 0
+                item_has_timestamp_markers = has_timestamp_markers(item_content)
+                if strip_brackets:
+                    item_lyrics = [strip_bracket_blocks(line) for line in item_lyrics]
 
-        # 1. 使用现有的提取功能获取时间戳和歌词
-        timestamps_response = extract_timestamps()
-        lyrics_response = extract_lyrics()
-        
-        # 从响应中获取数据
-        timestamps_payload = _coerce_json_payload(timestamps_response)
-        lyrics_payload = _coerce_json_payload(lyrics_response)
-        timestamps = timestamps_payload.get('timestamps', [])
-        lyrics = lyrics_payload.get('content', '').split('\n')
+                if not item_lyrics or all(not line.strip() for line in item_lyrics):
+                    continue
+                if item_has_timestamp_markers and not item_has_timestamps:
+                    continue
+                if item_has_timestamps and len(item_timestamps) != len(item_lyrics):
+                    continue
+
+                valid_items.append({
+                    'id': item_id,
+                    'jsonFile': item.get('jsonFile', ''),
+                    'lyricsPath': item.get('lyricsPath', ''),
+                    'translationPath': item.get('translationPath', ''),
+                    'lyrics': item_lyrics,
+                    'timestamps': item_timestamps,
+                    'hasTimestamps': item_has_timestamps
+                })
+
+            if not valid_items:
+                return jsonify({'status': 'error', 'message': '批量请求中没有可翻译的歌词项'})
+
+            def generate_batch():
+                try:
+                    batch_blocks = []
+                    for item in valid_items:
+                        numbered = '\n'.join(f"{i+1}.{line}" for i, line in enumerate(item['lyrics']))
+                        batch_blocks.append(f"[ID:{item['id']}]\n{numbered}")
+                    numbered_lyrics = '\n\n'.join(batch_blocks)
+                    batch_system_prompt = build_batch_system_prompt(system_prompt)
+
+                    if compat_mode:
+                        combined_prompt_parts = []
+                        if batch_system_prompt:
+                            combined_prompt_parts.append(batch_system_prompt.strip())
+                        combined_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                        messages = [{"role": "user", "content": '\n\n'.join(combined_prompt_parts)}]
+                    else:
+                        messages = [
+                            {"role": "system", "content": batch_system_prompt},
+                            {"role": "user", "content": f"待翻译歌词：\n{numbered_lyrics}"}
+                        ]
+
+                    if batch_thinking_enabled:
+                        yield f"thinking:{json.dumps({'summary': '批量模式默认建议关闭思考；当前已按请求开启。'})}\n"
+
+                    client = build_openai_client(api_key=api_key, base_url=base_url)
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=True
+                    )
+
+                    grouped = {item['id']: {} for item in valid_items}
+                    last_sent_counts = {item['id']: 0 for item in valid_items}
+                    current_id: Optional[str] = None
+                    stream_buffer = ""
+                    last_flush_at = time.monotonic()
+                    id_pattern = re.compile(r'^\s*\[ID:(.+?)\]\s*$')
+                    line_pattern = re.compile(r'^\s*(\d+)\.(.*)$')
+
+                    def emit_updates(force: bool = False):
+                        nonlocal last_flush_at
+                        now = time.monotonic()
+                        if not force and now - last_flush_at < 1.0:
+                            return
+                        emitted = False
+                        for item in valid_items:
+                            item_id = item['id']
+                            translated_dict = grouped.get(item_id, {})
+                            if not translated_dict:
+                                continue
+                            line_count = len(translated_dict)
+                            is_complete = line_count >= len(item['lyrics'])
+                            if line_count <= last_sent_counts[item_id]:
+                                continue
+                            if not force and not is_complete and now - last_flush_at < 1.0:
+                                continue
+                            line_prefixes = item['timestamps'] if item['hasTimestamps'] else [''] * len(item['lyrics'])
+                            final_lyrics = []
+                            for i in range(len(item['lyrics'])):
+                                translation = translated_dict.get(i)
+                                if translation is None:
+                                    continue
+                                prefix = line_prefixes[i] if i < len(line_prefixes) else ''
+                                final_lyrics.append(f"{prefix}{translation}" if prefix else translation)
+                            if not final_lyrics:
+                                continue
+                            payload = {
+                                'id': item_id,
+                                'jsonFile': item.get('jsonFile', ''),
+                                'translations': final_lyrics,
+                                'hasTimestamps': item['hasTimestamps']
+                            }
+                            yield f"content:{json.dumps(payload)}\n"
+                            last_sent_counts[item_id] = line_count
+                            emitted = True
+                        if emitted or force:
+                            last_flush_at = now
+
+                    for chunk in response:
+                        choices = getattr(chunk, 'choices', None)
+                        if not choices:
+                            continue
+                        delta = getattr(choices[0], 'delta', None)
+                        if delta is None:
+                            continue
+                        if expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            reasoning = delta.reasoning_content
+                            yield f"reasoning:{json.dumps({'reasoning': reasoning})}\n"
+                        if hasattr(delta, 'content') and delta.content:
+                            stream_buffer += delta.content
+                            lines, stream_buffer = iter_complete_lines(stream_buffer)
+                            for raw_line in lines:
+                                line = raw_line.strip()
+                                if not line:
+                                    continue
+                                id_match = id_pattern.match(line)
+                                if id_match:
+                                    current_id = id_match.group(1).strip()
+                                    grouped.setdefault(current_id, {})
+                                    continue
+                                if current_id is None:
+                                    continue
+                                line_match = line_pattern.match(line)
+                                if not line_match:
+                                    continue
+                                idx = int(line_match.group(1)) - 1
+                                if idx < 0:
+                                    continue
+                                grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+                            yield from emit_updates(False)
+
+                    if stream_buffer.strip():
+                        tail_lines, tail_buffer = iter_complete_lines(stream_buffer + '\n')
+                        if tail_buffer:
+                            tail_lines.append(tail_buffer)
+                        for raw_line in tail_lines:
+                            line = raw_line.strip()
+                            if not line:
+                                continue
+                            id_match = id_pattern.match(line)
+                            if id_match:
+                                current_id = id_match.group(1).strip()
+                                grouped.setdefault(current_id, {})
+                                continue
+                            if current_id is None:
+                                continue
+                            line_match = line_pattern.match(line)
+                            if not line_match:
+                                continue
+                            idx = int(line_match.group(1)) - 1
+                            if idx < 0:
+                                continue
+                            grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+                    yield from emit_updates(True)
+
+                except Exception as e:
+                    app.logger.error(f"批量翻译出错 [ID: {request_id}]: {str(e)}", exc_info=True)
+                    yield f"content:{json.dumps({'status':'error','message':str(e)})}\n"
+
+            return StreamingResponse(generate_batch(), media_type='text/event-stream')
+
+        if not content:
+            return jsonify({'status': 'error', 'message': '未提供歌词内容'})
+
+        timestamps = extract_timestamps_from_content(content)
+        lyrics = extract_lyrics_from_content(content)
 
         # 基于原始歌词判断是否存在时间戳模式
         candidate_lines = [
@@ -7397,6 +7553,12 @@ def translate_lyrics():
 @app.after_request
 def add_header(resp):
     resp.headers['Access-Control-Allow-Origin'] = '*'
+    content_type = resp.headers.get('content-type', '')
+    media_type = getattr(resp, 'media_type', '') or ''
+    if content_type.startswith('application/json') or media_type.startswith('application/json'):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
     return resp
 
 
@@ -7620,7 +7782,11 @@ def get_json_data():
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             json_data = json.load(f)
-        return jsonify({'status': 'success', 'jsonData': json_data})
+        response = jsonify({'status': 'success', 'jsonData': json_data})
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'读取JSON文件失败: {str(e)}'}), 500
 

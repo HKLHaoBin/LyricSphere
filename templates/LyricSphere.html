@@ -28,6 +28,58 @@
             --status-progress-bg: rgba(33, 33, 33, 0.92);
             --status-progress-color: #ffffff;
             --status-progress-desc-color: rgba(0, 0, 0, 0.72);
+
+            /* === 新设计系统：音乐科技感工作台 === */
+            /* 主色系：冰川蓝 + 青蓝偏银 */
+            --primary-color: #0ea5e9;
+            --primary-light: #06b6d4;
+            --primary-dark: #0284c7;
+            --secondary-color: #3b82f6;
+            
+            /* 工作台背景：低对比度渐变 */
+            --wb-bg-base: #f8f9fa;
+            --wb-bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
+            
+            /* 卡片风格：半透明磨砂 */
+            --wb-card-bg: rgba(255, 255, 255, 0.85);
+            --wb-card-blur: rgba(255, 255, 255, 0.6);
+            --wb-card-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+            --wb-card-border: rgba(0, 0, 0, 0.08);
+            --wb-card-hover-bg: rgba(255, 255, 255, 0.8);
+            --wb-card-hover-border: rgba(14, 165, 233, 0.5);
+            --wb-card-hover-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+            --wb-card-hover-glow: 0 0 0 1px rgba(14, 165, 233, 0.12);
+            --wb-card-hover-translate: -2px;
+            --wb-chip-hover-bg: rgba(255, 255, 255, 0.8);
+            
+            /* 语义色 */
+            --status-processing: #3b82f6;
+            --status-success: #10b981;
+            --status-warning: #f59e0b;
+            --status-skipped: #9ca3af;
+            --status-error: #ef4444;
+            
+            /* 字体层级 */
+            --text-primary: #1f2937;
+            --text-secondary: #6b7280;
+            --text-tertiary: #9ca3af;
+            
+            /* 边框和分隔 */
+            --border-light: rgba(0, 0, 0, 0.06);
+            --border-mid: rgba(0, 0, 0, 0.12);
+            --divider: rgba(0, 0, 0, 0.08);
+            --field-bg: rgba(255, 255, 255, 0.82);
+            --field-bg-focus: rgba(255, 255, 255, 0.96);
+            --field-border: rgba(0, 0, 0, 0.12);
+            --field-border-focus: rgba(14, 165, 233, 0.75);
+            --field-text: #111827;
+            --field-placeholder: #9ca3af;
+            --field-disabled-bg: rgba(243, 244, 246, 0.9);
+            --field-disabled-text: #9ca3af;
+            --field-help-text: #6b7280;
+            --field-link: #2563eb;
+            --field-link-hover: #1d4ed8;
+            --field-focus-shadow: rgba(14, 165, 233, 0.14);
         }
 
         .dark-mode {
@@ -52,6 +104,51 @@
             --status-progress-bg: rgba(20, 20, 20, 0.92);
             --status-progress-color: #ffffff;
             --status-progress-desc-color: rgba(255, 255, 255, 0.78);
+
+            /* === 深色模式设计系统 === */
+            --primary-color: #22d3ee;
+            --primary-light: #06b6d4;
+            --primary-dark: #0891b2;
+            
+            --wb-bg-base: #0f1419;
+            --wb-bg-gradient: linear-gradient(135deg, #1a202c 0%, #0f1419 100%);
+            
+            --wb-card-bg: rgba(30, 41, 59, 0.7);
+            --wb-card-blur: rgba(30, 41, 59, 0.5);
+            --wb-card-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --wb-card-border: rgba(255, 255, 255, 0.08);
+            --wb-card-hover-bg: rgba(30, 41, 59, 0.78);
+            --wb-card-hover-border: rgba(34, 211, 238, 0.65);
+            --wb-card-hover-shadow: 0 0 0 1px rgba(34, 211, 238, 0.14), 0 8px 22px rgba(0, 0, 0, 0.42);
+            --wb-card-hover-glow: 0 0 14px rgba(34, 211, 238, 0.14);
+            --wb-card-hover-translate: -1px;
+            --wb-chip-hover-bg: rgba(30, 41, 59, 0.78);
+            
+            --status-processing: #60a5fa;
+            --status-success: #34d399;
+            --status-warning: #fbbf24;
+            --status-skipped: #9ca3af;
+            --status-error: #f87171;
+            
+            --text-primary: #f3f4f6;
+            --text-secondary: #d1d5db;
+            --text-tertiary: #9ca3af;
+            
+            --border-light: rgba(255, 255, 255, 0.06);
+            --border-mid: rgba(255, 255, 255, 0.12);
+            --divider: rgba(255, 255, 255, 0.08);
+            --field-bg: rgba(15, 23, 42, 0.92);
+            --field-bg-focus: rgba(15, 23, 42, 0.98);
+            --field-border: rgba(255, 255, 255, 0.12);
+            --field-border-focus: rgba(34, 211, 238, 0.72);
+            --field-text: #f3f4f6;
+            --field-placeholder: #94a3b8;
+            --field-disabled-bg: rgba(30, 41, 59, 0.78);
+            --field-disabled-text: #64748b;
+            --field-help-text: #cbd5e1;
+            --field-link: #7dd3fc;
+            --field-link-hover: #a5f3fc;
+            --field-focus-shadow: rgba(34, 211, 238, 0.16);
         }
 
         body {
@@ -63,6 +160,11 @@
             /* padding: 39px; */
             padding-top: 70px;
             transition: background-color 0.3s ease, color 0.3s ease;
+            color-scheme: light;
+        }
+
+        .dark-mode {
+            color-scheme: dark;
         }
 
         /* 移动端适配 */
@@ -86,7 +188,7 @@
 
         .list-status {
             margin: 6px 14px;
-            color: #666;
+            color: var(--field-help-text);
             display: none;
             align-items: center;
             gap: 8px;
@@ -583,7 +685,7 @@
 
         .lyrics-search-status {
             font-size: 0.9em;
-            color: #666;
+            color: var(--field-help-text);
         }
 
         .lyrics-search-results {
@@ -920,7 +1022,7 @@
 
         .create-hint {
             font-size: 0.88rem;
-            color: #666;
+            color: var(--field-help-text);
         }
 
         .sort-button {
@@ -1544,6 +1646,685 @@
             color: #bbb !important;
             cursor: not-allowed !important;
         }
+
+        .batch-workbench-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1300;
+            display: none;
+            background: rgba(10, 12, 20, 0.62);
+            backdrop-filter: blur(6px);
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        .batch-workbench-modal.show {
+            display: block;
+        }
+        .batch-workbench-dialog {
+            width: min(1500px, calc(100vw - 32px));
+            height: min(860px, calc(100vh - 32px));
+            margin: 0 auto;
+            background: var(--wb-bg-gradient);
+            border-radius: 16px;
+            border: 1px solid var(--wb-card-border);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        .batch-workbench-dialog.maximized {
+            width: calc(100vw - 16px);
+            height: calc(100vh - 16px);
+        }
+        .batch-wb-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--divider);
+            display: grid;
+            grid-template-columns: 1fr auto auto auto auto;
+            align-items: center;
+            gap: 20px;
+            background: var(--wb-card-bg);
+            backdrop-filter: blur(10px);
+        }
+        .batch-wb-title {
+            margin: 0;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+        .batch-wb-subtitle {
+            font-size: 0.87rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+            font-weight: 400;
+        }
+        .batch-wb-header-title-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 工作台顶栏：任务概览胶囊 */
+        .batch-wb-header-summary {
+            display: flex;
+            gap: 12px;
+            padding: 0 12px;
+        }
+        .batch-wb-summary-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .batch-wb-summary-item-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .batch-wb-summary-item-label {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            font-weight: 500;
+        }
+        
+        /* 工作台顶栏：状态区 */
+        .batch-wb-header-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .batch-wb-status-badge {
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .batch-wb-status-badge.idle {
+            background: rgba(107, 114, 128, 0.15);
+            color: #4b5563;
+        }
+        .batch-wb-status-badge.running {
+            background: rgba(59, 130, 246, 0.15);
+            color: #3b82f6;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .batch-wb-status-badge.completed {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+        }
+        .batch-wb-status-badge.stopped {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+        .batch-wb-status-badge.failed {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+        
+        /* 极细进度条 */
+        .batch-wb-header-progress {
+            width: 120px;
+            height: 2px;
+            background: rgba(0, 0, 0, 0.08);
+            border-radius: 1px;
+            overflow: hidden;
+        }
+        .batch-wb-header-progress > span {
+            display: block;
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.3s ease;
+        }
+        
+        .batch-wb-header-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .batch-wb-body {
+            display: grid;
+            grid-template-columns: 34% 36% 30%;
+            gap: 0;
+            min-height: 0;
+            flex: 1;
+        }
+        .batch-wb-col {
+            min-height: 0;
+            overflow: hidden;
+            border-right: 1px solid var(--wb-card-border);
+            display: flex;
+            flex-direction: column;
+            background: var(--wb-bg-base);
+        }
+        .batch-wb-col:last-child {
+            border-right: none;
+        }
+        .batch-wb-col-inner {
+            padding: 16px;
+            overflow: auto;
+            min-height: 0;
+            flex: 1;
+            /* 隐藏默认滚动条但保留滚动能力 */
+            scrollbar-width: none;
+        }
+        .batch-wb-col-inner::-webkit-scrollbar {
+            display: none;
+        }
+        /* hover 时弱化显示滚动提示 */
+        .batch-wb-col-inner:hover {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
+        }
+        .batch-wb-col-inner::-webkit-scrollbar:hover {
+            width: 6px;
+        }
+        .batch-wb-col-inner::-webkit-scrollbar-track:hover {
+            background: transparent;
+        }
+        .batch-wb-col-inner::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+        }
+        .batch-wb-row {
+            margin-bottom: 12px;
+        }
+        .batch-wb-row:last-child {
+            margin-bottom: 0;
+        }
+        .file-path-input,
+        .lyrics-editor,
+        .batch-wb-search-input,
+        .batch-wb-textarea,
+        .batch-wb-select {
+            width: 100%;
+            border-radius: 8px;
+            border: 1.5px solid var(--field-border);
+            background: var(--field-bg);
+            color: var(--field-text);
+            box-sizing: border-box;
+            padding: 10px 12px;
+            font-size: 13px;
+            font-family: inherit;
+            transition: all 0.2s ease;
+            box-shadow: none;
+        }
+        .file-path-input::placeholder,
+        .lyrics-editor::placeholder,
+        .batch-wb-search-input::placeholder,
+        .batch-wb-textarea::placeholder {
+            color: var(--field-placeholder);
+        }
+        .file-path-input:focus,
+        .lyrics-editor:focus,
+        .batch-wb-search-input:focus,
+        .batch-wb-textarea:focus,
+        .batch-wb-select:focus {
+            outline: none;
+            border-color: var(--field-border-focus);
+            background: var(--field-bg-focus);
+            box-shadow: 0 0 0 3px var(--field-focus-shadow);
+        }
+        .file-path-input:disabled,
+        .lyrics-editor:disabled,
+        .batch-wb-search-input:disabled,
+        .batch-wb-textarea:disabled,
+        .batch-wb-select:disabled {
+            background: var(--field-disabled-bg);
+            color: var(--field-disabled-text);
+            cursor: not-allowed;
+        }
+        .batch-wb-select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+        select.file-path-input {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+        select.batch-wb-select,
+        select.file-path-input {
+            padding-right: 38px;
+            background-image: linear-gradient(45deg, transparent 50%, var(--field-placeholder) 50%), linear-gradient(135deg, var(--field-placeholder) 50%, transparent 50%);
+            background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
+            background-size: 6px 6px, 6px 6px;
+            background-repeat: no-repeat;
+        }
+        select.batch-wb-select::-ms-expand,
+        select.file-path-input::-ms-expand {
+            display: none;
+        }
+        select.batch-wb-select option,
+        select.file-path-input option {
+            color: var(--field-text);
+            background: var(--modal-bg);
+        }
+        .batch-wb-textarea {
+            min-height: 78px;
+            resize: vertical;
+        }
+
+        .form-help-text {
+            margin-top: 5px;
+            font-size: 12px;
+            color: var(--field-help-text);
+        }
+
+        .form-help-link {
+            color: var(--field-link);
+            text-decoration: none;
+        }
+
+        .form-help-link:hover {
+            color: var(--field-link-hover);
+            text-decoration: underline;
+        }
+        
+        /* === 新按钮设计系统 === */
+        .batch-wb-btn {
+            border: none;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        /* 主按钮：实心强调色 */
+        .batch-wb-btn.primary {
+            background: var(--primary-color);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+        }
+        .batch-wb-btn.primary:hover {
+            background: var(--primary-dark);
+            box-shadow: 0 6px 16px rgba(14, 165, 233, 0.4);
+            transform: translateY(-1px);
+        }
+        .batch-wb-btn.primary:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(14, 165, 233, 0.2);
+        }
+        
+        /* 次按钮：描边 */
+        .batch-wb-btn.secondary {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1.5px solid var(--wb-card-border);
+        }
+        .batch-wb-btn.secondary:hover {
+            background: rgba(14, 165, 233, 0.08);
+            border-color: var(--primary-color);
+            color: var(--primary-color);
+        }
+        
+        /* 危险按钮：低饱和红描边 */
+        .batch-wb-btn.danger {
+            background: transparent;
+            color: var(--status-error);
+            border: 1.5px solid rgba(239, 68, 68, 0.3);
+        }
+        .batch-wb-btn.danger:hover {
+            background: rgba(239, 68, 68, 0.08);
+            border-color: var(--status-error);
+        }
+        
+        /* 工具按钮：幽灵按钮 */
+        .batch-wb-btn.ghost {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+        }
+        .batch-wb-btn.ghost:hover {
+            background: rgba(0, 0, 0, 0.04);
+            color: var(--text-primary);
+        }
+        
+        .batch-wb-btn:disabled,
+        .batch-wb-btn.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .batch-wb-btn:disabled:hover,
+        .batch-wb-btn.disabled:hover {
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .batch-wb-chip-row,
+        .batch-wb-btn-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .batch-wb-chip {
+            border: 1.5px solid var(--wb-card-border);
+            background: rgba(255, 255, 255, 0.6);
+            color: var(--text-secondary);
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .batch-wb-chip:hover {
+            background: var(--wb-chip-hover-bg);
+            border-color: var(--primary-color);
+            color: var(--text-primary);
+        }
+        .batch-wb-chip.active {
+            background: var(--primary-color);
+            color: #fff;
+            border-color: var(--primary-color);
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+        }
+        .batch-wb-song-list,
+        .batch-wb-result-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 100%;
+            overflow: auto;
+            scrollbar-width: none;
+        }
+        .batch-wb-song-list::-webkit-scrollbar,
+        .batch-wb-result-list::-webkit-scrollbar {
+            display: none;
+        }
+        
+        .batch-wb-song-card,
+        .batch-wb-result-card {
+            border: 1.5px solid var(--wb-card-border);
+            border-radius: 10px;
+            padding: 12px;
+            background: var(--wb-card-bg);
+            cursor: pointer;
+            transition: all 0.25s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .batch-wb-song-card {
+            min-height: 104px;
+        }
+        .batch-wb-result-card {
+            min-height: 92px;
+        }
+        .batch-wb-song-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 3px;
+            height: 100%;
+            background: transparent;
+            transition: background 0.25s ease;
+        }
+        .batch-wb-song-card:hover {
+            background: var(--wb-card-hover-bg);
+            border-color: var(--wb-card-hover-border);
+            transform: translateY(var(--wb-card-hover-translate));
+            box-shadow: var(--wb-card-hover-shadow), var(--wb-card-hover-glow);
+        }
+        .batch-wb-song-card.selected {
+            border-color: var(--primary-color);
+            background: rgba(14, 165, 233, 0.08);
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+        }
+        .batch-wb-song-card.selected::before {
+            background: var(--primary-color);
+        }
+        .batch-wb-song-card.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .batch-wb-result-card {
+            padding: 10px;
+        }
+        .batch-wb-result-card:hover {
+            background: var(--wb-card-hover-bg);
+            border-color: var(--wb-card-hover-border);
+            transform: translateY(var(--wb-card-hover-translate));
+            box-shadow: var(--wb-card-hover-shadow), var(--wb-card-hover-glow);
+        }
+        .batch-wb-result-card.selected {
+            border-color: var(--primary-color);
+            background: rgba(14, 165, 233, 0.08);
+        }
+        .batch-wb-song-top {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .batch-wb-song-title {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            line-height: 1.35;
+        }
+        .batch-wb-song-meta {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            margin-top: 4px;
+            line-height: 1.45;
+            word-break: break-word;
+        }
+        .batch-wb-song-meta-item {
+            display: block;
+        }
+        .batch-wb-song-meta-line {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .batch-wb-song-meta-line.filename {
+            -webkit-line-clamp: 1;
+        }
+        .batch-wb-song-meta-line.artist {
+            -webkit-line-clamp: 1;
+        }
+        .batch-wb-song-meta-line.tags {
+            -webkit-line-clamp: 2;
+        }
+        .batch-wb-mini-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .batch-wb-mini-tag {
+            font-size: 11px;
+            border-radius: 6px;
+            padding: 3px 8px;
+            border: 1px solid var(--border-light);
+            background: rgba(0, 0, 0, 0.04);
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .batch-wb-detail {
+            margin-top: 10px;
+            border: 1.5px solid var(--wb-card-border);
+            border-radius: 10px;
+            background: var(--wb-card-bg);
+            padding: 12px;
+            backdrop-filter: blur(10px);
+        }
+        .batch-wb-pre {
+            white-space: pre-wrap;
+            margin: 8px 0;
+            max-height: 120px;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.04);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 12px;
+            color: var(--text-primary);
+            font-family: 'Consolas', 'Monaco', monospace;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+        }
+        .batch-wb-pre::-webkit-scrollbar {
+            width: 4px;
+        }
+        .batch-wb-pre::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .batch-wb-pre::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 2px;
+        }
+        
+        .batch-wb-status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .batch-wb-status-dot.processing {
+            background: var(--status-processing);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        .batch-wb-status-dot.success {
+            background: var(--status-success);
+        }
+        .batch-wb-status-dot.skipped {
+            background: var(--status-skipped);
+        }
+        .batch-wb-status-dot.error {
+            background: var(--status-error);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .batch-wb-status-text {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+        
+        .batch-wb-progress {
+            width: 100%;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        .batch-wb-progress > span {
+            display: block;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--primary-color) 0%, var(--primary-light) 100%);
+            transition: width .3s ease;
+            border-radius: 999px;
+        }
+        .batch-wb-song-meta {
+            font-size: 12px;
+            color: #8b8f9b;
+            margin-top: 4px;
+            line-height: 1.45;
+        }
+        .batch-wb-mini-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .batch-wb-mini-tag {
+            font-size: 11px;
+            border-radius: 6px;
+            padding: 2px 6px;
+            border: 1px solid var(--border-color);
+            background: var(--modal-bg);
+        }
+        .batch-wb-section {
+            border: 1px solid var(--wb-card-border);
+            border-radius: 12px;
+            background: var(--wb-card-bg);
+            padding: 12px;
+            margin-bottom: 12px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        .batch-wb-section:hover {
+            background: var(--wb-card-hover-bg);
+            box-shadow: var(--wb-card-hover-shadow);
+        }
+        .batch-wb-section-title {
+            margin: 0 0 10px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: 0.3px;
+        }
+        .batch-wb-progress {
+            width: 100%;
+            height: 9px;
+            border-radius: 999px;
+            background: rgba(127, 127, 127, 0.24);
+            overflow: hidden;
+        }
+        .batch-wb-progress > span {
+            display: block;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #4f7cff 0%, #64a7ff 100%);
+            transition: width .2s ease;
+        }
+        .batch-wb-status-text {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #8b8f9b;
+        }
+        .batch-wb-detail {
+            margin-top: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: var(--input-bg);
+            padding: 10px;
+        }
+        .batch-wb-pre {
+            white-space: pre-wrap;
+            margin: 4px 0 8px;
+            max-height: 120px;
+            overflow: auto;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+        }
+        .batch-wb-status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        @media (max-width: 1120px) {
+            .batch-wb-body {
+                grid-template-columns: 1fr;
+            }
+            .batch-wb-col {
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+            .batch-wb-col:last-child {
+                border-bottom: none;
+            }
+        }
     </style>
 </head>
 
@@ -1576,6 +2357,7 @@
                     <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
                     <button class="action-button" onclick="triggerStaticImport()" title="选择 static.zip 快速导入">快速导入</button>
                     <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
+                    <button class="action-button" onclick="openBatchWorkbench()">批量翻译工作台</button>
                     <a class="action-button" href="/lyric-sphere-v2/" target="_blank" rel="noopener">LyricSphere v2</a>
                     <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
                     <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
@@ -1599,6 +2381,11 @@
     </div>
 
     <div id="jsonListStatus" class="list-status"></div>
+    <div id="batchTranslateBar" style="display:none;">
+        <textarea id="batchExtraPrompt" style="display:none;" placeholder="批量附加提示词（可选）"></textarea>
+        <span id="batchSelectionCount" style="display:none;">已选 0 首</span>
+    </div>
+    <div id="batchTranslateStatus" class="list-status" style="display:none; white-space:pre-wrap;"></div>
     <div id="wifiLoaderWrapper">
         <!-- From Uiverse.io by mobinkakei -->
         <div id="wifi-loader">
@@ -1619,6 +2406,292 @@
         </div>
     </div>
     <ul class="json-list" id="jsonList"></ul>
+
+    <div id="batchWorkbenchModal" class="batch-workbench-modal" onclick="handleBatchWorkbenchBackdrop(event)">
+        <div id="batchWorkbenchDialog" class="batch-workbench-dialog">
+            <div class="batch-wb-header">
+                <!-- 左：标题 + 副标题 -->
+                <div class="batch-wb-header-title-group">
+                    <h2 class="batch-wb-title">翻译控制台</h2>
+                    <div class="batch-wb-subtitle">批量处理歌词翻译、规则覆盖与结果校验</div>
+                </div>
+                
+                <!-- 中：任务概览胶囊 -->
+                <div class="batch-wb-header-summary">
+                    <div class="batch-wb-summary-item">
+                        <span class="batch-wb-summary-item-value" id="batchWbSummaryTotal">0</span>
+                        <span class="batch-wb-summary-item-label">已选歌曲</span>
+                    </div>
+                    <div class="batch-wb-summary-item">
+                        <span class="batch-wb-summary-item-value" id="batchWbSummaryProcessable">0</span>
+                        <span class="batch-wb-summary-item-label">可翻译</span>
+                    </div>
+                    <div class="batch-wb-summary-item">
+                        <span class="batch-wb-summary-item-value" id="batchWbSummaryHasTranslation">0</span>
+                        <span class="batch-wb-summary-item-label">已有翻译</span>
+                    </div>
+                </div>
+                
+                <!-- 右：状态区 -->
+                <div class="batch-wb-header-status">
+                    <span class="batch-wb-status-badge idle" id="batchWbStatusBadge">待机</span>
+                    <div class="batch-wb-header-progress">
+                        <span id="batchWbHeaderProgressBar" style="width: 0%"></span>
+                    </div>
+                </div>
+                
+                <!-- 最右：窗口动作 -->
+                <div class="batch-wb-header-actions">
+                    <button class="batch-wb-btn ghost" onclick="toggleBatchWorkbenchMaximize()" title="最大化">◨</button>
+                    <button class="batch-wb-btn ghost" onclick="closeBatchWorkbench()" title="关闭">✕</button>
+                </div>
+            </div>
+            <div class="batch-wb-body">
+                <!-- 左栏：歌曲选择区（资源池风格） -->
+                <div class="batch-wb-col">
+                    <div class="batch-wb-col-inner">
+                        <!-- 搜索头 -->
+                        <div class="batch-wb-row">
+                            <input id="batchWorkbenchSearch" class="batch-wb-search-input" type="search" placeholder="搜索歌曲（歌名/歌手/文件名）">
+                        </div>
+                        
+                        <!-- 搜索设置 -->
+                        <div class="batch-wb-row" style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-secondary);">
+                                <input type="checkbox" id="batchWorkbenchFuzzyToggle" style="cursor: pointer;">
+                                <span>模糊搜索</span>
+                            </label>
+                        </div>
+                        
+                        <!-- 结果统计 -->
+                        <div class="batch-wb-row" style="font-size: 11px; color: var(--text-tertiary); padding: 8px 0; border-bottom: 1px solid var(--divider);">
+                            <div>共 <span id="batchWbTotalCount">0</span> 首</div>
+                            <div>当前筛出 <span id="batchWbFilteredCount">0</span> 首</div>
+                            <div>已选 <span id="batchWorkbenchSelectedCount">0</span> 首</div>
+                        </div>
+                        
+                        <!-- 筛选标签（状态筛选） -->
+                        <div class="batch-wb-row" style="margin-top: 8px;">
+                            <div style="font-size: 11px; color: var(--text-tertiary); font-weight: 600; margin-bottom: 6px;">状态筛选</div>
+                            <div id="batchWorkbenchFilterRow" class="batch-wb-chip-row"></div>
+                        </div>
+                        
+                        <!-- 快速动作 -->
+                        <div class="batch-wb-row" style="margin-top: 8px;">
+                            <div style="font-size: 11px; color: var(--text-tertiary); font-weight: 600; margin-bottom: 6px;">快速动作</div>
+                            <div class="batch-wb-btn-row">
+                                <button class="batch-wb-btn secondary" onclick="batchWorkbenchSelectCurrent()" title="选中当前搜索结果中的所有歌曲">选中当前结果</button>
+                                <button class="batch-wb-btn secondary" onclick="batchWorkbenchSelectUntranslated()" title="仅选择没有翻译的歌曲">仅选无翻译</button>
+                                <button class="batch-wb-btn danger" onclick="clearBatchSelectedSongs()" title="清空所有选中">清空选择</button>
+                            </div>
+                        </div>
+                        
+                        <!-- 歌曲列表 -->
+                        <div id="batchWorkbenchSongList" class="batch-wb-song-list"></div>
+                    </div>
+                </div>
+                <!-- 中栏：设置与提示词区 -->
+                <div class="batch-wb-col">
+                    <div class="batch-wb-col-inner">
+                        <!-- 模块 1：AI 连接设置 -->
+                        <div class="batch-wb-section">
+                            <h4 class="batch-wb-section-title">AI 连接设置</h4>
+                            <div style="font-size: 12px; line-height: 1.6;">
+                                <div style="margin-bottom: 10px;">
+                                    <label style="color: var(--text-secondary); font-size: 11px;">预设管理</label>
+                                    <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+                                        <select id="batchWbPresetSelect" class="batch-wb-select" onchange="onBatchWorkbenchPresetSelectChange()" style="flex: 1; min-width: 160px;">
+                                            <option value="">选择预设...</option>
+                                        </select>
+                                        <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="applyBatchWorkbenchPreset()">应用到工作台</button>
+                                    </div>
+                                    <div class="batch-wb-btn-row" style="gap: 6px; margin-top: 6px;">
+                                        <button class="batch-wb-btn ghost" style="flex: 1; font-size: 11px;" onclick="saveBatchWorkbenchAsPreset()">另存为预设</button>
+                                        <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="updateCurrentBatchWorkbenchPreset()">更新当前预设</button>
+                                        <button class="batch-wb-btn danger" style="flex: 1; font-size: 11px;" onclick="deleteBatchWorkbenchPreset()">删除预设</button>
+                                    </div>
+                                </div>
+                                <div style="margin-bottom: 8px;">
+                                    <label style="color: var(--text-secondary); font-size: 11px;">提供商</label>
+                                    <select id="batchWbAiProvider" class="batch-wb-select" onchange="updateBatchWorkbenchBaseUrlAndModel(true); syncBatchWbSettingsSummary()">
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="openai">OpenAI</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="together">Together</option>
+                                        <option value="groq">Groq</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                                <div style="margin-bottom: 8px;">
+                                    <label style="color: var(--text-secondary); font-size: 11px;">Base URL</label>
+                                    <input type="text" id="batchWbAiBaseUrl" class="batch-wb-search-input" placeholder="https://api.openai.com" onchange="syncBatchWbSettingsSummary()">
+                                </div>
+                                <div style="margin-bottom: 8px;">
+                                    <label style="color: var(--text-secondary); font-size: 11px;">模型</label>
+                                    <input type="text" id="batchWbAiModel" class="batch-wb-search-input" placeholder="例如: gpt-4o / deepseek-reasoner" onchange="syncBatchWbSettingsSummary()">
+                                </div>
+                                <div style="margin-bottom: 10px;">
+                                    <label style="color: var(--text-secondary); font-size: 11px;">API Key</label>
+                                    <input type="password" id="batchWbAiKey" class="batch-wb-search-input" placeholder="sk-..." onchange="syncBatchWbSettingsSummary()">
+                                </div>
+                                <div class="batch-wb-btn-row" style="gap: 6px; margin-bottom: 8px;">
+                                    <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="testBatchWbConnection()">连接测试</button>
+                                    <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="saveBatchWbCurrentSettings()">写回主设置</button>
+                                </div>
+                                <div style="padding: 8px; background: rgba(59, 130, 246, 0.08); border-radius: 6px; font-size: 11px; color: var(--text-secondary);">
+                                    <span style="display: block; margin-bottom: 4px;">当前来源：<span id="batchWbSettingsSource" style="color: var(--primary-color); font-weight: 600;">全局设置</span></span>
+                                    <span id="batchWbSettingsNote" style="font-size: 10px; color: var(--text-tertiary);">本次任务未覆盖</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 模块 2：翻译策略设置 -->
+                        <div class="batch-wb-section">
+                            <h4 class="batch-wb-section-title">翻译策略</h4>
+                            <div style="font-size: 12px; line-height: 2; display: flex; flex-direction: column; gap: 8px;">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbCompatMode" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">兼容模式</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbStripBrackets" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">去括号预处理</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbThinkingEnabled" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">启用思考模式</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbExpectReasoning" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">期望思维链</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbOnlyEmpty" checked onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">仅覆盖空翻译</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbAutoSave" checked onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">翻译后自动保存</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbAlwaysOverride" onchange="onBatchWbOverrideToggle(this)">
+                                    <span style="color: var(--text-primary);">始终覆盖已有翻译</span>
+                                </label>
+                                <div id="batchWbOverrideWarning" style="display: none; padding: 8px; background: rgba(245, 158, 11, 0.1); border-left: 3px solid var(--status-warning); border-radius: 4px; font-size: 11px; color: var(--status-warning); margin-top: 4px;">
+                                    ⚠️ 启用后将覆盖所有已有翻译，请谨慎操作
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 模块 3：提示词编辑 -->
+                        <div class="batch-wb-section">
+                            <h4 class="batch-wb-section-title">提示词编辑</h4>
+                            <div style="font-size: 12px;">
+                                <label style="display: block; color: var(--text-secondary); font-size: 11px; margin-bottom: 6px; font-weight: 600;">系统提示词</label>
+                                <textarea id="batchWorkbenchSystemPrompt" class="batch-wb-textarea" style="min-height: 60px;" onchange="syncBatchWbSettingsSummary()" placeholder="系统提示词（可编辑）"></textarea>
+
+                                <label style="display: block; color: var(--text-secondary); font-size: 11px; margin-top: 10px; margin-bottom: 6px; font-weight: 600;">批量固定规则（不可编辑）</label>
+                                <div id="batchWbFixedPrompt" class="batch-wb-pre" style="min-height: 56px; white-space: pre-wrap; background: rgba(99, 102, 241, 0.08);">（未加载固定规则）</div>
+                                
+                                <label style="display: block; color: var(--text-secondary); font-size: 11px; margin-top: 10px; margin-bottom: 6px; font-weight: 600;">附加提示词</label>
+                                <textarea id="batchWorkbenchExtraPrompt" class="batch-wb-textarea" style="min-height: 50px;" onchange="syncBatchWbSettingsSummary()" placeholder="批量附加提示词（可选，将追加到系统提示词后）"></textarea>
+                                
+                                <div class="batch-wb-btn-row" style="margin-top: 8px; gap: 6px;">
+                                    <button class="batch-wb-btn ghost" style="flex: 1; font-size: 11px;" onclick="restoreBatchPromptDefaults()">恢复默认</button>
+                                    <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="previewBatchFinalPrompt()">预览完整</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 模块 4：本次任务摘要 -->
+                        <div class="batch-wb-section">
+                            <h4 class="batch-wb-section-title">本次任务摘要</h4>
+                            <div id="batchWorkbenchSummary" style="font-size: 11px; line-height: 1.8; color: var(--text-secondary);">
+                                <div>选中歌曲：<span id="batchWbSummarySelectedCount" style="color: var(--text-primary); font-weight: 600;">0</span> 首</div>
+                                <div>预计处理：<span id="batchWbSummaryProcessableCount" style="color: var(--text-primary); font-weight: 600;">0</span> 首</div>
+                                <div>预计跳过：<span id="batchWbSummarySkippedCount" style="color: var(--status-skipped); font-weight: 600;">0</span> 首</div>
+                                <div style="margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--divider);">
+                                    <div style="color: var(--text-primary);">使用模型：<span id="batchWbSummaryModel">gpt-4o</span></div>
+                                    <div style="color: var(--text-primary);">覆盖策略：<span id="batchWbSummaryCoverageMode">仅覆盖空翻译</span></div>
+                                    <div data-batch-summary-extra style="color: var(--text-secondary);">其中 TTML：0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 右栏：运行态与结果区 -->
+                <div class="batch-wb-col">
+                    <div class="batch-wb-col-inner">
+                        <!-- 任务驾驶舱 -->
+                        <div class="batch-wb-section">
+                            <h4 class="batch-wb-section-title">任务驾驶舱</h4>
+                            
+                            <!-- 启动/停止按钮 -->
+                            <div class="batch-wb-btn-row" style="gap: 8px; margin-bottom: 12px;">
+                                <button class="batch-wb-btn primary" style="flex: 1;" onclick="startBatchTranslate()">▶ 开始翻译</button>
+                                <button class="batch-wb-btn secondary" style="flex: 1;" onclick="stopBatchTranslate()">⏹ 停止任务</button>
+                            </div>
+                            
+                            <!-- 当前阶段 -->
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">
+                                <div style="margin-bottom: 4px;">阶段：<span id="batchWbCurrentStage" style="color: var(--text-primary); font-weight: 600;">待机</span></div>
+                            </div>
+                            
+                            <!-- 总进度 -->
+                            <div style="margin-bottom: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <span style="font-size: 11px; color: var(--text-secondary);">总体进度</span>
+                                    <span style="font-size: 11px; color: var(--text-primary); font-weight: 600;"><span id="batchWbProgressPercent">0</span>%</span>
+                                </div>
+                                <div class="batch-wb-progress" style="height: 8px;">
+                                    <span id="batchWorkbenchProgressBar"></span>
+                                </div>
+                            </div>
+                            
+                            <!-- 成功/失败/跳过计数 -->
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px;">
+                                <div style="text-align: center; padding: 8px; background: rgba(16, 185, 129, 0.08); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.2);">
+                                    <div class="batch-wb-status-dot success" style="display: inline-block; margin-bottom: 4px;"></div>
+                                    <div style="font-size: 14px; font-weight: 700; color: var(--status-success);" id="batchWbCountSuccess">0</div>
+                                    <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 2px;">成功</div>
+                                </div>
+                                <div style="text-align: center; padding: 8px; background: rgba(59, 130, 246, 0.08); border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.2);">
+                                    <div class="batch-wb-status-dot processing" style="display: inline-block; margin-bottom: 4px;"></div>
+                                    <div style="font-size: 14px; font-weight: 700; color: var(--status-processing);" id="batchWbCountProcessing">0</div>
+                                    <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 2px;">处理中</div>
+                                </div>
+                                <div style="text-align: center; padding: 8px; background: rgba(239, 68, 68, 0.08); border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.2);">
+                                    <div class="batch-wb-status-dot error" style="display: inline-block; margin-bottom: 4px;"></div>
+                                    <div style="font-size: 14px; font-weight: 700; color: var(--status-error);" id="batchWbCountError">0</div>
+                                    <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 2px;">失败</div>
+                                </div>
+                            </div>
+                            
+                            <!-- 跳过计数 -->
+                            <div style="padding: 8px; background: rgba(156, 163, 175, 0.08); border-radius: 8px; text-align: center;">
+                                <div style="font-size: 10px; color: var(--text-tertiary);">已跳过</div>
+                                <div style="font-size: 16px; font-weight: 700; color: var(--status-skipped);" id="batchWbCountSkipped">0</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 结果列表 -->
+                        <div style="margin-top: 12px;">
+                            <div style="font-size: 12px; color: var(--text-secondary); font-weight: 600; margin-bottom: 8px;">翻译结果</div>
+                            <div class="batch-wb-btn-row" style="gap: 6px; margin-bottom: 8px;">
+                                <button class="batch-wb-btn primary" style="flex: 1; font-size: 11px;" onclick="saveBatchWorkbenchResults('all')">全部保存</button>
+                                <button class="batch-wb-btn secondary" style="flex: 1; font-size: 11px;" onclick="saveBatchWorkbenchResults('pending')">保存未落盘项</button>
+                                <button class="batch-wb-btn ghost" style="flex: 1; font-size: 11px;" onclick="saveBatchWorkbenchResults('failed')">重试失败项</button>
+                            </div>
+                            <div id="batchWorkbenchResultList" class="batch-wb-result-list"></div>
+                        </div>
+                        
+                        <!-- 详情面板（默认隐藏） -->
+                        <div id="batchWorkbenchDetail" class="batch-wb-detail" style="display: none; margin-top: 12px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div id="lyricsModal" class="modal">
         <div class="modal-content">
@@ -1711,14 +2784,14 @@
                         <div id="extraPromptContainer" style="display: none; margin-top: 10px; padding: 10px; border: 1px dashed var(--border-color); border-radius: 8px; background: var(--input-bg); max-height: 400px; overflow-y: auto;">
                             <div style="margin-bottom: 12px;">
                                 <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: var(--text-color); font-weight: 600;">附加翻译提示词：</label>
-                                <textarea id="extraTranslationPrompt" style="width: 100%; height: 100px; resize: vertical; border-radius: 6px; border: 1px solid var(--border-color); padding: 8px; background: var(--modal-bg); color: var(--text-color); font-family: inherit; box-sizing: border-box;" placeholder="在此输入附加的翻译要求，例如：&#10;- 请使用更文艺的翻译风格&#10;- 注意押韵&#10;- 这首歌是关于..."></textarea>
+                                <textarea id="extraTranslationPrompt" class="batch-wb-textarea" style="width: 100%; height: 100px; resize: vertical; margin: 0;" placeholder="在此输入附加的翻译要求，例如：&#10;- 请使用更文艺的翻译风格&#10;- 注意押韵&#10;- 这首歌是关于..."></textarea>
                             </div>
                             <div style="margin-bottom: 8px;">
                                 <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: var(--text-color); font-weight: 600;">附加思考提示词：</label>
-                                <textarea id="extraThinkingPrompt" style="width: 100%; height: 100px; resize: vertical; border-radius: 6px; border: 1px solid var(--border-color); padding: 8px; background: var(--modal-bg); color: var(--text-color); font-family: inherit; box-sizing: border-box;" placeholder="在此输入附加的思考指导，例如：&#10;- 这是一首关于爱情的歌曲&#10;- 歌手想要表达的是..."></textarea>
+                                <textarea id="extraThinkingPrompt" class="batch-wb-textarea" style="width: 100%; height: 100px; resize: vertical; margin: 0;" placeholder="在此输入附加的思考指导，例如：&#10;- 这是一首关于爱情的歌曲&#10;- 歌手想要表达的是..."></textarea>
                             </div>
                             <div style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
-                                <span style="font-size: 0.8em; color: #888;">此内容仅本次有效，关闭窗口后自动清空</span>
+                                <span class="form-help-text" style="margin-top: 0; font-size: 0.8em;">此内容仅本次有效，关闭窗口后自动清空</span>
                                 <div style="display: flex; gap: 8px;">
                                     <button class="lyrics-action-btn path-update-btn" onclick="clearExtraPrompt()" style="padding: 4px 12px; font-size: 0.85em;">清空</button>
                                     <button class="lyrics-action-btn path-update-btn" onclick="toggleExtraPrompt()" style="padding: 4px 12px; font-size: 0.85em;">收起</button>
@@ -1809,7 +2882,7 @@
                             onchange="handleMusicUpload()">
                     </label>
                 </div>
-                <small style="display: block; margin-top: 5px; color: #666;">
+                <small class="form-help-text" style="display: block; margin-top: 5px;">
                     提示：可直接输入文件名或上传音频视频文件（支持所有格式）
                 </small>
             </div>
@@ -1836,7 +2909,7 @@
                             onchange="handleImageUpload(this.files[0], 'album')">
                     </label>
                 </div>
-                <small style="display: block; margin-top: 5px; color: #666;">
+                <small class="form-help-text" style="display: block; margin-top: 5px;">
                     提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
                 </small>
             </div>
@@ -1854,7 +2927,7 @@
                             onchange="handleImageUpload(this.files[0], 'background')">
                     </label>
                 </div>
-                <small style="display: block; margin-top: 5px; color: #666;">
+                <small class="form-help-text" style="display: block; margin-top: 5px;">
                     提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名
                 </small>
             </div>
@@ -1870,7 +2943,7 @@
                             onchange="handleImageUpload(this.files[0], 'dynamicCover')">
                     </label>
                 </div>
-                <small style="display: block; margin-top: 5px; color: #666;">
+                <small class="form-help-text" style="display: block; margin-top: 5px;">
                     提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放
                 </small>
 
@@ -1883,7 +2956,7 @@
                             onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
                     </label>
                 </div>
-                <small style="display: block; margin-top: 5px; color: #666;">
+                <small class="form-help-text" style="display: block; margin-top: 5px;">
                     提示：视频加载前显示的静态图片，建议用专辑图
                 </small>
 
@@ -1893,7 +2966,7 @@
                     <div style="width: 200px; height: 200px; background: #222; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
                         <img id="dynamicCoverPreviewImg" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" alt="动态封面预览">
                         <video id="dynamicCoverPreviewVideo" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" muted loop autoplay playsinline></video>
-                        <div id="dynamicCoverPreviewPlaceholder" style="color: #666; font-size: 12px; text-align: center; padding: 10px;">
+                        <div id="dynamicCoverPreviewPlaceholder" class="form-help-text" style="text-align: center; padding: 10px;">
                             无预览
                         </div>
                     </div>
@@ -2030,7 +3103,7 @@
                 <div id="authSuccess" style="display: none; text-align: center; color: #37b24d;">
                     <div style="font-size: 3rem; margin-bottom: 10px;">✅</div>
                     <div>设备已成功认证！</div>
-                    <div style="font-size: 0.9em; color: #666; margin-top: 10px;">您现在可以编辑内容了</div>
+                    <div class="form-help-text" style="font-size: 0.9em; margin-top: 10px;">您现在可以编辑内容了</div>
                     <button onclick="closeAuthModal()" style="margin-top: 15px;">关闭</button>
                 </div>
             </div>
@@ -2057,7 +3130,7 @@
                     <label>确认新密码：</label>
                     <input type="password" id="confirmPassword" class="file-path-input" placeholder="请再次输入新密码">
                 </div>
-                <div style="font-size: 12px; color: #666;">
+                <div class="form-help-text">
                     💡 密码要求：最少8个字符，建议包含字母、数字和特殊字符
                 </div>
                 <div class="editor-buttons">
@@ -2151,8 +3224,8 @@
                 <div>
                     <label>API密钥：</label>
                     <input type="password" id="aiApiKey" class="file-path-input" placeholder="请输入API密钥">
-                    <div style="margin-top: 5px; font-size: 12px; color: #666;">
-                        <a href="https://platform.deepseek.com/usage" target="_blank" style="color: #0066cc; text-decoration: none;">点击这里获取 DeepSeek API 密钥 →</a>
+                    <div class="form-help-text">
+                        <a href="https://platform.deepseek.com/usage" target="_blank" class="form-help-link">点击这里获取 DeepSeek API 密钥 →</a>
                     </div>
                 </div>
                 <div>
@@ -2161,7 +3234,7 @@
                 </div>
                 <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
                     <h3 style="margin: 0 0 8px 0;">思考模型设置</h3>
-                    <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                    <div class="form-help-text" style="margin-bottom: 8px;">
                         可选：先调用思考模型生成整首歌理解，再将结果传给翻译模型。留空的字段将沿用翻译设置。
                     </div>
                     <div>
@@ -2433,7 +3506,7 @@
                     const styleSettingsSnapshot = readCachedAmllSettings();
                     const styleQuerySnapshot = buildStyleQueryFromSettings(styleSettingsSnapshot);
 
-                    const response = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
+                const response = await fetch('/get_json_data?filename=' + encodeURIComponent(filename), { cache: 'no-store' });
                     const data = await response.json();
                     if (data.status !== 'success') {
                         alert('无法获取歌曲信息');
@@ -2676,8 +3749,1575 @@
         const fuzzySearchToggle = document.getElementById('fuzzySearchToggle')
         const jsonList = document.getElementById('jsonList')
         const jsonListStatus = document.getElementById('jsonListStatus')
+        const batchTranslateStatus = document.getElementById('batchTranslateStatus')
+        const batchSelectionCount = document.getElementById('batchSelectionCount')
         const songSummaryCache = new Map()
+        const selectedSongs = new Set()
         let allJsonItems = []
+
+        const BATCH_FILTERS = [
+            { key: 'all', label: '全部' },
+            { key: 'hasLyrics', label: '有歌词' },
+            { key: 'noTranslation', label: '无翻译' },
+            { key: 'ttml', label: 'TTML' },
+            { key: 'noAudio', label: '无音源' }
+        ]
+        const BATCH_RESULT_STATUS_META = {
+            queued: { text: '等待处理', color: '#8f95a3' },
+            reading: { text: '读取歌词中', color: '#4f7cff' },
+            converting: { text: 'TTML 转换中', color: '#4f7cff' },
+            sent: { text: '已发送到模型', color: '#4f7cff' },
+            received: { text: '已接收翻译', color: '#4f7cff' },
+            saving: { text: '保存中', color: '#4f7cff' },
+            success: { text: '成功', color: '#2ea043' },
+            stopped: { text: '已停止', color: '#f0ad4e' },
+            skipped: { text: '跳过', color: '#f0ad4e' },
+            failed: { text: '失败', color: '#d9534f' }
+        }
+        const BATCH_TERMINAL_STATUS_KEYS = new Set(['success', 'failed', 'skipped', 'stopped'])
+        const BATCH_PROCESSING_STATUS_KEYS = new Set(['queued', 'reading', 'converting', 'sent', 'received', 'saving'])
+        const batchWorkbenchState = {
+            visible: false,
+            maximized: false,
+            filter: 'all',
+            results: new Map(),
+            resultCardMap: new Map(),
+            resultCardPlaceholder: null,
+            dirtyResultIds: new Set(),
+            resultStructureDirty: false,
+            activeResultId: '',
+            lastRenderedActiveResultId: '',
+            detailDirty: false,
+            running: false,
+            stopRequested: false,
+            lifecyclePhase: 'idle',
+            finalResult: 'none',
+            runState: 'idle',
+            runPhase: '等待开始',
+            totals: { total: 0, completed: 0 },
+            latestStage: '等待开始',
+            songListItems: [],
+            songListCursor: 0,
+            songListBatchSize: 72,
+            songListScrollRaf: 0,
+            resultRenderRaf: 0,
+            detailRenderRaf: 0,
+            statusRenderRaf: 0,
+            statusRenderTimer: 0,
+            statusLastFlushAt: 0,
+            statusThrottleMs: 260,
+            pendingStatusLines: [],
+            pendingStatusIsError: false,
+            statsRenderRaf: 0,
+            runtimeStats: {
+                success: 0,
+                failed: 0,
+                skipped: 0,
+                processing: 0,
+                completed: 0,
+                total: 0
+            },
+            diagnostics: {
+                streamChunkCount: 0,
+                uiRefreshCount: 0,
+                partialUpdateCount: 0,
+                fullRefreshCount: 0
+            },
+            activePresetId: ''
+        }
+        let batchTranslateAbortController = null
+        let defaultBatchSystemPromptCache = ''
+        let defaultBatchFixedPromptCache = ''
+        const BATCH_WORKBENCH_ACTIVE_PRESET_KEY = 'batchWorkbenchActiveAiPresetId'
+
+        function getSummaryDisplayName(summary) {
+            if (!summary) return ''
+            const title = String(summary.title || '').trim()
+            if (title) return title
+            return String(summary.filename || '').replace(/\.json$/i, '')
+        }
+
+        function getSummaryArtist(summary) {
+            if (!summary) return ''
+            if (Array.isArray(summary.artists)) {
+                return summary.artists.filter(Boolean).join(' / ')
+            }
+            return String(summary.artist || '').trim()
+        }
+
+        function isSummaryTTML(summary) {
+            const p = String(summary && summary.lyricsPath ? summary.lyricsPath : '').toLowerCase()
+            return p.endsWith('.ttml')
+        }
+
+        function hasSummaryTranslation(summary) {
+            const path = String(summary && summary.translationPath ? summary.translationPath : '').trim()
+            return Boolean(path && path !== '!')
+        }
+
+        function shouldSummaryMatchFilter(summary, filterKey) {
+            if (filterKey === 'all') return true
+            if (filterKey === 'hasLyrics') return hasLyricsSummary(summary)
+            if (filterKey === 'noTranslation') return !hasSummaryTranslation(summary)
+            if (filterKey === 'ttml') return isSummaryTTML(summary)
+            if (filterKey === 'noAudio') return !summary.hasAudio
+            return true
+        }
+
+         function getBatchWorkbenchControls() {
+             return {
+                 modal: document.getElementById('batchWorkbenchModal'),
+                 dialog: document.getElementById('batchWorkbenchDialog'),
+                 search: document.getElementById('batchWorkbenchSearch'),
+                 fuzzy: document.getElementById('batchWorkbenchFuzzyToggle'),
+                 selectedCount: document.getElementById('batchWorkbenchSelectedCount'),
+                 filterRow: document.getElementById('batchWorkbenchFilterRow'),
+                 songList: document.getElementById('batchWorkbenchSongList'),
+                 summary: document.getElementById('batchWorkbenchSummary'),
+                 progressBar: document.getElementById('batchWorkbenchProgressBar'),
+                 runStatus: document.getElementById('batchWorkbenchRunStatus'),
+                 modelPreset: document.getElementById('batchWorkbenchModelPreset'),
+                 compatMode: document.getElementById('batchWorkbenchCompatMode'),
+                 stripBrackets: document.getElementById('batchWorkbenchStripBrackets'),
+                 thinkingEnabled: document.getElementById('batchWorkbenchThinkingEnabled'),
+                 expectReasoning: document.getElementById('batchWorkbenchExpectReasoning'),
+                 systemPrompt: document.getElementById('batchWorkbenchSystemPrompt'),
+                 extraPrompt: document.getElementById('batchWorkbenchExtraPrompt'),
+                 autoSave: document.getElementById('batchWbAutoSave'),
+                 onlyEmpty: document.getElementById('batchWbOnlyEmpty'),
+                 alwaysOverride: document.getElementById('batchWbAlwaysOverride'),
+                 resultList: document.getElementById('batchWorkbenchResultList'),
+                 detail: document.getElementById('batchWorkbenchDetail'),
+                 // 新增：工作台头部元素
+                 headerTitle: document.querySelector('.batch-wb-title'),
+                 headerSubtitle: document.querySelector('.batch-wb-subtitle'),
+                 summaryTotal: document.getElementById('batchWbSummaryTotal'),
+                 summaryProcessable: document.getElementById('batchWbSummaryProcessable'),
+                 summaryHasTranslation: document.getElementById('batchWbSummaryHasTranslation'),
+                 statusBadge: document.getElementById('batchWbStatusBadge'),
+                 headerProgressBar: document.getElementById('batchWbHeaderProgressBar'),
+                 // 新增：设置区元素
+                 aiProvider: document.getElementById('batchWbAiProvider'),
+                 aiBaseUrl: document.getElementById('batchWbAiBaseUrl'),
+                  aiModel: document.getElementById('batchWbAiModel'),
+                  aiKey: document.getElementById('batchWbAiKey'),
+                  presetSelect: document.getElementById('batchWbPresetSelect'),
+                  settingsSource: document.getElementById('batchWbSettingsSource'),
+                  settingsNote: document.getElementById('batchWbSettingsNote'),
+                  compatModeCheck: document.getElementById('batchWbCompatMode'),
+                  stripBracketsCheck: document.getElementById('batchWbStripBrackets'),
+                  thinkingEnabledCheck: document.getElementById('batchWbThinkingEnabled'),
+                 expectReasoningCheck: document.getElementById('batchWbExpectReasoning'),
+                 onlyEmptyCheck: document.getElementById('batchWbOnlyEmpty'),
+                 alwaysOverrideCheck: document.getElementById('batchWbAlwaysOverride'),
+                 overrideWarning: document.getElementById('batchWbOverrideWarning'),
+                 summaryModel: document.getElementById('batchWbSummaryModel'),
+                 summaryCoverageMode: document.getElementById('batchWbSummaryCoverageMode'),
+                 summarySelectedCount: document.getElementById('batchWbSummarySelectedCount'),
+                 summaryProcessableCount: document.getElementById('batchWbSummaryProcessableCount'),
+                 summarySkippedCount: document.getElementById('batchWbSummarySkippedCount'),
+                 // 新增：运行态区元素
+                 currentStage: document.getElementById('batchWbCurrentStage'),
+                 progressPercent: document.getElementById('batchWbProgressPercent'),
+                 countSuccess: document.getElementById('batchWbCountSuccess'),
+                 countProcessing: document.getElementById('batchWbCountProcessing'),
+                 countError: document.getElementById('batchWbCountError'),
+                 countSkipped: document.getElementById('batchWbCountSkipped'),
+                 totalCount: document.getElementById('batchWbTotalCount'),
+                 filteredCount: document.getElementById('batchWbFilteredCount')
+             }
+         }
+
+        function getBatchWorkbenchSummaryList() {
+            return Array.from(songSummaryCache.values())
+        }
+
+        function getBatchWorkbenchFilteredSummaries() {
+            const controls = getBatchWorkbenchControls()
+            const raw = String(controls.search && controls.search.value ? controls.search.value : '').toLowerCase()
+            const isFuzzy = Boolean(controls.fuzzy && controls.fuzzy.checked)
+            const keywords = isFuzzy ? parseFuzzyKeywords(raw) : parseKeywords(raw)
+            const all = getBatchWorkbenchSummaryList().filter(summary => shouldSummaryMatchFilter(summary, batchWorkbenchState.filter))
+            if (!keywords.length) {
+                return all
+            }
+            return all.filter(summary => {
+                const source = [
+                    getSummaryDisplayName(summary),
+                    getSummaryArtist(summary),
+                    summary.filename || ''
+                ].join(' ').toLowerCase()
+                return keywords.every(keyword => source.includes(keyword))
+            })
+        }
+
+         function renderBatchSelectionCount() {
+             if (batchSelectionCount) {
+                 batchSelectionCount.textContent = `已选 ${selectedSongs.size} 首`
+             }
+             const controls = getBatchWorkbenchControls()
+             if (controls.selectedCount) {
+                 controls.selectedCount.textContent = String(selectedSongs.size)
+             }
+             syncBatchWbHeaderSummary() // 新增：更新头部概览
+             renderBatchWorkbenchSummary()
+         }
+
+        function toggleBatchSongSelection(filename, checked) {
+            if (!filename) return
+            if (checked) {
+                selectedSongs.add(filename)
+            } else {
+                selectedSongs.delete(filename)
+            }
+            renderBatchSelectionCount()
+            refreshBatchWorkbenchSongCard(filename)
+        }
+
+
+
+        function updateBatchTranslateStatus(lines, isError = false) {
+            if (!batchTranslateStatus) return
+            if (!lines || lines.length === 0) {
+                batchTranslateStatus.style.display = 'none'
+                batchTranslateStatus.textContent = ''
+                return
+            }
+            batchTranslateStatus.style.display = 'block'
+            batchTranslateStatus.style.color = isError ? '#d9534f' : '#666'
+            batchTranslateStatus.textContent = lines.join('\n')
+        }
+
+        function renderBatchWorkbenchFilterRow() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.filterRow) return
+            controls.filterRow.innerHTML = ''
+            BATCH_FILTERS.forEach(item => {
+                const btn = document.createElement('button')
+                btn.className = `batch-wb-chip ${batchWorkbenchState.filter === item.key ? 'active' : ''}`
+                btn.textContent = item.label
+                btn.addEventListener('click', () => {
+                    batchWorkbenchState.filter = item.key
+                    renderBatchWorkbenchFilterRow()
+                    renderBatchWorkbenchSongList()
+                })
+                controls.filterRow.appendChild(btn)
+            })
+        }
+
+        function collectSummaryTags(summary) {
+            const tags = []
+            tags.push(hasSummaryTranslation(summary) ? '已有翻译' : '无翻译')
+            if (isSummaryTTML(summary)) tags.push('TTML')
+            if (!hasLyricsSummary(summary)) tags.push('纯音乐')
+            if (summary.hasDuet) tags.push('对唱')
+            if (summary.hasBackgroundVocals) tags.push('背景歌词')
+            return tags
+        }
+
+        function canSaveBatchResult(target) {
+            const translations = Array.isArray(target?.payload?.translations) ? target.payload.translations : []
+            return Boolean(target?.summary && translations.length > 0)
+        }
+
+        function escapeSelectorValue(value) {
+            const text = String(value || '')
+            if (window.CSS && typeof window.CSS.escape === 'function') {
+                return window.CSS.escape(text)
+            }
+            return text.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+        }
+
+        function getBatchWorkbenchPresetStateFromUI() {
+            const settings = getBatchWorkbenchSettingsFromUI()
+            return {
+                translation: {
+                    provider: settings.provider,
+                    base_url: settings.baseUrl,
+                    model: settings.model,
+                    api_key: settings.apiKey,
+                    system_prompt: settings.systemPrompt,
+                    expect_reasoning: settings.expectReasoning,
+                    compat_mode: settings.compatMode,
+                    strip_brackets: settings.stripBrackets
+                },
+                thinking: {
+                    enabled: settings.thinkingEnabled,
+                    provider: localStorage.getItem('aiThinkingProvider') || '',
+                    base_url: localStorage.getItem('aiThinkingBaseUrl') || '',
+                    model: localStorage.getItem('aiThinkingModel') || '',
+                    api_key: localStorage.getItem('aiThinkingApiKey') || '',
+                    system_prompt: localStorage.getItem('aiThinkingPrompt') || ''
+                },
+                batch: {
+                    auto_save: settings.autoSave,
+                    only_empty: settings.onlyEmpty,
+                    always_override: settings.alwaysOverride,
+                    extra_prompt: settings.extraPrompt
+                }
+            }
+        }
+
+        function getBatchWorkbenchPresetStateFromPreset(preset) {
+            return {
+                translation: {
+                    provider: preset?.translation?.provider || 'deepseek',
+                    base_url: preset?.translation?.base_url || '',
+                    model: preset?.translation?.model || '',
+                    api_key: preset?.translation?.api_key || '',
+                    system_prompt: preset?.translation?.system_prompt || '',
+                    expect_reasoning: Boolean(preset?.translation?.expect_reasoning),
+                    compat_mode: Boolean(preset?.translation?.compat_mode),
+                    strip_brackets: Boolean(preset?.translation?.strip_brackets)
+                },
+                thinking: {
+                    enabled: preset?.thinking?.enabled !== undefined ? Boolean(preset.thinking.enabled) : true,
+                    provider: preset?.thinking?.provider || '',
+                    base_url: preset?.thinking?.base_url || '',
+                    model: preset?.thinking?.model || '',
+                    api_key: preset?.thinking?.api_key || '',
+                    system_prompt: preset?.thinking?.system_prompt || ''
+                },
+                batch: {
+                    auto_save: preset?.batch?.auto_save !== undefined ? Boolean(preset.batch.auto_save) : true,
+                    only_empty: preset?.batch?.only_empty !== undefined ? Boolean(preset.batch.only_empty) : true,
+                    always_override: Boolean(preset?.batch?.always_override),
+                    extra_prompt: preset?.batch?.extra_prompt || ''
+                }
+            }
+        }
+
+        function getBatchWorkbenchPresetVisibleState(state) {
+            return {
+                translation: {
+                    provider: state?.translation?.provider || 'deepseek',
+                    base_url: state?.translation?.base_url || '',
+                    model: state?.translation?.model || '',
+                    api_key: state?.translation?.api_key || '',
+                    system_prompt: state?.translation?.system_prompt || '',
+                    expect_reasoning: Boolean(state?.translation?.expect_reasoning),
+                    compat_mode: Boolean(state?.translation?.compat_mode),
+                    strip_brackets: Boolean(state?.translation?.strip_brackets)
+                },
+                thinking: {
+                    enabled: state?.thinking?.enabled !== undefined ? Boolean(state.thinking.enabled) : true
+                },
+                batch: {
+                    auto_save: state?.batch?.auto_save !== undefined ? Boolean(state.batch.auto_save) : true,
+                    only_empty: state?.batch?.only_empty !== undefined ? Boolean(state.batch.only_empty) : true,
+                    always_override: Boolean(state?.batch?.always_override),
+                    extra_prompt: state?.batch?.extra_prompt || ''
+                }
+            }
+        }
+
+        function batchWorkbenchPresetMatchesCurrent(preset) {
+            return JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchPresetStateFromUI())) === JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchPresetStateFromPreset(preset)))
+        }
+
+        function getBatchWorkbenchPresetList() {
+            return loadAiPresets()
+        }
+
+        function getBatchWorkbenchActivePreset() {
+            const presetId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || batchWorkbenchState.activePresetId || ''
+            const presets = getBatchWorkbenchPresetList()
+            return presets.find(preset => preset.id === presetId) || null
+        }
+
+        function updateBatchWorkbenchPresetSelect() {
+            const controls = getBatchWorkbenchControls()
+            const select = controls.presetSelect
+            if (!select) return
+            const presets = getBatchWorkbenchPresetList()
+            const activeId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || ''
+            select.innerHTML = '<option value="">选择预设...</option>'
+            presets.forEach(preset => {
+                const option = document.createElement('option')
+                option.value = preset.id
+                option.textContent = preset.name
+                if (preset.id === activeId) option.selected = true
+                select.appendChild(option)
+            })
+        }
+
+        function applyBatchWorkbenchPreset(preset) {
+            const controls = getBatchWorkbenchControls()
+            if (!preset) {
+                const presetId = controls.presetSelect ? controls.presetSelect.value : ''
+                if (!presetId) {
+                    alert('请选择一个预设')
+                    return
+                }
+                preset = getBatchWorkbenchPresetList().find(item => item.id === presetId)
+                if (!preset) {
+                    alert('预设不存在')
+                    return
+                }
+            }
+            const state = getBatchWorkbenchPresetStateFromPreset(preset)
+            if (controls.aiProvider) controls.aiProvider.value = state.translation.provider
+            if (controls.aiBaseUrl) controls.aiBaseUrl.value = state.translation.base_url
+            if (controls.aiModel) controls.aiModel.value = state.translation.model
+            if (controls.aiKey) controls.aiKey.value = state.translation.api_key
+            if (controls.compatModeCheck) controls.compatModeCheck.checked = state.translation.compat_mode
+            if (controls.stripBracketsCheck) controls.stripBracketsCheck.checked = state.translation.strip_brackets
+            if (controls.thinkingEnabledCheck) controls.thinkingEnabledCheck.checked = state.thinking.enabled
+            if (controls.expectReasoningCheck) controls.expectReasoningCheck.checked = state.translation.expect_reasoning
+            if (controls.systemPrompt) controls.systemPrompt.value = state.translation.system_prompt
+            if (controls.extraPrompt) controls.extraPrompt.value = state.batch.extra_prompt
+            if (controls.autoSave) controls.autoSave.checked = state.batch.auto_save
+            if (controls.onlyEmptyCheck) controls.onlyEmptyCheck.checked = state.batch.only_empty
+            if (controls.alwaysOverrideCheck) controls.alwaysOverrideCheck.checked = state.batch.always_override
+            localStorage.setItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY, preset.id)
+            batchWorkbenchState.activePresetId = preset.id
+            syncBatchWorkbenchPromptFields()
+            applyBatchWorkbenchSettingsToUI()
+            syncBatchWbSettingsSummary()
+            updateBatchWorkbenchPresetSelect()
+        }
+
+        function onBatchWorkbenchPresetSelectChange() {
+            const controls = getBatchWorkbenchControls()
+            const presetId = controls.presetSelect ? controls.presetSelect.value : ''
+            if (!presetId) {
+                batchWorkbenchState.activePresetId = ''
+                localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY)
+                applyBatchWorkbenchSettingsToUI()
+                syncBatchWbSettingsSummary()
+                return
+            }
+            applyBatchWorkbenchPreset()
+        }
+
+        function saveBatchWorkbenchAsPreset() {
+            const name = prompt('请输入预设名称：')
+            if (!name || !name.trim()) return
+            const presets = getBatchWorkbenchPresetList()
+            const preset = {
+                id: 'preset_' + Date.now(),
+                name: name.trim(),
+                ...getBatchWorkbenchPresetStateFromUI(),
+                updated_at: Date.now()
+            }
+            presets.push(preset)
+            saveAiPresets(presets)
+            localStorage.setItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY, preset.id)
+            batchWorkbenchState.activePresetId = preset.id
+            updateBatchWorkbenchPresetSelect()
+            updateAiPresetSelect()
+            updateQuickAiPresetSelect()
+            syncBatchWbSettingsSummary()
+        }
+
+        function updateCurrentBatchWorkbenchPreset() {
+            const controls = getBatchWorkbenchControls()
+            const presetId = controls.presetSelect ? controls.presetSelect.value : ''
+            if (!presetId) {
+                alert('请先选择要更新的预设')
+                return
+            }
+            const presets = getBatchWorkbenchPresetList()
+            const index = presets.findIndex(item => item.id === presetId)
+            if (index === -1) {
+                alert('预设不存在')
+                return
+            }
+            presets[index] = {
+                ...presets[index],
+                ...getBatchWorkbenchPresetStateFromUI(),
+                updated_at: Date.now()
+            }
+            saveAiPresets(presets)
+            localStorage.setItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY, presetId)
+            batchWorkbenchState.activePresetId = presetId
+            updateBatchWorkbenchPresetSelect()
+            updateAiPresetSelect()
+            updateQuickAiPresetSelect()
+            syncBatchWbSettingsSummary()
+        }
+
+        function deleteBatchWorkbenchPreset() {
+            const controls = getBatchWorkbenchControls()
+            const presetId = controls.presetSelect ? controls.presetSelect.value : ''
+            if (!presetId) {
+                alert('请先选择要删除的预设')
+                return
+            }
+            if (!confirm('确定要删除这个预设吗？')) return
+            const presets = getBatchWorkbenchPresetList()
+            const filtered = presets.filter(item => item.id !== presetId)
+            saveAiPresets(filtered)
+            if (localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) === presetId) {
+                localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY)
+                batchWorkbenchState.activePresetId = ''
+            }
+            if (localStorage.getItem(ACTIVE_AI_PRESET_KEY) === presetId) {
+                localStorage.removeItem(ACTIVE_AI_PRESET_KEY)
+            }
+            updateBatchWorkbenchPresetSelect()
+            updateAiPresetSelect()
+            updateQuickAiPresetSelect()
+            syncBatchWbSettingsSummary()
+        }
+
+        function buildBatchWorkbenchSongCard(summary) {
+            const card = document.createElement('div')
+            const isSelected = selectedSongs.has(summary.filename)
+            card.className = `batch-wb-song-card ${isSelected ? 'selected' : ''}`
+            card.dataset.filename = summary.filename || ''
+            const tags = collectSummaryTags(summary)
+            const artist = getSummaryArtist(summary) || '未知歌手'
+            const displayName = escapeHtml(getSummaryDisplayName(summary))
+            card.innerHTML = `
+                <div class="batch-wb-song-top">
+                    <input type="checkbox" ${isSelected ? 'checked' : ''}>
+                    <strong class="batch-wb-song-title">${displayName}</strong>
+                </div>
+                <div class="batch-wb-song-meta">
+                    <span class="batch-wb-song-meta-item batch-wb-song-meta-line artist">歌手：${escapeHtml(artist)}</span>
+                    <span class="batch-wb-song-meta-item batch-wb-song-meta-line filename">文件：${escapeHtml(summary.filename || '')}</span>
+                </div>
+                <div class="batch-wb-mini-tags">${tags.map(tag => `<span class="batch-wb-mini-tag">${escapeHtml(tag)}</span>`).join('')}</div>
+            `
+            const checkbox = card.querySelector('input[type="checkbox"]')
+            checkbox.addEventListener('click', (event) => event.stopPropagation())
+            checkbox.addEventListener('change', (event) => {
+                toggleBatchSongSelection(summary.filename, Boolean(event.target.checked))
+            })
+            card.addEventListener('click', () => {
+                const next = !selectedSongs.has(summary.filename)
+                toggleBatchSongSelection(summary.filename, next)
+            })
+            return card
+        }
+
+        function appendBatchWorkbenchSongListBatch() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.songList) return
+            const list = batchWorkbenchState.songListItems || []
+            if (batchWorkbenchState.songListCursor >= list.length) return
+            const fragment = document.createDocumentFragment()
+            const nextCursor = Math.min(list.length, batchWorkbenchState.songListCursor + batchWorkbenchState.songListBatchSize)
+            for (let i = batchWorkbenchState.songListCursor; i < nextCursor; i++) {
+                fragment.appendChild(buildBatchWorkbenchSongCard(list[i]))
+            }
+            batchWorkbenchState.songListCursor = nextCursor
+            controls.songList.appendChild(fragment)
+        }
+
+        function handleBatchWorkbenchSongListScroll() {
+            const controls = getBatchWorkbenchControls()
+            const list = controls.songList
+            if (!list || batchWorkbenchState.songListScrollRaf) return
+            batchWorkbenchState.songListScrollRaf = window.requestAnimationFrame(() => {
+                batchWorkbenchState.songListScrollRaf = 0
+                const distanceToBottom = list.scrollHeight - list.scrollTop - list.clientHeight
+                if (distanceToBottom < 140) {
+                    appendBatchWorkbenchSongListBatch()
+                }
+            })
+        }
+
+        function refreshBatchWorkbenchSongCard(filename) {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.songList || !filename) return
+            const card = controls.songList.querySelector(`[data-filename="${escapeSelectorValue(filename)}"]`)
+            if (!card) return
+            const isSelected = selectedSongs.has(filename)
+            card.classList.toggle('selected', isSelected)
+            const checkbox = card.querySelector('input[type="checkbox"]')
+            if (checkbox) checkbox.checked = isSelected
+        }
+
+        function renderBatchWorkbenchSongList() {
+            if (!batchWorkbenchState.visible) return
+            const controls = getBatchWorkbenchControls()
+            if (!controls.songList) return
+            const list = getBatchWorkbenchFilteredSummaries()
+            batchWorkbenchState.songListItems = list
+            batchWorkbenchState.songListCursor = 0
+            if (batchWorkbenchState.songListScrollRaf) {
+                window.cancelAnimationFrame(batchWorkbenchState.songListScrollRaf)
+                batchWorkbenchState.songListScrollRaf = 0
+            }
+            controls.songList.innerHTML = ''
+            controls.songList.scrollTop = 0
+            appendBatchWorkbenchSongListBatch()
+            if (list.length === 0) {
+                controls.songList.innerHTML = '<div class="batch-wb-song-meta">没有匹配歌曲</div>'
+            }
+            if (controls.totalCount) {
+                controls.totalCount.textContent = String(getBatchWorkbenchSummaryList().length)
+            }
+            if (controls.filteredCount) {
+                controls.filteredCount.textContent = String(list.length)
+            }
+            syncBatchWbHeaderSummary()
+        }
+
+        function renderBatchWorkbenchSummary() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.summary) return
+            const selectedSummaries = Array.from(selectedSongs).map(name => songSummaryCache.get(name)).filter(Boolean)
+            const total = selectedSummaries.length
+            const settings = getBatchWorkbenchSettingsFromUI()
+            const translatable = selectedSummaries.filter(item => {
+                if (!hasLyricsSummary(item)) return false
+                if (settings.alwaysOverride) return true
+                return settings.onlyEmpty ? !hasSummaryTranslation(item) : true
+            }).length
+            const skipped = Math.max(0, total - translatable)
+            const ttml = selectedSummaries.filter(item => isSummaryTTML(item)).length
+            if (controls.summarySelectedCount) controls.summarySelectedCount.textContent = String(total)
+            if (controls.summaryProcessableCount) controls.summaryProcessableCount.textContent = String(translatable)
+            if (controls.summarySkippedCount) controls.summarySkippedCount.textContent = String(skipped)
+            if (controls.summaryModel) controls.summaryModel.textContent = settings.model || '未设置'
+            if (controls.summaryCoverageMode) {
+                controls.summaryCoverageMode.textContent = settings.alwaysOverride ? '始终覆盖' : (settings.onlyEmpty ? '仅覆盖空翻译' : '按当前规则')
+            }
+            if (controls.summary && controls.summary.querySelector) {
+                const extra = controls.summary.querySelector('[data-batch-summary-extra]')
+                if (extra) extra.textContent = `其中 TTML：${ttml}`
+            }
+        }
+
+        function setBatchWorkbenchProgress(completed, total) {
+            batchWorkbenchState.totals = { completed, total }
+            const controls = getBatchWorkbenchControls()
+            const ratio = total > 0 ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0
+            if (controls.progressBar) controls.progressBar.style.width = `${ratio}%`
+            if (controls.headerProgressBar) controls.headerProgressBar.style.width = `${ratio}%`
+            if (controls.progressPercent) controls.progressPercent.textContent = String(ratio)
+        }
+
+        function computeBatchRuntimeStats() {
+            const entries = Array.from(batchWorkbenchState.results.values())
+            let success = 0
+            let failed = 0
+            let skipped = 0
+            let processing = 0
+            entries.forEach(item => {
+                if (!item) return
+                if (item.statusKey === 'success') {
+                    success += 1
+                } else if (item.statusKey === 'failed') {
+                    failed += 1
+                } else if (item.statusKey === 'skipped' || item.statusKey === 'stopped') {
+                    skipped += 1
+                } else if (BATCH_PROCESSING_STATUS_KEYS.has(item.statusKey)) {
+                    processing += 1
+                }
+            })
+            return {
+                success,
+                failed,
+                skipped,
+                processing,
+                completed: success + failed + skipped,
+                total: entries.length
+            }
+        }
+
+        function applyBatchRuntimeStatsToUi(stats = null) {
+            const controls = getBatchWorkbenchControls()
+            const data = stats || computeBatchRuntimeStats()
+            batchWorkbenchState.runtimeStats = data
+            setBatchWorkbenchProgress(data.completed, data.total)
+            if (controls.countSuccess) controls.countSuccess.textContent = String(data.success)
+            if (controls.countError) controls.countError.textContent = String(data.failed)
+            if (controls.countSkipped) controls.countSkipped.textContent = String(data.skipped)
+            if (controls.countProcessing) controls.countProcessing.textContent = String(data.processing)
+        }
+
+        function scheduleBatchRuntimeStatsRender() {
+            if (batchWorkbenchState.statsRenderRaf) return
+            batchWorkbenchState.statsRenderRaf = window.requestAnimationFrame(() => {
+                batchWorkbenchState.statsRenderRaf = 0
+                applyBatchRuntimeStatsToUi()
+            })
+        }
+
+        function markBatchResultDirty(resultId, options = {}) {
+            const { detail = false, structure = false } = options
+            if (resultId) {
+                batchWorkbenchState.dirtyResultIds.add(String(resultId))
+            }
+            if (detail) {
+                batchWorkbenchState.detailDirty = true
+            }
+            if (structure) {
+                batchWorkbenchState.resultStructureDirty = true
+            }
+            scheduleBatchRuntimeStatsRender()
+            scheduleBatchWorkbenchResultRender({ detail, full: structure, resultId })
+        }
+
+        function updateBatchWorkbenchLifecycle(phase, finalResult = null) {
+            if (phase) {
+                batchWorkbenchState.lifecyclePhase = phase
+            }
+            if (finalResult !== null) {
+                batchWorkbenchState.finalResult = finalResult
+            }
+            if (batchWorkbenchState.running) {
+                batchWorkbenchState.runState = 'running'
+                return
+            }
+            if (batchWorkbenchState.finalResult === 'success') {
+                batchWorkbenchState.runState = 'completed'
+            } else if (batchWorkbenchState.finalResult === 'partial') {
+                batchWorkbenchState.runState = 'partial'
+            } else if (batchWorkbenchState.finalResult === 'failed') {
+                batchWorkbenchState.runState = 'failed'
+            } else if (batchWorkbenchState.finalResult === 'stopped') {
+                batchWorkbenchState.runState = 'stopped'
+            } else {
+                batchWorkbenchState.runState = 'idle'
+            }
+        }
+
+        function setBatchWorkbenchRunStatus(text, runState = null) {
+            batchWorkbenchState.latestStage = text || ''
+            batchWorkbenchState.runPhase = text || ''
+            if (runState) {
+                batchWorkbenchState.runState = runState
+            }
+            updateBatchWorkbenchLifecycle(batchWorkbenchState.lifecyclePhase || 'idle')
+            const controls = getBatchWorkbenchControls()
+            if (controls.currentStage) {
+                controls.currentStage.textContent = text || '等待开始'
+            }
+            if (controls.statusBadge) {
+                controls.statusBadge.classList.remove('idle', 'running', 'completed', 'stopped', 'failed')
+                let badgeClass = 'idle'
+                let badgeText = '待机'
+                if (batchWorkbenchState.runState === 'running') {
+                    badgeClass = 'running'
+                    badgeText = '运行中'
+                } else if (batchWorkbenchState.runState === 'completed') {
+                    badgeClass = 'completed'
+                    badgeText = '已完成'
+                } else if (batchWorkbenchState.runState === 'stopped') {
+                    badgeClass = 'stopped'
+                    badgeText = '已停止'
+                } else if (batchWorkbenchState.runState === 'partial') {
+                    badgeClass = 'completed'
+                    badgeText = '部分失败'
+                } else if (batchWorkbenchState.runState === 'failed') {
+                    badgeClass = 'failed'
+                    badgeText = '失败'
+                }
+                controls.statusBadge.classList.add(badgeClass)
+                controls.statusBadge.textContent = badgeText
+            }
+        }
+
+        function scheduleBatchWorkbenchResultRender(options = {}) {
+            const { detail = false, full = false, resultId = '' } = options
+            if (detail) {
+                batchWorkbenchState.detailDirty = true
+            }
+            if (full) {
+                batchWorkbenchState.resultStructureDirty = true
+            }
+            if (resultId) {
+                batchWorkbenchState.dirtyResultIds.add(String(resultId))
+            }
+            if (batchWorkbenchState.resultRenderRaf) return
+            batchWorkbenchState.resultRenderRaf = window.requestAnimationFrame(() => {
+                batchWorkbenchState.resultRenderRaf = 0
+                renderBatchWorkbenchResultList()
+                batchWorkbenchState.diagnostics.uiRefreshCount += 1
+            })
+        }
+
+        function flushBatchTranslateStatusRender() {
+            batchWorkbenchState.statusRenderRaf = 0
+            batchWorkbenchState.statusRenderTimer = 0
+            batchWorkbenchState.statusLastFlushAt = Date.now()
+            updateBatchTranslateStatus(
+                batchWorkbenchState.pendingStatusLines || [],
+                Boolean(batchWorkbenchState.pendingStatusIsError)
+            )
+        }
+
+        function scheduleBatchTranslateStatusRender(lines, isError = false, options = {}) {
+            const { force = false } = options
+            batchWorkbenchState.pendingStatusLines = Array.isArray(lines) ? lines.slice() : []
+            batchWorkbenchState.pendingStatusIsError = Boolean(isError)
+            const now = Date.now()
+            if (force || now - batchWorkbenchState.statusLastFlushAt >= batchWorkbenchState.statusThrottleMs) {
+                if (batchWorkbenchState.statusRenderTimer) {
+                    window.clearTimeout(batchWorkbenchState.statusRenderTimer)
+                    batchWorkbenchState.statusRenderTimer = 0
+                }
+                if (!batchWorkbenchState.statusRenderRaf) {
+                    batchWorkbenchState.statusRenderRaf = window.requestAnimationFrame(flushBatchTranslateStatusRender)
+                }
+                return
+            }
+            if (batchWorkbenchState.statusRenderRaf || batchWorkbenchState.statusRenderTimer) return
+            const waitMs = Math.max(16, batchWorkbenchState.statusThrottleMs - (now - batchWorkbenchState.statusLastFlushAt))
+            batchWorkbenchState.statusRenderTimer = window.setTimeout(() => {
+                if (!batchWorkbenchState.statusRenderRaf) {
+                    batchWorkbenchState.statusRenderRaf = window.requestAnimationFrame(flushBatchTranslateStatusRender)
+                }
+            }, waitMs)
+        }
+
+        function createBatchResultCard(resultId) {
+            const card = document.createElement('div')
+            card.className = 'batch-wb-result-card'
+            card.dataset.resultId = resultId
+            card.innerHTML = `
+                <div><span class="batch-wb-status-dot"></span><strong class="batch-wb-result-title"></strong></div>
+                <div class="batch-wb-song-meta batch-wb-result-filename"></div>
+                <div class="batch-wb-song-meta batch-wb-result-status"></div>
+                <div class="batch-wb-song-meta batch-wb-result-meta"></div>
+                <div class="batch-wb-btn-row" style="margin-top:8px; gap: 6px;">
+                    <button class="batch-wb-btn secondary batch-wb-result-save-btn" style="flex: 1; font-size: 11px;"></button>
+                    <button class="batch-wb-btn ghost batch-wb-result-detail-btn" style="flex: 1; font-size: 11px;">查看详情</button>
+                </div>
+            `
+            const saveBtn = card.querySelector('.batch-wb-result-save-btn')
+            const detailBtn = card.querySelector('.batch-wb-result-detail-btn')
+
+            card.addEventListener('click', () => {
+                const previousId = batchWorkbenchState.activeResultId
+                batchWorkbenchState.activeResultId = resultId
+                if (previousId && previousId !== resultId) {
+                    batchWorkbenchState.dirtyResultIds.add(previousId)
+                }
+                markBatchResultDirty(resultId, { detail: true })
+            })
+
+            if (saveBtn) {
+                saveBtn.addEventListener('click', async (event) => {
+                    event.stopPropagation()
+                    await saveBatchResultById(resultId)
+                })
+            }
+            if (detailBtn) {
+                detailBtn.addEventListener('click', (event) => {
+                    event.stopPropagation()
+                    const previousId = batchWorkbenchState.activeResultId
+                    batchWorkbenchState.activeResultId = resultId
+                    if (previousId && previousId !== resultId) {
+                        batchWorkbenchState.dirtyResultIds.add(previousId)
+                    }
+                    markBatchResultDirty(resultId, { detail: true })
+                })
+            }
+
+            card.__refs = {
+                statusDot: card.querySelector('.batch-wb-status-dot'),
+                title: card.querySelector('.batch-wb-result-title'),
+                filename: card.querySelector('.batch-wb-result-filename'),
+                status: card.querySelector('.batch-wb-result-status'),
+                meta: card.querySelector('.batch-wb-result-meta'),
+                saveBtn
+            }
+            return card
+        }
+
+        function updateBatchResultCard(card, result) {
+            if (!card || !result) return
+            const refs = card.__refs || {}
+            const meta = BATCH_RESULT_STATUS_META[result.statusKey] || BATCH_RESULT_STATUS_META.queued
+            const canSave = canSaveBatchResult(result)
+            card.classList.toggle('selected', batchWorkbenchState.activeResultId === result.id)
+            if (refs.statusDot) refs.statusDot.style.background = meta.color
+            if (refs.title) refs.title.textContent = result.display || ''
+            if (refs.filename) refs.filename.textContent = result.filename || ''
+            if (refs.status) refs.status.textContent = result.statusText || meta.text
+            if (refs.meta) refs.meta.textContent = `行数：${result.lineCount || 0} ｜ ${result.hasTimestamps ? '含时间戳' : '无时间戳'} ｜ ${result.saved ? '已落盘' : '未落盘'}`
+            if (refs.saveBtn) {
+                refs.saveBtn.disabled = !canSave
+                refs.saveBtn.textContent = result.saved ? '重新保存' : (canSave ? '保存' : '不可保存')
+            }
+        }
+
+        function ensureBatchResultListStructure() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.resultList) return
+            const entries = Array.from(batchWorkbenchState.results.values())
+            const ids = new Set(entries.map(item => item.id))
+
+            if (!entries.length) {
+                batchWorkbenchState.resultCardMap.clear()
+                controls.resultList.innerHTML = '<div class="batch-wb-song-meta">暂无任务结果</div>'
+                batchWorkbenchState.resultCardPlaceholder = controls.resultList.firstElementChild
+                batchWorkbenchState.resultStructureDirty = false
+                return
+            }
+
+            if (batchWorkbenchState.resultCardPlaceholder) {
+                batchWorkbenchState.resultCardPlaceholder.remove()
+                batchWorkbenchState.resultCardPlaceholder = null
+            }
+
+            const staleIds = []
+            batchWorkbenchState.resultCardMap.forEach((_, id) => {
+                if (!ids.has(id)) staleIds.push(id)
+            })
+            staleIds.forEach(id => {
+                const stale = batchWorkbenchState.resultCardMap.get(id)
+                if (stale && stale.parentElement) stale.parentElement.removeChild(stale)
+                batchWorkbenchState.resultCardMap.delete(id)
+            })
+
+            entries.forEach(result => {
+                let card = batchWorkbenchState.resultCardMap.get(result.id)
+                if (!card) {
+                    card = createBatchResultCard(result.id)
+                    batchWorkbenchState.resultCardMap.set(result.id, card)
+                    batchWorkbenchState.dirtyResultIds.add(result.id)
+                }
+                if (controls.resultList.lastElementChild !== card) {
+                    controls.resultList.appendChild(card)
+                }
+            })
+
+            batchWorkbenchState.resultStructureDirty = false
+            batchWorkbenchState.diagnostics.fullRefreshCount += 1
+        }
+
+        function renderBatchWorkbenchResultList() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.resultList) return
+            if (batchWorkbenchState.resultStructureDirty) {
+                ensureBatchResultListStructure()
+            }
+            const previousActiveId = batchWorkbenchState.lastRenderedActiveResultId
+            const activeId = batchWorkbenchState.activeResultId
+            if (previousActiveId && previousActiveId !== activeId) {
+                batchWorkbenchState.dirtyResultIds.add(previousActiveId)
+            }
+            if (activeId && previousActiveId !== activeId) {
+                batchWorkbenchState.dirtyResultIds.add(activeId)
+            }
+
+            const dirtyIds = Array.from(batchWorkbenchState.dirtyResultIds)
+            dirtyIds.forEach(resultId => {
+                const result = batchWorkbenchState.results.get(resultId)
+                const card = batchWorkbenchState.resultCardMap.get(resultId)
+                if (!result || !card) return
+                updateBatchResultCard(card, result)
+                batchWorkbenchState.diagnostics.partialUpdateCount += 1
+            })
+            batchWorkbenchState.dirtyResultIds.clear()
+            applyBatchRuntimeStatsToUi()
+            if (batchWorkbenchState.detailDirty || previousActiveId !== activeId) {
+                renderBatchWorkbenchDetail()
+                batchWorkbenchState.detailDirty = false
+            }
+            batchWorkbenchState.lastRenderedActiveResultId = activeId
+        }
+
+        async function saveBatchResultById(resultId) {
+            const target = batchWorkbenchState.results.get(resultId)
+            if (!target || !target.summary || !target.payload) {
+                alert('没有可保存的结果')
+                return false
+            }
+            try {
+                target.statusKey = 'saving'
+                target.statusText = '保存中'
+                markBatchResultDirty(resultId, { detail: batchWorkbenchState.activeResultId === resultId })
+                const path = await saveBatchTranslationToDisk(target.summary, target.payload)
+                target.saved = true
+                target.savePath = path
+                target.statusKey = 'success'
+                target.statusText = '成功'
+                markBatchResultDirty(resultId, { detail: batchWorkbenchState.activeResultId === resultId })
+                return true
+            } catch (error) {
+                target.saved = false
+                target.error = error && error.message ? error.message : String(error)
+                target.statusKey = 'failed'
+                target.statusText = '失败：保存失败'
+                markBatchResultDirty(resultId, { detail: batchWorkbenchState.activeResultId === resultId })
+                return false
+            }
+        }
+
+        async function saveBatchWorkbenchResults(mode) {
+            const entries = Array.from(batchWorkbenchState.results.values())
+            const targets = entries.filter(result => {
+                if (!canSaveBatchResult(result)) return false
+                if (mode === 'all') return true
+                if (mode === 'pending') return !result.saved
+                if (mode === 'failed') return result.statusKey === 'failed'
+                return false
+            })
+            if (!targets.length) {
+                alert('没有可保存的结果')
+                return
+            }
+            for (const result of targets) {
+                await saveBatchResultById(result.id)
+            }
+        }
+
+        function updateBatchWorkbenchRuntimeCounters() {
+            applyBatchRuntimeStatsToUi()
+        }
+
+        function renderBatchWorkbenchDetail() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.detail) return
+            const target = batchWorkbenchState.activeResultId ? batchWorkbenchState.results.get(batchWorkbenchState.activeResultId) : null
+            if (!target) {
+                controls.detail.style.display = 'none'
+                controls.detail.innerHTML = ''
+                return
+            }
+            controls.detail.style.display = 'block'
+            const canSave = canSaveBatchResult(target)
+            controls.detail.innerHTML = `
+                <h4 class="batch-wb-section-title">${escapeHtml(target.display)} 详情</h4>
+                <div style="font-size:12px;">原歌词预览</div>
+                <div class="batch-wb-pre">${escapeHtml(target.originalPreview || '（空）')}</div>
+                <div style="font-size:12px;">翻译结果预览</div>
+                <div class="batch-wb-pre">${escapeHtml(target.translationPreview || '（空）')}</div>
+                <div style="font-size:12px;">错误信息</div>
+                <div class="batch-wb-pre">${escapeHtml(target.error || '（无）')}</div>
+                <div style="font-size:12px;">保存路径：${escapeHtml(target.savePath || '（未保存）')}</div>
+                <div style="font-size:12px;">诊断：流增量 ${batchWorkbenchState.diagnostics.streamChunkCount} ｜ UI 刷新 ${batchWorkbenchState.diagnostics.uiRefreshCount} ｜ 局部更新 ${batchWorkbenchState.diagnostics.partialUpdateCount} ｜ 全量结构刷新 ${batchWorkbenchState.diagnostics.fullRefreshCount}</div>
+                <div class="batch-wb-btn-row" style="margin-top:8px;">
+                    <button class="action-button" onclick="copyBatchResultTranslation()">复制翻译</button>
+                    ${canSave ? `<button class="action-button" onclick="resaveBatchResult()">${target.saved ? '重新保存' : '保存'}</button>` : '<button class="action-button" disabled title="当前结果没有可保存内容">不可保存</button>'}
+                    <button class="action-button" onclick="openBatchResultInEditor()">在单曲编辑器中打开</button>
+                </div>
+            `
+        }
+
+        function getBatchWorkbenchSettingsFromUI() {
+            const controls = getBatchWorkbenchControls()
+            return {
+                provider: controls.aiProvider ? controls.aiProvider.value : (localStorage.getItem('aiProvider') || 'deepseek'),
+                baseUrl: sanitizeBaseUrl(controls.aiBaseUrl ? controls.aiBaseUrl.value : (localStorage.getItem('aiBaseUrl') || '')),
+                model: controls.aiModel ? controls.aiModel.value : (localStorage.getItem('aiModel') || ''),
+                apiKey: controls.aiKey ? controls.aiKey.value : (localStorage.getItem('aiApiKey') || ''),
+                expectReasoning: controls.expectReasoningCheck ? controls.expectReasoningCheck.checked : (localStorage.getItem('aiExpectReasoning') === 'true'),
+                compatMode: controls.compatModeCheck ? controls.compatModeCheck.checked : (localStorage.getItem('aiCompatMode') === 'true'),
+                stripBrackets: controls.stripBracketsCheck ? controls.stripBracketsCheck.checked : (localStorage.getItem('aiStripBrackets') === 'true'),
+                thinkingEnabled: controls.thinkingEnabledCheck ? controls.thinkingEnabledCheck.checked : (localStorage.getItem('aiThinkingEnabled') !== 'false'),
+                autoSave: controls.autoSave ? controls.autoSave.checked : true,
+                onlyEmpty: controls.onlyEmptyCheck ? controls.onlyEmptyCheck.checked : true,
+                alwaysOverride: controls.alwaysOverrideCheck ? controls.alwaysOverrideCheck.checked : false,
+                systemPrompt: controls.systemPrompt ? controls.systemPrompt.value : (localStorage.getItem('aiSystemPrompt') || ''),
+                extraPrompt: controls.extraPrompt ? controls.extraPrompt.value : (localStorage.getItem('batchExtraPrompt') || '')
+            }
+        }
+
+        function applyBatchWorkbenchSettingsToUI() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.aiProvider) return
+            const activePreset = getBatchWorkbenchActivePreset()
+            const mainProvider = document.getElementById('aiProvider')?.value || 'deepseek'
+            const mainBaseUrl = document.getElementById('aiBaseUrl')?.value || ''
+            const mainModel = document.getElementById('aiModel')?.value || ''
+            const mainApiKey = document.getElementById('aiApiKey')?.value || ''
+            const providerValue = activePreset?.translation?.provider || localStorage.getItem('aiProvider') || mainProvider
+            const preset = PROVIDER_PRESETS[providerValue] || {}
+            const sourceState = activePreset ? getBatchWorkbenchPresetStateFromPreset(activePreset) : null
+            controls.aiProvider.value = providerValue
+            controls.aiBaseUrl.value = activePreset ? (sourceState.translation.base_url || preset.baseUrl || '') : (localStorage.getItem('aiBaseUrl') || mainBaseUrl || preset.baseUrl || '')
+            controls.aiModel.value = activePreset ? (sourceState.translation.model || preset.model || '') : (localStorage.getItem('aiModel') || mainModel || preset.model || '')
+            controls.aiKey.value = activePreset ? sourceState.translation.api_key : (localStorage.getItem('aiApiKey') || mainApiKey)
+            if (controls.expectReasoningCheck) controls.expectReasoningCheck.checked = activePreset ? sourceState.translation.expect_reasoning : (localStorage.getItem('aiExpectReasoning') !== null ? localStorage.getItem('aiExpectReasoning') === 'true' : (document.getElementById('aiExpectReasoning')?.checked ?? true))
+            if (controls.compatModeCheck) controls.compatModeCheck.checked = activePreset ? sourceState.translation.compat_mode : (localStorage.getItem('aiCompatMode') !== null ? localStorage.getItem('aiCompatMode') === 'true' : (document.getElementById('aiCompatMode')?.checked ?? false))
+            if (controls.stripBracketsCheck) controls.stripBracketsCheck.checked = activePreset ? sourceState.translation.strip_brackets : (localStorage.getItem('aiStripBrackets') !== null ? localStorage.getItem('aiStripBrackets') === 'true' : (document.getElementById('aiStripBrackets')?.checked ?? false))
+            if (controls.thinkingEnabledCheck) controls.thinkingEnabledCheck.checked = activePreset ? sourceState.thinking.enabled : (localStorage.getItem('aiThinkingEnabled') !== null ? localStorage.getItem('aiThinkingEnabled') === 'true' : (document.getElementById('aiThinkingEnabled')?.checked ?? true))
+            if (controls.autoSave) controls.autoSave.checked = activePreset ? sourceState.batch.auto_save : localStorage.getItem('batchWorkbenchAutoSave') !== 'false'
+            if (controls.onlyEmptyCheck) controls.onlyEmptyCheck.checked = activePreset ? sourceState.batch.only_empty : localStorage.getItem('batchWorkbenchOnlyEmpty') !== 'false'
+            if (controls.alwaysOverrideCheck) controls.alwaysOverrideCheck.checked = activePreset ? sourceState.batch.always_override : localStorage.getItem('batchWorkbenchAlwaysOverride') === 'true'
+            if (controls.systemPrompt) controls.systemPrompt.value = activePreset ? sourceState.translation.system_prompt : (localStorage.getItem('aiSystemPrompt') || '')
+            if (controls.extraPrompt) controls.extraPrompt.value = activePreset ? sourceState.batch.extra_prompt : (localStorage.getItem('batchExtraPrompt') || '')
+            if (controls.settingsSource) controls.settingsSource.textContent = activePreset ? `来自预设：${activePreset.name}` : '全局设置'
+            if (controls.settingsNote) controls.settingsNote.textContent = activePreset ? '已加载预设，可继续微调' : '本次任务未覆盖'
+            updateBatchWorkbenchBaseUrlAndModel()
+            batchWorkbenchState.activePresetId = activePreset ? activePreset.id : ''
+            if (controls.presetSelect && activePreset) {
+                controls.presetSelect.value = activePreset.id
+            }
+            syncBatchWbSettingsSummary()
+        }
+
+        function updateBatchWorkbenchSettingsPreview() {
+            applyBatchWorkbenchSettingsToUI()
+        }
+
+        function syncBatchWorkbenchPromptFields() {
+            const controls = getBatchWorkbenchControls()
+            if (controls.systemPrompt && !controls.systemPrompt.value) {
+                controls.systemPrompt.value = localStorage.getItem('aiSystemPrompt') || ''
+            }
+            if (controls.extraPrompt && !controls.extraPrompt.value) {
+                controls.extraPrompt.value = localStorage.getItem('batchExtraPrompt') || ''
+            }
+        }
+
+        function persistBatchWorkbenchSettingsToStorage() {
+            const settings = getBatchWorkbenchSettingsFromUI()
+            localStorage.setItem('aiProvider', settings.provider)
+            localStorage.setItem('aiBaseUrl', settings.baseUrl)
+            localStorage.setItem('aiModel', settings.model)
+            if (settings.apiKey) {
+                localStorage.setItem('aiApiKey', settings.apiKey)
+            } else {
+                localStorage.removeItem('aiApiKey')
+            }
+            localStorage.setItem('aiExpectReasoning', String(settings.expectReasoning))
+            localStorage.setItem('aiCompatMode', String(settings.compatMode))
+            localStorage.setItem('aiStripBrackets', String(settings.stripBrackets))
+            localStorage.setItem('aiThinkingEnabled', String(settings.thinkingEnabled))
+            localStorage.setItem('batchWorkbenchAutoSave', String(settings.autoSave))
+            localStorage.setItem('batchWorkbenchOnlyEmpty', String(settings.onlyEmpty))
+            localStorage.setItem('batchWorkbenchAlwaysOverride', String(settings.alwaysOverride))
+            if (settings.systemPrompt) {
+                localStorage.setItem('aiSystemPrompt', settings.systemPrompt)
+            } else {
+                localStorage.removeItem('aiSystemPrompt')
+            }
+            if (settings.extraPrompt) {
+                localStorage.setItem('batchExtraPrompt', settings.extraPrompt)
+            } else {
+                localStorage.removeItem('batchExtraPrompt')
+            }
+
+            const mainControls = {
+                provider: document.getElementById('aiProvider'),
+                baseUrl: document.getElementById('aiBaseUrl'),
+                model: document.getElementById('aiModel'),
+                apiKey: document.getElementById('aiApiKey'),
+                expectReasoning: document.getElementById('aiExpectReasoning'),
+                compatMode: document.getElementById('aiCompatMode'),
+                stripBrackets: document.getElementById('aiStripBrackets'),
+                thinkingEnabled: document.getElementById('aiThinkingEnabled'),
+                systemPrompt: document.getElementById('aiSystemPrompt')
+            }
+            if (mainControls.provider) mainControls.provider.value = settings.provider
+            if (mainControls.baseUrl) mainControls.baseUrl.value = settings.baseUrl
+            if (mainControls.model) mainControls.model.value = settings.model
+            if (mainControls.apiKey) mainControls.apiKey.value = settings.apiKey
+            if (mainControls.expectReasoning) mainControls.expectReasoning.checked = settings.expectReasoning
+            if (mainControls.compatMode) mainControls.compatMode.checked = settings.compatMode
+            if (mainControls.stripBrackets) mainControls.stripBrackets.checked = settings.stripBrackets
+            if (mainControls.thinkingEnabled) mainControls.thinkingEnabled.checked = settings.thinkingEnabled
+            if (mainControls.systemPrompt) mainControls.systemPrompt.value = settings.systemPrompt
+
+            const hiddenBatchExtraPrompt = document.getElementById('batchExtraPrompt')
+            if (hiddenBatchExtraPrompt) {
+                hiddenBatchExtraPrompt.value = settings.extraPrompt
+            }
+        }
+
+        function syncBatchWbSettingsSummary() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.summaryModel) return
+            const settings = getBatchWorkbenchSettingsFromUI()
+            controls.summaryModel.textContent = settings.model || '未设置'
+            controls.summaryCoverageMode.textContent = settings.alwaysOverride ? '始终覆盖' : (settings.onlyEmpty ? '仅覆盖空翻译' : '按当前规则')
+            const activePreset = getBatchWorkbenchActivePreset()
+            const currentPresetState = getBatchWorkbenchPresetStateFromUI()
+            if (controls.settingsSource) {
+                if (activePreset) {
+                    controls.settingsSource.textContent = `来自预设：${activePreset.name}`
+                } else {
+                    const storageMatches = settings.provider === (localStorage.getItem('aiProvider') || 'deepseek')
+                        && settings.baseUrl === sanitizeBaseUrl(localStorage.getItem('aiBaseUrl') || '')
+                        && settings.model === (localStorage.getItem('aiModel') || '')
+                        && settings.apiKey === (localStorage.getItem('aiApiKey') || '')
+                        && settings.compatMode === (localStorage.getItem('aiCompatMode') === 'true')
+                        && settings.stripBrackets === (localStorage.getItem('aiStripBrackets') === 'true')
+                        && settings.thinkingEnabled === (localStorage.getItem('aiThinkingEnabled') !== 'false')
+                        && settings.autoSave === (localStorage.getItem('batchWorkbenchAutoSave') !== 'false')
+                        && settings.onlyEmpty === (localStorage.getItem('batchWorkbenchOnlyEmpty') !== 'false')
+                        && settings.alwaysOverride === (localStorage.getItem('batchWorkbenchAlwaysOverride') === 'true')
+                        && settings.systemPrompt === (localStorage.getItem('aiSystemPrompt') || '')
+                        && settings.extraPrompt === (localStorage.getItem('batchExtraPrompt') || '')
+                    controls.settingsSource.textContent = storageMatches ? '全局设置' : '本次覆盖'
+                }
+            }
+            if (controls.settingsNote) {
+                if (activePreset) {
+                    controls.settingsNote.textContent = batchWorkbenchPresetMatchesCurrent(activePreset) ? '当前值与预设一致' : '已做本次临时修改'
+                } else {
+                    const sourceMatches = JSON.stringify(getBatchWorkbenchPresetVisibleState(currentPresetState)) === JSON.stringify(getBatchWorkbenchPresetVisibleState({
+                        translation: {
+                            provider: localStorage.getItem('aiProvider') || 'deepseek',
+                            base_url: localStorage.getItem('aiBaseUrl') || '',
+                            model: localStorage.getItem('aiModel') || '',
+                            api_key: localStorage.getItem('aiApiKey') || '',
+                            system_prompt: localStorage.getItem('aiSystemPrompt') || '',
+                            expect_reasoning: localStorage.getItem('aiExpectReasoning') === 'true',
+                            compat_mode: localStorage.getItem('aiCompatMode') === 'true',
+                            strip_brackets: localStorage.getItem('aiStripBrackets') === 'true'
+                        },
+                        thinking: {
+                            enabled: localStorage.getItem('aiThinkingEnabled') !== 'false'
+                        },
+                        batch: {
+                            auto_save: localStorage.getItem('batchWorkbenchAutoSave') !== 'false',
+                            only_empty: localStorage.getItem('batchWorkbenchOnlyEmpty') !== 'false',
+                            always_override: localStorage.getItem('batchWorkbenchAlwaysOverride') === 'true',
+                            extra_prompt: localStorage.getItem('batchExtraPrompt') || ''
+                        }
+                    }))
+                    controls.settingsNote.textContent = sourceMatches ? '当前值与全局设置一致' : '已做本次临时修改'
+                }
+            }
+            if (controls.overrideWarning) {
+                controls.overrideWarning.style.display = settings.alwaysOverride ? 'block' : 'none'
+            }
+        }
+
+        function syncBatchWbHeaderSummary() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.summaryTotal) return
+            const selectedSummaries = Array.from(selectedSongs)
+                .map(filename => songSummaryCache.get(filename))
+                .filter(Boolean)
+            const settings = getBatchWorkbenchSettingsFromUI()
+            const total = selectedSummaries.length
+            const processable = selectedSummaries.filter(summary => {
+                if (!hasLyricsSummary(summary)) return false
+                if (settings.alwaysOverride) return true
+                return settings.onlyEmpty ? !hasSummaryTranslation(summary) : true
+            }).length
+            const hasTranslation = selectedSummaries.filter(summary => hasSummaryTranslation(summary)).length
+            controls.summaryTotal.textContent = String(total)
+            controls.summaryProcessable.textContent = String(processable)
+            controls.summaryHasTranslation.textContent = String(hasTranslation)
+        }
+
+        function onBatchWbOverrideToggle(checkbox) {
+            const controls = getBatchWorkbenchControls()
+            if (checkbox && checkbox.checked) {
+                if (controls.onlyEmptyCheck) controls.onlyEmptyCheck.checked = false
+            } else if (controls.onlyEmptyCheck && controls.onlyEmptyCheck.checked) {
+                if (controls.alwaysOverrideCheck) controls.alwaysOverrideCheck.checked = false
+            }
+            syncBatchWbSettingsSummary()
+        }
+
+        function captureAISettingsSnapshot() {
+            const keys = [
+                'aiApiKey', 'aiSystemPrompt', 'aiProvider', 'aiBaseUrl', 'aiModel',
+                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiThinkingEnabled',
+                'aiThinkingApiKey', 'aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel',
+                'aiThinkingPrompt', 'batchWorkbenchAutoSave', 'batchWorkbenchOnlyEmpty',
+                'batchWorkbenchAlwaysOverride', 'batchExtraPrompt'
+            ]
+            const storage = {}
+            keys.forEach(key => {
+                storage[key] = localStorage.getItem(key)
+            })
+            const ids = [
+                'aiApiKey', 'aiSystemPrompt', 'aiProvider', 'aiBaseUrl', 'aiModel',
+                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiThinkingEnabled',
+                'aiThinkingApiKey', 'aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel',
+                'aiThinkingPrompt', 'batchExtraPrompt'
+            ]
+            const inputs = {}
+            ids.forEach(id => {
+                const el = document.getElementById(id)
+                if (!el) return
+                inputs[id] = el.type === 'checkbox' ? el.checked : el.value
+            })
+            return { storage, inputs }
+        }
+
+        function restoreAISettingsSnapshot(snapshot) {
+            if (!snapshot) return
+            Object.entries(snapshot.storage || {}).forEach(([key, value]) => {
+                if (value === null || value === undefined) {
+                    localStorage.removeItem(key)
+                } else {
+                    localStorage.setItem(key, value)
+                }
+            })
+            Object.entries(snapshot.inputs || {}).forEach(([id, value]) => {
+                const el = document.getElementById(id)
+                if (!el) return
+                if (el.type === 'checkbox') {
+                    el.checked = Boolean(value)
+                } else {
+                    el.value = value || ''
+                }
+            })
+        }
+
+        async function testBatchWbConnection() {
+            const settings = getBatchWorkbenchSettingsFromUI()
+            if (!settings.apiKey) {
+                alert('请先填写 API Key')
+                return
+            }
+            if (!settings.baseUrl || !settings.model) {
+                alert('请先填写 Base URL 和模型')
+                return
+            }
+            try {
+                const probePayload = {
+                    api_key: settings.apiKey,
+                    base_url: settings.baseUrl,
+                    model: settings.model,
+                    system_prompt: settings.systemPrompt || '',
+                    compat_mode: settings.compatMode
+                }
+
+                const response = await fetch('/probe_ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: 'translation', ...probePayload })
+                })
+                const data = await response.json()
+                if (!data || data.status !== 'success') {
+                    throw new Error(data?.message || '模型探测失败')
+                }
+
+                let thinkingResultText = ''
+                const thinkingEnabled = localStorage.getItem('aiThinkingEnabled') === 'true'
+                if (thinkingEnabled) {
+                    const thinkingApiKey = localStorage.getItem('aiThinkingApiKey') || settings.apiKey
+                    const thinkingBaseUrl = sanitizeBaseUrl(localStorage.getItem('aiThinkingBaseUrl') || settings.baseUrl)
+                    const thinkingModel = localStorage.getItem('aiThinkingModel') || settings.model
+                    const thinkingSystemPrompt = localStorage.getItem('aiThinkingPrompt') || ''
+                    const thinkingProvider = localStorage.getItem('aiThinkingProvider') || localStorage.getItem('aiProvider') || 'deepseek'
+                    const thinkingResponse = await fetch('/probe_ai', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            mode: 'thinking',
+                            api_key: thinkingApiKey,
+                            base_url: thinkingBaseUrl,
+                            model: thinkingModel,
+                            system_prompt: thinkingSystemPrompt,
+                            compat_mode: localStorage.getItem('aiCompatMode') === 'true',
+                            provider: thinkingProvider
+                        })
+                    })
+                    const thinkingData = await thinkingResponse.json()
+                    if (!thinkingData || thinkingData.status !== 'success') {
+                        throw new Error(thinkingData?.message || '思考模型探测失败')
+                    }
+                    thinkingResultText = `\n思考模型：${thinkingData.model || thinkingModel}\n思考 Base URL：${thinkingData.base_url || thinkingBaseUrl}`
+                }
+
+                const extra = data.note ? `\n${data.note}` : ''
+                alert(`连接检查通过。\n模型：${data.model || settings.model}\nBase URL：${data.base_url || settings.baseUrl}${extra}${thinkingResultText}`)
+            } catch (error) {
+                alert(`连接测试失败：${error.message || error}`)
+            }
+        }
+
+        async function saveBatchWbCurrentSettings() {
+            const snapshot = captureAISettingsSnapshot()
+            persistBatchWorkbenchSettingsToStorage()
+            const controls = getBatchWorkbenchControls()
+            if (controls.settingsSource) {
+                controls.settingsSource.textContent = '保存中...'
+            }
+            try {
+                const result = typeof saveAISettings === 'function' ? await saveAISettings({ silent: true, skipClose: true }) : { status: 'error', message: '主设置保存函数不可用' }
+                if (!result || result.status !== 'success') {
+                    throw new Error(result?.message || '保存失败')
+                }
+                localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY)
+                batchWorkbenchState.activePresetId = ''
+                updateBatchWorkbenchPresetSelect()
+                updateBatchWorkbenchBaseUrlAndModel()
+                if (controls.settingsSource) {
+                    controls.settingsSource.textContent = '已保存'
+                }
+                syncBatchWbSettingsSummary()
+            } catch (error) {
+                restoreAISettingsSnapshot(snapshot)
+                applyBatchWorkbenchSettingsToUI()
+                syncBatchWbSettingsSummary()
+                if (controls.settingsSource) {
+                    controls.settingsSource.textContent = '保存失败'
+                }
+                alert(`保存失败：${error && error.message ? error.message : String(error)}`)
+            }
+        }
+
+        function openBatchWorkbench() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.modal) return
+            batchWorkbenchState.visible = true
+            controls.modal.classList.add('show')
+            fetchDefaultBatchPromptParts().then(defaults => {
+                const fixedPromptEl = document.getElementById('batchWbFixedPrompt')
+                if (fixedPromptEl) {
+                    fixedPromptEl.textContent = defaults.fixedPrompt || '（未加载固定规则）'
+                }
+            }).catch(() => {})
+            updateBatchWorkbenchPresetSelect()
+            renderBatchWorkbenchFilterRow()
+            renderBatchWorkbenchSongList()
+            updateBatchWorkbenchSettingsPreview()
+            syncBatchWorkbenchPromptFields()
+            renderBatchWorkbenchSummary()
+            renderBatchWorkbenchResultList()
+            syncBatchWbHeaderSummary()
+            syncBatchWbSettingsSummary()
+            setBatchWorkbenchRunStatus(batchWorkbenchState.latestStage || '等待开始')
+            setBatchWorkbenchProgress(batchWorkbenchState.totals.completed || 0, batchWorkbenchState.totals.total || 0)
+        }
+
+        function closeBatchWorkbench() {
+            if (batchWorkbenchState.running) {
+                if (!confirm('任务仍在运行，确认关闭工作台？')) return
+            }
+            const controls = getBatchWorkbenchControls()
+            if (!controls.modal) return
+            controls.modal.classList.remove('show')
+            batchWorkbenchState.visible = false
+        }
+
+        function handleBatchWorkbenchBackdrop(event) {
+            if (event.target && event.target.id === 'batchWorkbenchModal') {
+                closeBatchWorkbench()
+            }
+        }
+
+        function toggleBatchWorkbenchMaximize() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.dialog) return
+            batchWorkbenchState.maximized = !batchWorkbenchState.maximized
+            controls.dialog.classList.toggle('maximized', batchWorkbenchState.maximized)
+        }
+
+        function batchWorkbenchSelectCurrent() {
+            const summaries = getBatchWorkbenchFilteredSummaries()
+            summaries.forEach(summary => selectedSongs.add(summary.filename))
+            
+            renderBatchSelectionCount()
+            renderBatchWorkbenchSongList()
+        }
+
+        function batchWorkbenchSelectUntranslated() {
+            const summaries = getBatchWorkbenchSummaryList().filter(summary => !hasSummaryTranslation(summary))
+            summaries.forEach(summary => selectedSongs.add(summary.filename))
+            
+            renderBatchSelectionCount()
+            renderBatchWorkbenchSongList()
+        }
+
+        function copyBatchResultTranslation() {
+            const target = batchWorkbenchState.results.get(batchWorkbenchState.activeResultId)
+            if (!target || !target.translationText) {
+                alert('当前无可复制翻译')
+                return
+            }
+            navigator.clipboard.writeText(target.translationText).then(() => {
+                alert('已复制翻译到剪贴板')
+            }).catch(() => {
+                alert('复制失败，请手动复制')
+            })
+        }
+
+        async function resaveBatchResult() {
+            const target = batchWorkbenchState.results.get(batchWorkbenchState.activeResultId)
+            if (!target) {
+                alert('没有可重新保存的结果')
+                return
+            }
+            await saveBatchResultById(target.id)
+        }
+
+        async function openBatchResultInEditor() {
+            const target = batchWorkbenchState.results.get(batchWorkbenchState.activeResultId)
+            if (!target || !target.summary) {
+                alert('请先在右栏选中一首歌')
+                return
+            }
+            await editLyrics(target.summary.lyricsPath || '', target.summary.translationPath || '', 0, target.summary.filename)
+            closeBatchWorkbench()
+        }
+
+        async function fetchDefaultBatchPromptParts() {
+            if (defaultBatchSystemPromptCache && defaultBatchFixedPromptCache) {
+                return {
+                    systemPrompt: defaultBatchSystemPromptCache,
+                    fixedPrompt: defaultBatchFixedPromptCache
+                }
+            }
+            const storageValue = localStorage.getItem('defaultAiSystemPrompt')
+            if (storageValue && String(storageValue).trim()) {
+                defaultBatchSystemPromptCache = String(storageValue)
+            }
+            try {
+                const response = await fetch('/get_ai_settings')
+                const data = await response.json()
+                const backendDefault = data && data.status === 'success'
+                    ? String(
+                        (data.defaults && data.defaults.system_prompt && String(data.defaults.system_prompt).trim())
+                            ? data.defaults.system_prompt
+                            : ((data.system_prompt && String(data.system_prompt).trim())
+                                ? data.system_prompt
+                            : (data.settings && data.settings.system_prompt ? data.settings.system_prompt : '')
+                            )
+                    )
+                    : ''
+                if (backendDefault.trim()) {
+                    defaultBatchSystemPromptCache = backendDefault
+                    localStorage.setItem('defaultAiSystemPrompt', backendDefault)
+                }
+                const backendFixedPrompt = data && data.status === 'success'
+                    ? String((data.defaults && data.defaults.batch_fixed_prompt) || '').trim()
+                    : ''
+                if (backendFixedPrompt) {
+                    defaultBatchFixedPromptCache = backendFixedPrompt
+                }
+            } catch (error) {
+                console.warn('获取默认批量提示词失败：', error)
+            }
+            return {
+                systemPrompt: defaultBatchSystemPromptCache || localStorage.getItem('aiSystemPrompt') || '',
+                fixedPrompt: defaultBatchFixedPromptCache || ''
+            }
+        }
+
+        async function restoreBatchPromptDefaults() {
+            const controls = getBatchWorkbenchControls()
+            if (!controls.systemPrompt || !controls.extraPrompt) return
+            const defaults = await fetchDefaultBatchPromptParts()
+            controls.systemPrompt.value = defaults.systemPrompt || ''
+            controls.extraPrompt.value = ''
+            localStorage.setItem('batchExtraPrompt', '')
+            const hiddenBatchExtraPrompt = document.getElementById('batchExtraPrompt')
+            if (hiddenBatchExtraPrompt) hiddenBatchExtraPrompt.value = ''
+            const fixedPromptEl = document.getElementById('batchWbFixedPrompt')
+            if (fixedPromptEl) fixedPromptEl.textContent = defaults.fixedPrompt || '（未加载固定规则）'
+        }
+
+        async function previewBatchFinalPrompt() {
+            const controls = getBatchWorkbenchControls()
+            const systemPrompt = String(controls.systemPrompt && controls.systemPrompt.value ? controls.systemPrompt.value : '').trim()
+            const extraPrompt = String(controls.extraPrompt && controls.extraPrompt.value ? controls.extraPrompt.value : '').trim()
+            const defaults = await fetchDefaultBatchPromptParts()
+            const fixedPrompt = String(defaults.fixedPrompt || defaultBatchFixedPromptCache || '').trim()
+            const finalPrompt = [systemPrompt, fixedPrompt, extraPrompt].filter(Boolean).join('\n\n')
+            alert(finalPrompt ? `主翻译提示词\n${systemPrompt || '（空）'}\n\n批量固定规则\n${fixedPrompt || '（空）'}\n\n批量附加提示词\n${extraPrompt || '（空）'}\n\n最终发送内容\n${finalPrompt}` : '（提示词为空）')
+        }
+
+        function stopBatchTranslate() {
+            if (!batchWorkbenchState.running) {
+                alert('当前没有运行中的任务')
+                return
+            }
+            batchWorkbenchState.stopRequested = true
+            if (batchTranslateAbortController) {
+                batchTranslateAbortController.abort()
+            }
+            setBatchWorkbenchRunStatus('正在中断模型请求...', 'stopped')
+        }
 
         function getSortComparator() {
             return (a, b) => {
@@ -2957,7 +5597,30 @@
         }
 
         let albumCoverObserver = null
+        let albumCoverObserverSuspended = false
         const videoCoverCache = new Map()
+
+        function refreshAlbumCoverObserverTargets() {
+            if (!albumCoverObserver || albumCoverObserverSuspended) return
+            const covers = document.querySelectorAll('#jsonList .album-cover[data-src], #jsonList .album-cover[data-video-src], #jsonList .album-cover[data-dynamic-video-src]')
+            covers.forEach(cover => {
+                if (!(cover instanceof HTMLElement)) return
+                if (!cover.getAttribute('data-dynamic-video-src') && cover.getAttribute('src')) return
+                albumCoverObserver.observe(cover)
+            })
+        }
+
+        function setAlbumCoverObserverSuspended(suspended) {
+            const next = Boolean(suspended)
+            if (albumCoverObserverSuspended === next) return
+            albumCoverObserverSuspended = next
+            if (!albumCoverObserver) return
+            if (next) {
+                albumCoverObserver.disconnect()
+                return
+            }
+            refreshAlbumCoverObserverTargets()
+        }
 
         function stripQueryHash(value) {
             return String(value || '').split('?')[0].split('#')[0]
@@ -3068,6 +5731,7 @@
                 return
             }
             albumCoverObserver = new IntersectionObserver(entries => {
+                if (albumCoverObserverSuspended) return
                 entries.forEach(entry => {
                     if (!entry.isIntersecting) return
                     const cover = entry.target
@@ -3256,7 +5920,7 @@
                 coverSlot.appendChild(coverImg)
                 fileNameDiv.appendChild(coverSlot)
                 ensureAlbumCoverObserver()
-                if (albumCoverObserver) {
+                if (albumCoverObserver && !albumCoverObserverSuspended) {
                     albumCoverObserver.observe(coverImg)
                 } else if (dynamicVideoUrl) {
                     replaceCoverWithVideo(coverImg, dynamicVideoUrl, coverImg.getAttribute('data-poster-src') || '')
@@ -3402,13 +6066,14 @@
             })
 
             applySearch()
+            
         }
 
         async function loadSongSummaries() {
             setListStatus('正在加载歌曲列表，请稍候...', false, true)
             toggleLoader(true, 'Loading')
             try {
-                const res = await fetch('/songs/summary')
+                const res = await fetch('/songs/summary', { cache: 'no-store' })
                 const data = await res.json()
                 if (data.status !== 'success') {
                     throw new Error(data.message || '加载失败')
@@ -3421,6 +6086,611 @@
             } finally {
                 toggleLoader(false)
             }
+        }
+
+        function selectVisibleSongsForBatch() {
+            const visibleItems = (allJsonItems || []).filter(item => item.style.display !== 'none')
+            visibleItems.forEach(item => {
+                const preview = item.querySelector('.file-preview')
+                const filename = preview ? preview.id.replace('preview-', '') : ''
+                if (filename) selectedSongs.add(filename)
+            })
+            
+            renderBatchSelectionCount()
+            renderBatchWorkbenchSongList()
+        }
+
+        function clearBatchSelectedSongs() {
+            selectedSongs.clear()
+            
+            renderBatchSelectionCount()
+            renderBatchWorkbenchSongList()
+            updateBatchTranslateStatus([])
+        }
+
+        async function fetchLyricsTextByPath(pathValue) {
+            if (!pathValue) return ''
+            const response = await fetch('/get_lyrics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: pathValue })
+            })
+            const data = await response.json()
+            if (data.status !== 'success') {
+                throw new Error(data.message || '读取歌词失败')
+            }
+            return data.content || ''
+        }
+
+        async function preprocessBatchLyrics(summary, rawContent) {
+            const lyricsPathRaw = summary && summary.lyricsPath ? summary.lyricsPath : ''
+            const lyricsPath = stripSongsPrefix(lyricsPathRaw).trim()
+            const extension = (lyricsPath.match(/\.[^.]+$/) || [])[0]?.toLowerCase() || ''
+            const detectedExt = detectLyricsExtension(rawContent)
+            if (extension === '.ttml' && detectedExt === '.ttml') {
+                const conversionRes = await fetch('/convert_ttml_by_path', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: lyricsPath })
+                })
+                const conversionData = await conversionRes.json()
+                if (!conversionData || conversionData.status !== 'success') {
+                    throw new Error(conversionData?.message || 'TTML 转换失败')
+                }
+                if (!conversionData.lyricPath) {
+                    throw new Error('TTML 转换成功但未返回LYS路径')
+                }
+                const lyricRes = await fetch('/get_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: conversionData.lyricPath })
+                })
+                const lyricData = await lyricRes.json()
+                if (!lyricData || lyricData.status !== 'success') {
+                    throw new Error(lyricData?.message || '读取转换后的LYS失败')
+                }
+                return lyricData.content || ''
+            }
+            return rawContent
+        }
+
+        function deriveBatchTranslationPath(summary) {
+            const existingPath = (summary.translationPath && summary.translationPath !== '!')
+                ? stripSongsPrefix(summary.translationPath).trim()
+                : ''
+            if (existingPath) {
+                return existingPath
+            }
+            const lyricsPath = (summary.lyricsPath && summary.lyricsPath !== '!')
+                ? stripSongsPrefix(summary.lyricsPath).trim()
+                : ''
+            if (!lyricsPath) {
+                return ''
+            }
+            const base = lyricsPath.replace(/\.[^/.]+$/, '')
+            return `${base}_trans.lrc`
+        }
+
+        async function ensureBatchTranslationPath(summary, targetPath) {
+            const response = await fetch('/update_file_path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonFile: summary.filename,
+                    fileType: 'lyrics',
+                    newPath: targetPath,
+                    index: 1,
+                    clear: !targetPath
+                })
+            })
+            const data = await response.json()
+            if (!data || data.status !== 'success') {
+                throw new Error(data?.message || '更新翻译路径失败')
+            }
+        }
+
+        async function saveBatchTranslationToDisk(summary, payload) {
+            const translations = Array.isArray(payload.translations) ? payload.translations : []
+            if (translations.length === 0) {
+                throw new Error('翻译结果为空，无法保存')
+            }
+            const targetPath = deriveBatchTranslationPath(summary)
+            if (!targetPath) {
+                throw new Error('缺少可用的翻译路径')
+            }
+            await ensureBatchTranslationPath(summary, targetPath)
+            const saveRes = await fetch('/save_lyrics', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: normalizeSongsUrl(targetPath),
+                    content: translations.join('\n')
+                })
+            })
+            const saveData = await saveRes.json()
+            if (!saveData || (saveData.status !== 'success' && saveData.status !== 'warning')) {
+                throw new Error(saveData?.message || '保存翻译文件失败')
+            }
+            summary.translationPath = targetPath
+            songSummaryCache.set(summary.filename, summary)
+            return targetPath
+        }
+
+        async function startBatchTranslate() {
+            let stoppedByUser = false
+            let requestFailed = false
+            const markOutstandingAsFailed = (reason) => {
+                const statusReason = reason || '失败：请求异常'
+                Array.from(batchWorkbenchState.results.values()).forEach(resultEntry => {
+                    if (!resultEntry) return
+                    if (BATCH_TERMINAL_STATUS_KEYS.has(resultEntry.statusKey)) return
+                    resultEntry.statusKey = 'failed'
+                    resultEntry.statusText = statusReason
+                    resultEntry.error = statusReason
+                    markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                })
+                scheduleBatchTranslateStatusRender([statusReason], true, { force: true })
+            }
+            const markOutstandingAsStopped = () => {
+                Array.from(batchWorkbenchState.results.values()).forEach(resultEntry => {
+                    if (!resultEntry) return
+                    if (BATCH_TERMINAL_STATUS_KEYS.has(resultEntry.statusKey)) return
+                    resultEntry.statusKey = 'stopped'
+                    resultEntry.statusText = '已停止'
+                    markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                })
+            }
+            try {
+                if (batchWorkbenchState.running) {
+                    alert('已有批量任务正在运行')
+                    return
+                }
+                if (selectedSongs.size === 0) {
+                    alert('请先选择至少一首歌曲')
+                    return
+                }
+                const controls = getBatchWorkbenchControls()
+                const settings = getBatchWorkbenchSettingsFromUI()
+
+                const apiKey = settings.apiKey || localStorage.getItem('aiApiKey')
+                if (!apiKey) {
+                    alert('请先在AI设置中设置API密钥')
+                    return
+                }
+
+                const provider = settings.provider || 'deepseek'
+                const baseUrl = settings.baseUrl || 'https://api.deepseek.com'
+                const model = settings.model || 'deepseek-reasoner'
+                const expectReasoning = Boolean(settings.expectReasoning)
+                const compatMode = Boolean(settings.compatMode)
+                const stripBrackets = Boolean(settings.stripBrackets)
+                const thinkingEnabled = Boolean(settings.thinkingEnabled)
+
+                const basePrompt = settings.systemPrompt || ''
+                const defaults = await fetchDefaultBatchPromptParts()
+                const fixedPrompt = String(defaults.fixedPrompt || defaultBatchFixedPromptCache || '').trim()
+                const batchExtraPrompt = (settings.extraPrompt || '').trim()
+                const finalSystemPrompt = [basePrompt, fixedPrompt, batchExtraPrompt].filter(Boolean).join('\n\n')
+
+                const autoSave = Boolean(settings.autoSave)
+                const onlyEmpty = Boolean(settings.onlyEmpty)
+                const alwaysOverride = Boolean(settings.alwaysOverride)
+                if (alwaysOverride && controls.onlyEmptyCheck) {
+                    controls.onlyEmptyCheck.checked = false
+                }
+
+                batchWorkbenchState.running = true
+                batchWorkbenchState.stopRequested = false
+                batchWorkbenchState.finalResult = 'none'
+                batchWorkbenchState.lifecyclePhase = 'preparing'
+                batchWorkbenchState.runState = 'running'
+                setAlbumCoverObserverSuspended(true)
+                batchWorkbenchState.runPhase = '预处理歌词中'
+                batchTranslateAbortController = new AbortController()
+                batchWorkbenchState.results.clear()
+                batchWorkbenchState.resultCardMap.clear()
+                batchWorkbenchState.dirtyResultIds.clear()
+                batchWorkbenchState.resultStructureDirty = true
+                batchWorkbenchState.detailDirty = true
+                batchWorkbenchState.resultCardPlaceholder = null
+                batchWorkbenchState.lastRenderedActiveResultId = ''
+                batchWorkbenchState.runtimeStats = {
+                    success: 0,
+                    failed: 0,
+                    skipped: 0,
+                    processing: 0,
+                    completed: 0,
+                    total: 0
+                }
+                batchWorkbenchState.diagnostics.streamChunkCount = 0
+                batchWorkbenchState.diagnostics.uiRefreshCount = 0
+                batchWorkbenchState.diagnostics.partialUpdateCount = 0
+                batchWorkbenchState.diagnostics.fullRefreshCount = 0
+                batchWorkbenchState.activeResultId = ''
+                scheduleBatchWorkbenchResultRender({ detail: true, full: true })
+                setBatchWorkbenchRunStatus('预处理歌词中', 'running')
+
+                const selectedSummaries = Array.from(selectedSongs)
+                    .map(filename => songSummaryCache.get(filename))
+                    .filter(Boolean)
+
+                const statusLog = []
+                let batchTaskTotal = selectedSummaries.length
+                const pushStatus = (message = '', isError = false) => {
+                    if (message) {
+                        statusLog.push(message)
+                        if (statusLog.length > 4) {
+                            statusLog.splice(0, statusLog.length - 4)
+                        }
+                    }
+                    const stats = computeBatchRuntimeStats()
+                    const successCount = stats.success
+                    const errorCount = stats.failed
+                    const skippedCount = stats.skipped
+                    const processingCount = stats.processing
+                    const completedCount = stats.completed
+                    const totalCount = batchTaskTotal || stats.total
+                    setBatchWorkbenchProgress(completedCount, totalCount)
+                    const summaryLine = `进度 ${completedCount}/${totalCount} ｜ 成功 ${successCount} / 失败 ${errorCount} / 跳过 ${skippedCount} / 处理中 ${processingCount}`
+                    scheduleBatchTranslateStatusRender([summaryLine, ...statusLog.slice(-3)], isError, { force: isError })
+                }
+
+                setBatchWorkbenchProgress(0, selectedSummaries.length)
+
+                const items = []
+                const idToSummary = new Map()
+                for (let i = 0; i < selectedSummaries.length; i++) {
+                    if (batchWorkbenchState.stopRequested) break
+                    const summary = selectedSummaries[i]
+                    const display = summary.filename.replace(/\.json$/i, '')
+                    const resultEntry = {
+                        id: String(i + 1),
+                        filename: summary.filename,
+                        display,
+                        summary,
+                        statusKey: 'queued',
+                        statusText: '等待处理',
+                        lineCount: 0,
+                        hasTimestamps: false,
+                        saved: false,
+                        savePath: '',
+                        error: '',
+                        originalPreview: '',
+                        translationPreview: '',
+                        translationText: '',
+                        payload: null
+                    }
+                    batchWorkbenchState.results.set(resultEntry.id, resultEntry)
+                    if (!batchWorkbenchState.activeResultId) {
+                        batchWorkbenchState.activeResultId = resultEntry.id
+                    }
+                    markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId, structure: true })
+                    try {
+                        if (!summary.lyricsPath || summary.lyricsPath === '!') {
+                            resultEntry.statusKey = 'skipped'
+                            resultEntry.statusText = '跳过：无歌词'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            pushStatus(`${display}: 跳过（无歌词路径）`)
+                            continue
+                        }
+                        resultEntry.statusKey = 'reading'
+                        resultEntry.statusText = '读取歌词中'
+                        markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        pushStatus(`${display}: 读取歌词中...`)
+                        const rawContent = await fetchLyricsTextByPath(summary.lyricsPath)
+                        resultEntry.originalPreview = String(rawContent || '').slice(0, 800)
+                        if (!rawContent || !rawContent.trim()) {
+                            resultEntry.statusKey = 'skipped'
+                            resultEntry.statusText = '跳过：无歌词'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            pushStatus(`${display}: 跳过（歌词为空）`)
+                            continue
+                        }
+                        if (isSummaryTTML(summary)) {
+                            resultEntry.statusKey = 'converting'
+                            resultEntry.statusText = 'TTML 转换中'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        const processedContent = await preprocessBatchLyrics(summary, rawContent)
+                        const itemId = String(i + 1)
+                        items.push({
+                            id: itemId,
+                            jsonFile: summary.filename,
+                            lyricsPath: summary.lyricsPath || '',
+                            translationPath: summary.translationPath || '',
+                            content: processedContent
+                        })
+                        idToSummary.set(itemId, summary)
+                        resultEntry.statusKey = 'sent'
+                        resultEntry.statusText = '已发送到模型'
+                        markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        pushStatus(`${display}: 已加入请求`)
+                    } catch (error) {
+                        resultEntry.statusKey = 'failed'
+                        resultEntry.statusText = '失败：预处理异常'
+                        resultEntry.error = error && error.message ? error.message : String(error)
+                        markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        pushStatus(`${display}: 失败（预处理：${error.message || error}）`, true)
+                    }
+                }
+                if (batchWorkbenchState.stopRequested) {
+                    stoppedByUser = true
+                }
+
+                if (stoppedByUser) {
+                    scheduleBatchTranslateStatusRender(['批量翻译已由用户停止'], true, { force: true })
+                    return
+                }
+
+                if (items.length === 0) {
+                    alert('没有可翻译的歌曲（请检查歌词路径或内容）')
+                    return
+                }
+                batchTaskTotal = items.length
+
+                const idToDisplay = new Map(items.map(item => [item.id, item.jsonFile.replace(/\.json$/i, '')]))
+                batchWorkbenchState.lifecyclePhase = 'waiting-model'
+                setBatchWorkbenchRunStatus('等待模型返回', 'running')
+                const response = await fetch('/translate_lyrics', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: batchTranslateAbortController.signal,
+                    body: JSON.stringify({
+                        items,
+                        api_key: apiKey,
+                        system_prompt: finalSystemPrompt,
+                        provider,
+                        base_url: baseUrl,
+                        model,
+                        expect_reasoning: expectReasoning,
+                        compat_mode: compatMode,
+                        thinking_enabled: thinkingEnabled,
+                        strip_brackets: stripBrackets
+                    })
+                })
+
+                const contentType = response.headers.get('Content-Type') || ''
+                if (!response.ok || contentType.includes('application/json')) {
+                    const err = await response.json().catch(() => ({}))
+                    const failureMessage = `批量翻译失败：${err.message || `HTTP ${response.status}`}`
+                    requestFailed = true
+                    markOutstandingAsFailed(`失败：${err.message || `HTTP ${response.status}`}`)
+                    scheduleBatchTranslateStatusRender([failureMessage], true, { force: true })
+                    return
+                }
+
+                const reader = response.body.getReader()
+                const decoder = new TextDecoder()
+                let buffer = ''
+                let streamErrorMessage = ''
+                const latestPayloadById = new Map()
+                const saveErrorById = new Map()
+
+                const processLine = (line) => {
+                    if (!line || !line.startsWith('content:')) return
+                    try {
+                        const payload = JSON.parse(line.slice(8))
+                        if (payload.status === 'error' && payload.message) {
+                            streamErrorMessage = payload.message
+                            pushStatus(`系统错误：${payload.message}`, true)
+                            return
+                        }
+                        if (!payload.id) {
+                            return
+                        }
+                        const summary = idToSummary.get(payload.id)
+                        const display = idToDisplay.get(payload.id) || payload.id
+                        const resultEntry = batchWorkbenchState.results.get(payload.id)
+                        if (!summary) {
+                            pushStatus(`${display}: 失败（未找到歌曲映射）`, true)
+                            return
+                        }
+                        latestPayloadById.set(payload.id, payload)
+                        batchWorkbenchState.diagnostics.streamChunkCount += 1
+                        batchWorkbenchState.lifecyclePhase = 'receiving'
+                        const lineCount = Array.isArray(payload.translations) ? payload.translations.length : 0
+                        const tsMark = payload.hasTimestamps ? '含时间戳' : '无时间戳'
+                        if (resultEntry) {
+                            resultEntry.statusKey = 'received'
+                            resultEntry.statusText = '已接收翻译'
+                            resultEntry.lineCount = lineCount
+                            resultEntry.hasTimestamps = Boolean(payload.hasTimestamps)
+                            resultEntry.payload = payload
+                            resultEntry.translationText = Array.isArray(payload.translations) ? payload.translations.join('\n') : ''
+                            resultEntry.translationPreview = resultEntry.translationText.slice(0, 800)
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        pushStatus(`${display}: 已接收翻译增量（${lineCount} 行，${tsMark}）`)
+                    } catch (error) {
+                        console.error('处理批量翻译内容失败:', error)
+                        const msg = error && error.message ? error.message : String(error)
+                        pushStatus(`系统错误：处理流式结果失败：${msg}`, true)
+                    }
+                }
+
+                while (true) {
+                    if (batchWorkbenchState.stopRequested) {
+                        stoppedByUser = true
+                        break
+                    }
+                    const { done, value } = await reader.read()
+                    if (done) break
+                    buffer += decoder.decode(value, { stream: true })
+                    let newlineIndex
+                    while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.slice(0, newlineIndex)
+                        buffer = buffer.slice(newlineIndex + 1)
+                        processLine(line)
+                    }
+                }
+                if (stoppedByUser) {
+                    pushStatus('系统状态：用户已停止任务', true)
+                }
+                const tail = decoder.decode()
+                if (tail) buffer += tail
+                if (buffer) {
+                    const remaining = buffer.split('\n')
+                    for (const line of remaining) {
+                        processLine(line)
+                    }
+                }
+
+                for (const item of items) {
+                    if (batchWorkbenchState.stopRequested) break
+                    const itemId = item.id
+                    const display = idToDisplay.get(itemId) || itemId
+                    const summary = idToSummary.get(itemId)
+                    const finalPayload = latestPayloadById.get(itemId)
+                    const resultEntry = batchWorkbenchState.results.get(itemId)
+
+                    if (!summary) {
+                        if (resultEntry) {
+                            resultEntry.statusKey = 'failed'
+                            resultEntry.statusText = '失败：映射异常'
+                        }
+                        pushStatus(`${display}: 失败（未找到歌曲映射）`, true)
+                        continue
+                    }
+                    if (!finalPayload) {
+                        if (resultEntry && resultEntry.statusKey !== 'skipped') {
+                            resultEntry.statusKey = 'failed'
+                            resultEntry.statusText = '失败：模型返回异常'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        pushStatus(`${display}: 未返回翻译结果`, true)
+                        continue
+                    }
+                    try {
+                        const hadTranslation = hasSummaryTranslation(summary)
+                        const shouldSkipSave = (!autoSave) || (onlyEmpty && hadTranslation && !alwaysOverride)
+                        if (shouldSkipSave) {
+                            if (resultEntry) {
+                                resultEntry.saved = false
+                                resultEntry.statusKey = 'success'
+                                resultEntry.statusText = autoSave ? '跳过：已有翻译' : '成功'
+                                markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            }
+                            pushStatus(`${display}: 已接收翻译（未自动保存）`)
+                            continue
+                        }
+                        if (resultEntry) {
+                            resultEntry.statusKey = 'saving'
+                            resultEntry.statusText = '保存中'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        batchWorkbenchState.lifecyclePhase = 'saving'
+                        setBatchWorkbenchRunStatus('正在保存翻译', 'running')
+                        pushStatus(`${display}: 保存翻译中...`)
+                        const savePath = await saveBatchTranslationToDisk(summary, finalPayload)
+                        const lineCount = Array.isArray(finalPayload.translations) ? finalPayload.translations.length : 0
+                        const tsMark = finalPayload.hasTimestamps ? '含时间戳' : '无时间戳'
+                        if (resultEntry) {
+                            resultEntry.saved = true
+                            resultEntry.savePath = savePath
+                            resultEntry.statusKey = 'success'
+                            resultEntry.statusText = '成功'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        pushStatus(`${display}: 成功（已落盘，${lineCount} 行，${tsMark}）`)
+                    } catch (saveError) {
+                        const saveMsg = saveError && saveError.message ? saveError.message : String(saveError)
+                        saveErrorById.set(itemId, saveMsg)
+                        if (resultEntry) {
+                            resultEntry.saved = false
+                            resultEntry.error = saveMsg
+                            resultEntry.statusKey = 'failed'
+                            resultEntry.statusText = '失败：保存失败'
+                            markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                        }
+                        pushStatus(`系统错误：保存阶段存在失败：${saveMsg}`, true)
+                    }
+                    pushStatus(`${display}: ${saveErrorById.has(itemId) ? '失败（保存失败）' : '已处理完成'}`, saveErrorById.size > 0)
+                }
+
+                items.forEach(item => {
+                    const display = idToDisplay.get(item.id) || item.id
+                    const resultEntry = batchWorkbenchState.results.get(item.id)
+                    const currentStatusKey = resultEntry ? resultEntry.statusKey : ''
+                    if (currentStatusKey !== 'success' && currentStatusKey !== 'skipped' && currentStatusKey !== 'stopped') {
+                        if (saveErrorById.has(item.id)) {
+                            if (resultEntry) {
+                                resultEntry.statusKey = 'failed'
+                                resultEntry.statusText = '失败：保存失败'
+                                markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            }
+                            pushStatus(`${display}: 失败（保存失败：${saveErrorById.get(item.id)}）`, true)
+                        } else if (streamErrorMessage) {
+                            if (resultEntry && resultEntry.statusKey !== 'success') {
+                                resultEntry.statusKey = 'failed'
+                                resultEntry.statusText = '失败：模型返回异常'
+                                resultEntry.error = streamErrorMessage
+                                markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            }
+                            pushStatus(`${display}: 失败（${streamErrorMessage}）`, true)
+                        } else if (!latestPayloadById.has(item.id) && !currentStatusKey) {
+                            if (resultEntry) {
+                                resultEntry.statusKey = 'failed'
+                                resultEntry.statusText = '失败：模型返回异常'
+                                markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            }
+                            pushStatus(`${display}: 未返回翻译结果`, true)
+                        } else if (!currentStatusKey || currentStatusKey === 'saving') {
+                            if (resultEntry && resultEntry.statusKey !== 'success') {
+                                resultEntry.statusKey = 'failed'
+                                resultEntry.statusText = '失败：状态未完成'
+                                markBatchResultDirty(resultEntry.id, { detail: resultEntry.id === batchWorkbenchState.activeResultId })
+                            }
+                            pushStatus(`${display}: 失败（状态未完成，请重试）`, true)
+                        }
+                    }
+                })
+                scheduleBatchWorkbenchResultRender({ detail: true })
+                pushStatus('批量翻译流程已结束', Boolean(streamErrorMessage) || saveErrorById.size > 0)
+                } catch (error) {
+                    const message = error && error.message ? error.message : String(error)
+                    const isAbortError = error && (error.name === 'AbortError' || String(message).toLowerCase().includes('aborted'))
+                    if (isAbortError || batchWorkbenchState.stopRequested) {
+                        stoppedByUser = true
+                        scheduleBatchTranslateStatusRender(['批量翻译已由用户停止'], true, { force: true })
+                    } else {
+                        requestFailed = true
+                        markOutstandingAsFailed(`失败：${message}`)
+                        scheduleBatchTranslateStatusRender([`批量翻译流程异常：${message}`], true, { force: true })
+                    }
+                } finally {
+                    if (stoppedByUser) {
+                        markOutstandingAsStopped()
+                    }
+                    batchWorkbenchState.running = false
+                    batchWorkbenchState.lifecyclePhase = 'ended'
+                    batchTranslateAbortController = null
+                    const finalEntries = Array.from(batchWorkbenchState.results.values())
+                    const successCount = finalEntries.filter(item => item.statusKey === 'success').length
+                    const failedCount = finalEntries.filter(item => item.statusKey === 'failed').length
+                    const skippedCount = finalEntries.filter(item => item.statusKey === 'skipped' || item.statusKey === 'stopped').length
+                    const finalState = stoppedByUser
+                        ? 'stopped'
+                        : (requestFailed
+                            ? 'failed'
+                            : (failedCount > 0
+                                ? (successCount > 0 ? 'partial' : 'failed')
+                                : (successCount === finalEntries.length ? 'completed' : 'partial')))
+                    batchWorkbenchState.runState = finalState
+                    updateBatchWorkbenchLifecycle('ended', finalState === 'completed' ? 'success' : (finalState === 'partial' ? 'partial' : finalState))
+                    const finalMessage = stoppedByUser
+                        ? '任务已停止'
+                        : (finalState === 'failed'
+                            ? '任务失败'
+                            : (finalState === 'partial'
+                                ? '任务已完成，部分失败'
+                                : (skippedCount > 0 ? '任务已完成，部分跳过' : '任务已完成')))
+                    setBatchWorkbenchRunStatus(finalMessage, finalState)
+                    const totalEntries = batchWorkbenchState.results.size
+                    const finishedEntries = successCount + failedCount + skippedCount
+                    setBatchWorkbenchProgress(finishedEntries, totalEntries)
+                    scheduleBatchWorkbenchResultRender({ detail: true, full: true })
+                    setAlbumCoverObserverSuspended(false)
+                }
         }
 
         function buildSearchPool(item) {
@@ -3549,7 +6819,39 @@
             updateSortButtons()
             bindEditorValueProxy()
             loadSongSummaries()
+            updateBatchWorkbenchPresetSelect()
             updateQuickAiPresetSelect() // 初始化快速预设选择框
+            renderBatchSelectionCount()
+            const wbControls = getBatchWorkbenchControls()
+            if (wbControls.search) {
+                wbControls.search.addEventListener('input', renderBatchWorkbenchSongList)
+            }
+            if (wbControls.fuzzy) {
+                wbControls.fuzzy.addEventListener('change', renderBatchWorkbenchSongList)
+            }
+            if (wbControls.songList) {
+                wbControls.songList.addEventListener('scroll', handleBatchWorkbenchSongListScroll)
+            }
+            const persistAndRefresh = () => {
+                syncBatchWbSettingsSummary()
+                syncBatchWbHeaderSummary()
+                renderBatchWorkbenchSummary()
+            }
+            ;['aiProvider', 'aiBaseUrl', 'aiModel', 'aiKey', 'expectReasoningCheck', 'compatModeCheck', 'stripBracketsCheck', 'thinkingEnabledCheck', 'autoSave', 'onlyEmptyCheck', 'systemPrompt', 'extraPrompt'].forEach(key => {
+                const el = wbControls[key]
+                if (!el) return
+                const evt = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio') ? 'input' : 'change'
+                el.addEventListener(evt, persistAndRefresh)
+            })
+            if (wbControls.alwaysOverrideCheck) {
+                wbControls.alwaysOverrideCheck.addEventListener('change', () => {
+                    onBatchWbOverrideToggle(wbControls.alwaysOverrideCheck)
+                    persistAndRefresh()
+                })
+            }
+            applyBatchWorkbenchSettingsToUI()
+            syncBatchWbSettingsSummary()
+            syncBatchWbHeaderSummary()
         })
 
         function viewFile(type, path) {
@@ -4282,7 +7584,7 @@
             newPathInput.value = currentPathInput.value
 
             // 获取当前背景图片路径和动态封面路径
-            fetch('/get_json_data?filename=' + encodeURIComponent(jsonFile))
+            fetch('/get_json_data?filename=' + encodeURIComponent(jsonFile), { cache: 'no-store' })
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
@@ -4971,7 +8273,7 @@
                 .then(data => {
                     if (data.status === 'success') {
                         closeCreateModal()
-                        location.reload()
+                        loadSongSummaries()
                     } else {
                         alert('创建失败：' + data.message)
                     }
@@ -5004,7 +8306,7 @@
                 if (data.status === 'success') {
                     alert(`创建成功：${data.jsonFile}`)
                     closeCreateModal()
-                    location.reload()
+                    loadSongSummaries()
                 } else {
                     alert(`创建失败：${data.message}`)
                 }
@@ -5456,7 +8758,7 @@
                         btn.style.margin = '5px'
                         btn.innerHTML = `
                             ${backup.time}
-                            <div style="font-size:0.8em; color:#666;">${backup.path.split('/').pop()}</div>
+                            <div class="form-help-text" style="font-size:0.8em;">${backup.path.split('/').pop()}</div>
                         `
                         btn.onclick = () => restoreToVersion(backup.path)
                         backupList.appendChild(btn)
@@ -6890,6 +10192,7 @@
 
             // 静默应用，不再弹出提示
             updateQuickAiPresetSelect(); // 更新快速选择框
+            updateBatchWorkbenchPresetSelect();
         }
 
         // 更新预设选择框
@@ -6944,6 +10247,7 @@
 
             alert(`预设 "${name}" 已保存`);
             updateQuickAiPresetSelect(); // 更新快速选择框
+            updateBatchWorkbenchPresetSelect();
         }
 
         // 更新当前预设
@@ -6975,6 +10279,7 @@
 
             alert(`预设 "${presets[index].name}" 已更新`);
             updateQuickAiPresetSelect(); // 更新快速选择框
+            updateBatchWorkbenchPresetSelect();
         }
 
         // 删除预设
@@ -7002,6 +10307,7 @@
 
             alert('预设已删除');
             updateQuickAiPresetSelect(); // 更新快速选择框
+            updateBatchWorkbenchPresetSelect();
         }
 
         // 更新快速预设选择框
@@ -7082,6 +10388,10 @@
             applyProviderPreset('aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel', forceApply);
         }
 
+        function updateBatchWorkbenchBaseUrlAndModel(forceApply = false) {
+            applyProviderPreset('batchWbAiProvider', 'batchWbAiBaseUrl', 'batchWbAiModel', forceApply);
+        }
+
         // 页面加载完成后添加事件监听器
         document.addEventListener('DOMContentLoaded', function() {
             const providerSelect = document.getElementById('aiProvider');
@@ -7101,7 +10411,8 @@
             return value.trim().replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
         }
 
-        function saveAISettings() {
+        function saveAISettings(options = {}) {
+            const { silent = false, skipClose = false } = options || {}
             const apiKey = document.getElementById('aiApiKey').value;
             const systemPrompt = document.getElementById('aiSystemPrompt').value;
             const hasSystemPrompt = systemPrompt && systemPrompt.trim().length > 0;
@@ -7168,108 +10479,69 @@
             } else {
                 localStorage.removeItem('aiThinkingModel');
             }
-
-            fetch('/save_ai_settings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    api_key: apiKey,
-                    system_prompt: systemPrompt,
-                    provider: provider,
-                    base_url: baseUrl,
-                    model: model,
-                    expect_reasoning: expectReasoning,
-                    compat_mode: compatMode,
-                    strip_brackets: stripBrackets,
-                    thinking_enabled: thinkingEnabled,
-                    thinking_api_key: thinkingApiKey,
-                    thinking_provider: thinkingProvider,
-                    thinking_base_url: thinkingBaseUrl,
-                    thinking_model: thinkingModel,
-                    thinking_system_prompt: thinkingPrompt
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    const resolvedSystemPrompt = data.system_prompt || '';
-                    if (resolvedSystemPrompt.trim().length > 0) {
-                        localStorage.setItem('aiSystemPrompt', resolvedSystemPrompt);
-                        const systemPromptInput = document.getElementById('aiSystemPrompt');
-                        if (systemPromptInput) {
-                            systemPromptInput.value = resolvedSystemPrompt;
+            const currentFormData = collectAIFormState();
+            const activePresetId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
+            if (activePresetId) {
+                const presets = loadAiPresets();
+                const activePreset = presets.find(p => p.id === activePresetId);
+                if (activePreset) {
+                    const formDataJson = JSON.stringify(currentFormData);
+                    const presetDataJson = JSON.stringify({
+                        translation: {
+                            provider: activePreset.translation?.provider,
+                            base_url: activePreset.translation?.base_url,
+                            model: activePreset.translation?.model,
+                            api_key: activePreset.translation?.api_key,
+                            system_prompt: activePreset.translation?.system_prompt,
+                            expect_reasoning: activePreset.translation?.expect_reasoning,
+                            compat_mode: activePreset.translation?.compat_mode,
+                            strip_brackets: activePreset.translation?.strip_brackets
+                        },
+                        thinking: {
+                            enabled: activePreset.thinking?.enabled,
+                            provider: activePreset.thinking?.provider,
+                            base_url: activePreset.thinking?.base_url,
+                            model: activePreset.thinking?.model,
+                            api_key: activePreset.thinking?.api_key,
+                            system_prompt: activePreset.thinking?.system_prompt
                         }
-                    } else {
-                        localStorage.removeItem('aiSystemPrompt');
+                    });
+                    if (formDataJson !== presetDataJson) {
+                        localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
                     }
-
-                    const resolvedThinkingPrompt = data.thinking_system_prompt || '';
-                    if (resolvedThinkingPrompt.trim().length > 0) {
-                        localStorage.setItem('aiThinkingPrompt', resolvedThinkingPrompt);
-                        const thinkingPromptInput = document.getElementById('aiThinkingPrompt');
-                        if (thinkingPromptInput) {
-                            thinkingPromptInput.value = resolvedThinkingPrompt;
-                        }
-                    } else {
-                        localStorage.removeItem('aiThinkingPrompt');
-                    }
-
-                    const resolvedStripBrackets = data.strip_brackets !== undefined ? !!data.strip_brackets : false;
-                    localStorage.setItem('aiStripBrackets', resolvedStripBrackets);
-                    const stripBracketsInput = document.getElementById('aiStripBrackets');
-                    if (stripBracketsInput) {
-                        stripBracketsInput.checked = resolvedStripBrackets;
-                    }
-
-                    const activePresetId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
-                    if (activePresetId) {
-                        const presets = loadAiPresets();
-                        const activePreset = presets.find(p => p.id === activePresetId);
-                        if (activePreset) {
-                            const currentFormData = collectAIFormState();
-                            const formDataJson = JSON.stringify(currentFormData);
-                            const presetDataJson = JSON.stringify({
-                                translation: {
-                                    provider: activePreset.translation?.provider,
-                                    base_url: activePreset.translation?.base_url,
-                                    model: activePreset.translation?.model,
-                                    api_key: activePreset.translation?.api_key,
-                                    system_prompt: activePreset.translation?.system_prompt,
-                                    expect_reasoning: activePreset.translation?.expect_reasoning,
-                                    compat_mode: activePreset.translation?.compat_mode,
-                                    strip_brackets: activePreset.translation?.strip_brackets
-                                },
-                                thinking: {
-                                    enabled: activePreset.thinking?.enabled,
-                                    provider: activePreset.thinking?.provider,
-                                    base_url: activePreset.thinking?.base_url,
-                                    model: activePreset.thinking?.model,
-                                    api_key: activePreset.thinking?.api_key,
-                                    system_prompt: activePreset.thinking?.system_prompt
-                                }
-                            });
-                            if (formDataJson !== presetDataJson) {
-                                localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
-                            }
-                        } else {
-                            localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
-                        }
-                    }
-                    updateAiPresetSelect();
-                    updateQuickAiPresetSelect();
-
-                    alert('设置已保存！');
-                    closeAISettings();
                 } else {
-                    alert('保存设置失败：' + data.message);
+                    localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
                 }
-            })
-            .catch(error => {
-                console.error('保存AI设置失败：', error);
-                alert('保存AI设置失败，请查看控制台获取详细信息。');
-            });
+            }
+
+            updateAiPresetSelect();
+            updateQuickAiPresetSelect();
+
+            const successData = {
+                status: 'success',
+                api_key: apiKey,
+                system_prompt: hasSystemPrompt ? systemPrompt : '',
+                provider: provider,
+                base_url: baseUrl,
+                model: model,
+                expect_reasoning: expectReasoning,
+                strip_brackets: stripBrackets,
+                compat_mode: compatMode,
+                thinking_enabled: thinkingEnabled,
+                thinking_api_key: thinkingApiKey,
+                thinking_provider: thinkingProvider,
+                thinking_base_url: thinkingBaseUrl,
+                thinking_model: thinkingModel,
+                thinking_system_prompt: hasThinkingPrompt ? thinkingPrompt : ''
+            }
+
+            if (!silent) {
+                alert('设置已保存！')
+            }
+            if (!skipClose && !silent) {
+                closeAISettings()
+            }
+            return Promise.resolve(successData)
         }
 
         // 测试AI连接
@@ -7300,6 +10572,11 @@
                 baseUrl = mainBaseUrlInput.value.trim();
             }
 
+            const compatMode = document.getElementById('aiCompatMode')?.checked || false;
+            const systemPrompt = isThinking
+                ? (document.getElementById('aiThinkingPrompt')?.value || '')
+                : (document.getElementById('aiSystemPrompt')?.value || '');
+
             if (!baseUrl) {
                 alert(`请先填写${targetLabel}的Base URL`);
                 return;
@@ -7326,18 +10603,19 @@
                     body: JSON.stringify({
                         mode,
                         api_key: apiKey,
-                        base_url: baseUrl
+                        base_url: baseUrl,
+                        model: isThinking
+                            ? (document.getElementById('aiThinkingModel')?.value || document.getElementById('aiModel')?.value || '')
+                            : (document.getElementById('aiModel')?.value || ''),
+                        system_prompt: systemPrompt,
+                        compat_mode: compatMode
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.status === 'success') {
-                    const models = data.models || [];
-                    const modelList = models.slice(0, 10).join('\n');
-                    const moreCount = Math.max(0, models.length - 10);
-                    const moreText = moreCount > 0 ? `\n...还有${moreCount}个模型` : '';
-                    alert(`${targetLabel}连接成功！\n可用模型（前10个）：\n${modelList || '（空）'}${moreText}`);
+                    alert(`${targetLabel}连接成功！\n模型：${data.model || '未返回'}\nBase URL：${data.base_url || baseUrl}`);
                 } else {
                     alert(`${targetLabel}连接失败：${data.message}`);
                 }
@@ -7368,7 +10646,7 @@
 
             try {
                 // 1) 读取歌曲 JSON，拿到歌词路径
-                const res = await fetch('/get_json_data?filename=' + encodeURIComponent(filename));
+                const res = await fetch('/get_json_data?filename=' + encodeURIComponent(filename), { cache: 'no-store' });
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error('获取歌曲信息失败');
 
