@@ -575,6 +575,15 @@
             background: #343a40;
         }
 
+        .action-button-danger {
+            background: #c92a2a;
+            color: #fff;
+        }
+
+        .action-button-danger:hover {
+            background: #a51111;
+        }
+
         .search-container {
             position: fixed;
             top: 0;
@@ -2359,6 +2368,7 @@
                     <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
                     <button class="action-button" onclick="openBatchWorkbench()">批量翻译工作台</button>
                     <a class="action-button" href="/lyric-sphere-v2/" target="_blank" rel="noopener">LyricSphere v2</a>
+                    <a class="action-button action-button-danger" href="/lyric-sphere-v2/?tab=settings" target="_blank" rel="noopener">修复网页缓存</a>
                     <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
                     <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
                 </div>
@@ -9965,28 +9975,65 @@
             const savedThinkingApiKey = localStorage.getItem('aiThinkingApiKey');
             const savedThinkingPrompt = localStorage.getItem('aiThinkingPrompt');
             const savedStripBrackets = localStorage.getItem('aiStripBrackets');
+            const resolveStoredValue = (storedValue, fallbackValue) => {
+                if (storedValue !== null && storedValue !== undefined) {
+                    return storedValue;
+                }
+                return fallbackValue;
+            };
 
             // 获取当前设置
             fetch('/get_ai_settings')
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        // 优先使用localStorage中的API密钥和提示词
-                        document.getElementById('aiApiKey').value = savedApiKey || data.settings.api_key;
-                        document.getElementById('aiSystemPrompt').value = savedSystemPrompt || data.settings.system_prompt;
-                        document.getElementById('aiProvider').value = savedProvider || data.settings.provider || 'deepseek';
-                        document.getElementById('aiBaseUrl').value = savedBaseUrl || data.settings.base_url || 'https://api.deepseek.com';
-                        document.getElementById('aiModel').value = savedModel || data.settings.model || 'deepseek-reasoner';
-                        document.getElementById('aiExpectReasoning').checked = savedExpectReasoning ? savedExpectReasoning === 'true' : (data.settings.expect_reasoning !== undefined ? data.settings.expect_reasoning : true);
-                        document.getElementById('aiCompatMode').checked = savedCompatMode ? savedCompatMode === 'true' : (data.settings.compat_mode !== undefined ? data.settings.compat_mode : false);
-                        const backendStripBrackets = data.settings.strip_brackets !== undefined ? !!data.settings.strip_brackets : false;
-                        document.getElementById('aiStripBrackets').checked = savedStripBrackets !== null ? savedStripBrackets === 'true' : backendStripBrackets;
-                        document.getElementById('aiThinkingEnabled').checked = savedThinkingEnabled ? savedThinkingEnabled === 'true' : (data.settings.thinking_enabled !== undefined ? data.settings.thinking_enabled : true);
-                        document.getElementById('aiThinkingProvider').value = savedThinkingProvider || data.settings.thinking_provider || data.settings.provider || 'deepseek';
-                        document.getElementById('aiThinkingBaseUrl').value = savedThinkingBaseUrl || data.settings.thinking_base_url || data.settings.base_url || '';
-                        document.getElementById('aiThinkingModel').value = savedThinkingModel || data.settings.thinking_model || data.settings.model || '';
-                        document.getElementById('aiThinkingApiKey').value = savedThinkingApiKey || data.settings.thinking_api_key || '';
-                        document.getElementById('aiThinkingPrompt').value = savedThinkingPrompt || data.settings.thinking_system_prompt || '';
+                        const backendSettings = data.settings || {};
+                        const backendStripBrackets = backendSettings.strip_brackets !== undefined
+                            ? !!backendSettings.strip_brackets
+                            : false;
+                        const effectiveSettings = {
+                            translation: {
+                                provider: resolveStoredValue(savedProvider, backendSettings.provider || 'deepseek'),
+                                base_url: resolveStoredValue(savedBaseUrl, backendSettings.base_url || 'https://api.deepseek.com'),
+                                model: resolveStoredValue(savedModel, backendSettings.model || 'deepseek-reasoner'),
+                                api_key: resolveStoredValue(savedApiKey, backendSettings.api_key || ''),
+                                system_prompt: resolveStoredValue(savedSystemPrompt, backendSettings.system_prompt || ''),
+                                expect_reasoning: savedExpectReasoning !== null
+                                    ? savedExpectReasoning === 'true'
+                                    : (backendSettings.expect_reasoning !== undefined ? backendSettings.expect_reasoning : true),
+                                compat_mode: savedCompatMode !== null
+                                    ? savedCompatMode === 'true'
+                                    : (backendSettings.compat_mode !== undefined ? backendSettings.compat_mode : false),
+                                strip_brackets: savedStripBrackets !== null
+                                    ? savedStripBrackets === 'true'
+                                    : backendStripBrackets
+                            },
+                            thinking: {
+                                enabled: savedThinkingEnabled !== null
+                                    ? savedThinkingEnabled === 'true'
+                                    : (backendSettings.thinking_enabled !== undefined ? backendSettings.thinking_enabled : true),
+                                provider: resolveStoredValue(
+                                    savedThinkingProvider,
+                                    backendSettings.thinking_provider || backendSettings.provider || 'deepseek'
+                                ),
+                                base_url: resolveStoredValue(
+                                    savedThinkingBaseUrl,
+                                    backendSettings.thinking_base_url || backendSettings.base_url || ''
+                                ),
+                                model: resolveStoredValue(
+                                    savedThinkingModel,
+                                    backendSettings.thinking_model || backendSettings.model || ''
+                                ),
+                                api_key: resolveStoredValue(savedThinkingApiKey, backendSettings.thinking_api_key || ''),
+                                system_prompt: resolveStoredValue(
+                                    savedThinkingPrompt,
+                                    backendSettings.thinking_system_prompt || ''
+                                )
+                            }
+                        };
+
+                        fillAIFormState(effectiveSettings);
+                        writeAIStateToLocalStorage(effectiveSettings);
                         document.getElementById('aiSettingsModal').style.display = 'block';
                         updateAiPresetSelect(); // 更新预设选择框
                     }
