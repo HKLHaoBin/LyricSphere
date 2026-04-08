@@ -158,7 +158,7 @@
             /* max-width: 100%; */
             margin: 0;
             /* padding: 39px; */
-            padding-top: 70px;
+            padding-top: var(--search-header-offset, 70px);
             transition: background-color 0.3s ease, color 0.3s ease;
             color-scheme: light;
         }
@@ -170,7 +170,8 @@
         /* 移动端适配 */
         @media screen and (max-width: 768px), screen and (orientation: portrait) {
             body {
-                padding-top: 80px;
+                --search-header-offset: 80px;
+                padding-top: var(--search-header-offset, 80px);
             }
         }
 
@@ -601,7 +602,7 @@
         }
 
         .search-box {
-            flex: 1;
+            flex: 1 1 320px;
             padding: 12px 18px;
             border-radius: 12px;
             border: 2px solid var(--border-color);
@@ -609,6 +610,8 @@
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             background: var(--input-bg);
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            min-width: 240px;
+            max-width: 560px;
         }
 
         .search-box:focus {
@@ -1074,7 +1077,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            margin-top: 10px;
+            margin-top: 0;
             color: var(--text-color);
             flex-wrap: wrap;
         }
@@ -1337,7 +1340,7 @@
         @media screen and (max-width: 768px), screen and (orientation: portrait) {
             /* 给固定的 .search-container 预留空间，按你实际高度微调 */
             body {
-                padding-top: 80px;   /* 你前面也用过 80px，这里沿用即可。 */
+                padding-top: 0;
                 padding-bottom: 60px;
             }
 
@@ -1361,40 +1364,25 @@
             }
 
             .search-tools {
-                flex-direction: column;
-                align-items: stretch;
-                gap: 16px;
+                justify-content: flex-start;
+                gap: 12px;
             }
 
-            .search-row {
-                width: 100%;
-                display: grid;
-                gap: 10px;
-                flex-wrap: nowrap;
-            }
-
-            .search-row--focus {
-                grid-template-columns: 1fr;
-            }
-
-            .search-row--focus .search-box {
+            .search-box {
+                flex: 1 1 100%;
+                min-width: 0;
                 max-width: none;
             }
 
-            .search-row--sort,
-            .search-row--main,
-            .search-row--system {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+            .search-options {
+                flex: 1 1 100%;
             }
 
-            .search-row .action-button,
-            .search-row button {
-                width: 100%;
-                justify-content: center;
-            }
-
+            .search-tools .action-button,
+            .search-tools button,
             .device-manage-button {
-                width: 100%;
+                flex: 1 1 160px;
+                justify-content: center;
             }
 
             .dropdown-menu {
@@ -1500,7 +1488,6 @@
         }
 
         .search-box {
-            max-width: 300px;
             padding: 11px 14px;
         }
 
@@ -1562,44 +1549,41 @@
             display: flex;
             width: 100%;
             max-width: 1200px;
-            gap: 10px;
+            gap: 8px;
             justify-content: center;
             align-items: center;
             flex-wrap: wrap;
         }
-        .search-row {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            flex-wrap: wrap;
+        .search-tools > :not(.search-box):not(.search-options) {
+            flex: 0 0 auto;
         }
-        .search-row--focus .search-box {
-            width: 100%;
+
+        .search-options {
+            display: inline-flex;
+            align-items: center;
         }
 
         @media screen and (min-width: 769px) and (orientation: landscape) {
             .search-tools {
                 max-width: 1200px;
-                gap: 12px;
-                justify-content: center;
-                align-items: center;
-                flex-wrap: nowrap;
+                gap: 10px;
             }
-            .search-row {
-                flex-wrap: nowrap;
-                flex: 0 0 auto;
-                min-width: fit-content;
-            }
-            .search-row--focus {
-                min-width: 0;
-            }
-            .search-row--focus .search-box {
-                width: 100%;
-                min-width: 0;
+
+            .search-box {
+                flex-basis: 360px;
+                min-width: 280px;
             }
         }
-        .search-row--focus .search-box {
-            width: 100%;
+
+        @media screen and (min-width: 1201px) and (orientation: landscape) {
+            .search-tools {
+                gap: 12px;
+            }
+
+            .search-box {
+                flex-basis: 420px;
+                min-width: 320px;
+            }
         }
         .device-manage-button {
             position: relative;
@@ -2341,49 +2325,41 @@
     <div class="search-container">
         <div class="search-wrapper">
             <div class="search-tools">
-                <div class="search-row search-row--focus">
-                    <input type="text" name="fake_username" autocomplete="username"
-                           style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
-                    <input type="password" name="fake_password" autocomplete="new-password"
-                           style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
-                    <input type="search" class="search-box" id="songSearchInput"
-                           name="song_search_input"
-                           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="search"
-                           readonly
-                           placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
-                    <div class="search-options">
-                        <label class="search-toggle">
-                            <input type="checkbox" id="fuzzySearchToggle">
-                            <span>模糊搜索</span>
-                        </label>
-                    </div>
+                <input type="text" name="fake_username" autocomplete="username"
+                       style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
+                <input type="password" name="fake_password" autocomplete="new-password"
+                       style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
+                <input type="search" class="search-box search-row--focus" id="songSearchInput"
+                       name="song_search_input"
+                       autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="search"
+                       readonly
+                       placeholder="搜索音乐...（关键字越少 搜到的概率越大）">
+                <div class="search-options search-row--focus">
+                    <label class="search-toggle">
+                        <input type="checkbox" id="fuzzySearchToggle">
+                        <span>模糊搜索</span>
+                    </label>
                 </div>
-                <div class="search-row search-row--sort">
-                    <button class="action-button" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
-                    <button class="action-button" onclick="toggleSort('time')" id="timeSortBtn">时间倒序</button>
-                </div>
-                <div class="search-row search-row--main">
-                    <button class="action-button" onclick="showCreateModal()">创建新歌曲</button>
-                    <button class="action-button" onclick="triggerStaticImport()" title="选择 static.zip 快速导入">快速导入</button>
-                    <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
-                    <button class="action-button" onclick="openBatchWorkbench()">批量翻译工作台</button>
-                    <a class="action-button" href="/lyric-sphere-v2/" target="_blank" rel="noopener">LyricSphere v2</a>
-                    <a class="action-button action-button-danger" href="/lyric-sphere-v2/?tab=settings" target="_blank" rel="noopener">修复网页缓存</a>
-                    <button class="action-button" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
-                    <button class="action-button" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
-                </div>
-                <div class="search-row search-row--system">
-                    <button class="action-button" id="securityToggleBtn" onclick="toggleSecurityMode()" title="安全保护：默认开启，防止外部修改">🔒 安全保护</button>
-                    <button class="action-button" id="authToggleBtn" onclick="toggleAuthModal()" title="解锁本设备编辑权限">🔑 解锁本设备</button>
-                    <button class="action-button" onclick="openAMLL()" title="打开AMLL歌词界面">AMLL源</button>
-                    <div class="action-button device-manage-button">
-                        ⚙️ 设备管理
-                        <div class="dropdown-menu" style="display: none;">
-                            <button onclick="showTrustedDevices()">📋 查看设备</button>
-                            <button onclick="showSetPasswordModal()">🔐 设置密码</button>
-                            <button onclick="showRevokeDeviceModal()">🚫 吊销设备</button>
-                            <button onclick="revokeAllDevices()">🗑️ 清空设备</button>
-                        </div>
+                <button class="action-button search-row--sort" onclick="toggleSort('name')" id="nameSortBtn">A-Z 排序</button>
+                <button class="action-button search-row--sort" onclick="toggleSort('time')" id="timeSortBtn">时间倒序</button>
+                <button class="action-button search-row--main" onclick="showCreateModal()">创建新歌曲</button>
+                <button class="action-button search-row--main" onclick="triggerStaticImport()" title="选择 static.zip 快速导入">快速导入</button>
+                <input type="file" id="staticZipInput" accept=".zip" style="display:none" onchange="handleStaticImport(event)">
+                <button class="action-button search-row--main" onclick="openBatchWorkbench()">批量翻译工作台</button>
+                <a class="action-button search-row--main" href="/lyric-sphere-v2/" target="_blank" rel="noopener">LyricSphere v2</a>
+                <a class="action-button action-button-danger search-row--main" href="/lyric-sphere-v2/?tab=settings" target="_blank" rel="noopener">修复网页缓存</a>
+                <button class="action-button search-row--main" onclick="toggleDarkMode()" id="themeToggle">🌓 切换主题</button>
+                <button class="action-button search-row--main" id="portSwitchBtn" onclick="switchPortMode()">随机端口</button>
+                <button class="action-button search-row--system" id="securityToggleBtn" onclick="toggleSecurityMode()" title="安全保护：默认开启，防止外部修改">🔒 安全保护</button>
+                <button class="action-button search-row--system" id="authToggleBtn" onclick="toggleAuthModal()" title="解锁本设备编辑权限">🔑 解锁本设备</button>
+                <button class="action-button search-row--system" onclick="openAMLL()" title="打开AMLL歌词界面">AMLL源</button>
+                <div class="action-button device-manage-button search-row--system">
+                    ⚙️ 设备管理
+                    <div class="dropdown-menu" style="display: none;">
+                        <button onclick="showTrustedDevices()">📋 查看设备</button>
+                        <button onclick="showSetPasswordModal()">🔐 设置密码</button>
+                        <button onclick="showRevokeDeviceModal()">🚫 吊销设备</button>
+                        <button onclick="revokeAllDevices()">🗑️ 清空设备</button>
                     </div>
                 </div>
             </div>
@@ -11835,6 +11811,20 @@
             });
         }
 
+        function updateSearchHeaderOffset() {
+            const header = document.querySelector('.search-container');
+            if (!header) {
+                return;
+            }
+            const isMobileLayout = window.matchMedia('(max-width: 768px), (orientation: portrait)').matches;
+            if (isMobileLayout) {
+                document.body.style.removeProperty('--search-header-offset');
+                return;
+            }
+            const height = Math.ceil(header.getBoundingClientRect().height);
+            document.body.style.setProperty('--search-header-offset', `${height}px`);
+        }
+
         // 添加设备管理下拉菜单的显示/隐藏逻辑
         document.addEventListener('DOMContentLoaded', function() {
             // 使用更可靠的选择器，基于文本内容而非CSS位置
@@ -11857,6 +11847,16 @@
                     });
                 }
             }
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            updateSearchHeaderOffset();
+            const header = document.querySelector('.search-container');
+            if (header && typeof ResizeObserver !== 'undefined') {
+                const observer = new ResizeObserver(updateSearchHeaderOffset);
+                observer.observe(header);
+            }
+            window.addEventListener('resize', updateSearchHeaderOffset);
         });
         
         window.addEventListener('DOMContentLoaded', updateWriteButtons);
