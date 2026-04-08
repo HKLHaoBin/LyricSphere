@@ -3181,6 +3181,10 @@
                         <button onclick="updateCurrentAiPreset()" class="action-button" style="flex: 1;">更新当前预设</button>
                         <button onclick="deleteAiPreset()" class="action-button" style="flex: 1;">删除预设</button>
                     </div>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <button onclick="exportAiPresets()" class="action-button" style="flex: 1;">导出预设</button>
+                        <button onclick="triggerAiPresetImport()" class="action-button" style="flex: 1;">导入预设</button>
+                    </div>
                 </div>
                 <div>
                     <label>API提供商：</label>
@@ -3271,6 +3275,7 @@
                     <button onclick="saveAISettings()">保存设置</button>
                     <button onclick="closeAISettings()">取消</button>
                 </div>
+                <input type="file" id="aiPresetImportInput" accept=".json,application/json" style="display: none;" onchange="handleAiPresetImport(event)">
             </div>
         </div>
     </div>
@@ -10022,6 +10027,8 @@
         // 预设相关常量
         const AI_PRESETS_STORAGE_KEY = 'aiTranslationPresets';
         const ACTIVE_AI_PRESET_KEY = 'activeAiPresetId';
+        const AI_PRESETS_EXPORT_TYPE = 'famyliam-ai-presets';
+        const AI_PRESETS_EXPORT_VERSION = 1;
 
         // 收集表单状态
         function collectAIFormState() {
@@ -10161,6 +10168,284 @@
                 localStorage.setItem(AI_PRESETS_STORAGE_KEY, JSON.stringify(presets));
             } catch (error) {
                 console.error('Failed to save AI presets:', error);
+            }
+        }
+
+        function generateAiPresetId() {
+            return `preset_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        }
+
+        function normalizeAiPreset(preset, fallbackId) {
+            const state = getBatchWorkbenchPresetStateFromPreset(preset || {});
+            const id = typeof preset?.id === 'string' && preset.id.trim() ? preset.id.trim() : (fallbackId || generateAiPresetId());
+            const name = typeof preset?.name === 'string' && preset.name.trim() ? preset.name.trim() : '未命名预设';
+            return {
+                id,
+                name,
+                translation: state.translation,
+                thinking: state.thinking,
+                batch: state.batch,
+                updated_at: Number.isFinite(Number(preset?.updated_at)) ? Number(preset.updated_at) : Date.now()
+            };
+        }
+
+        function normalizeAiPresetList(presets) {
+            if (!Array.isArray(presets)) {
+                return [];
+            }
+            return presets.map(preset => normalizeAiPreset(preset));
+        }
+
+        function getSelectedAiPresetIdForExport() {
+            const select = document.getElementById('aiPresetSelect');
+            const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
+            const selectedId = select ? select.value : '';
+            return selectedId || activeId || '';
+        }
+
+        function downloadAiPresetJson(filename, payload) {
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(url), 0);
+        }
+
+        function exportAiPresets() {
+            const scope = prompt('输入导出范围：1=当前预设，2=全部预设', '1');
+            if (scope === null) {
+                return;
+            }
+
+            const includeCurrent = scope.trim() === '1' || scope.trim().toLowerCase() === 'current';
+            const includeAll = scope.trim() === '2' || scope.trim().toLowerCase() === 'all';
+            if (!includeCurrent && !includeAll) {
+                alert('请输入 1 或 2');
+                return;
+            }
+
+            const includeSecrets = confirm('是否包含 API 密钥？\n确定=包含，取消=导出时清空密钥');
+            const presets = normalizeAiPresetList(loadAiPresets());
+            let exportPresets = [];
+
+            if (includeAll) {
+                exportPresets = presets;
+            } else {
+                const presetId = getSelectedAiPresetIdForExport();
+                if (!presetId) {
+                    alert('请先选择一个预设');
+                    return;
+                }
+                const preset = presets.find(item => item.id === presetId);
+                if (!preset) {
+                    alert('选中的预设不存在');
+                    return;
+                }
+                exportPresets = [preset];
+            }
+
+            const sanitizedPresets = exportPresets.map(preset => ({
+                ...preset,
+                translation: {
+                    ...preset.translation,
+                    api_key: includeSecrets ? (preset.translation.api_key || '') : ''
+                },
+                thinking: {
+                    ...preset.thinking,
+                    api_key: includeSecrets ? (preset.thinking.api_key || '') : ''
+                }
+            }));
+
+            const payload = {
+                type: AI_PRESETS_EXPORT_TYPE,
+                version: AI_PRESETS_EXPORT_VERSION,
+                exported_at: Date.now(),
+                presets: sanitizedPresets
+            };
+
+            const fileSuffix = includeAll ? 'all' : 'current';
+            downloadAiPresetJson(`ai-presets-${fileSuffix}-${Date.now()}.json`, payload);
+        }
+
+        function triggerAiPresetImport() {
+            const input = document.getElementById('aiPresetImportInput');
+            if (!input) {
+                alert('导入入口不可用');
+                return;
+            }
+
+            const replaceAll = confirm('确定替换全部预设吗？\n确定=替换全部，取消=合并导入');
+            input.dataset.importMode = replaceAll ? 'replace' : 'merge';
+            input.click();
+        }
+
+        function collectImportedAiPresets(rawPayload) {
+            if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+                throw new Error('预设文件格式不正确');
+            }
+            if (rawPayload.type !== AI_PRESETS_EXPORT_TYPE) {
+                throw new Error('预设文件类型不正确');
+            }
+            if (rawPayload.version !== AI_PRESETS_EXPORT_VERSION) {
+                throw new Error('预设文件版本不支持');
+            }
+            if (Array.isArray(rawPayload.presets)) {
+                return rawPayload.presets;
+            }
+            if (Array.isArray(rawPayload.data)) {
+                return rawPayload.data;
+            }
+            throw new Error('预设文件中未找到 presets 字段');
+        }
+
+        function syncActiveAiPresetKeys(presets) {
+            const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
+            const batchActiveId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || '';
+            const presetIds = new Set(presets.map(preset => preset.id));
+            const result = {
+                mainRemoved: false,
+                batchRemoved: false
+            };
+
+            if (activeId && !presetIds.has(activeId)) {
+                localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
+                result.mainRemoved = true;
+            }
+            if (batchActiveId && !presetIds.has(batchActiveId)) {
+                localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY);
+                batchWorkbenchState.activePresetId = '';
+                result.batchRemoved = true;
+            }
+
+            return result;
+        }
+
+        function makeUniqueAiPresetName(baseName, usedNames) {
+            const trimmed = (baseName || '未命名预设').trim() || '未命名预设';
+            if (!usedNames.has(trimmed)) {
+                return trimmed;
+            }
+            let index = 2;
+            while (usedNames.has(`${trimmed} (${index})`)) {
+                index += 1;
+            }
+            return `${trimmed} (${index})`;
+        }
+
+        function importAiPresetsFromData(rawData, importMode) {
+            const importedPresets = collectImportedAiPresets(rawData);
+
+            const normalizedImportedPresets = importedPresets.map((preset, index) => {
+                if (!preset || typeof preset !== 'object' || Array.isArray(preset)) {
+                    throw new Error(`第 ${index + 1} 个预设格式不正确`);
+                }
+                return normalizeAiPreset(preset);
+            });
+            const importedPresetIdSet = new Set(normalizedImportedPresets.map(preset => preset.id));
+            const currentPresets = normalizeAiPresetList(loadAiPresets());
+            let nextPresets = [];
+
+            if (importMode === 'replace') {
+                const usedIds = new Set();
+                const usedNames = new Set();
+                normalizedImportedPresets.forEach(preset => {
+                    let nextPreset = { ...preset };
+                    if (usedIds.has(nextPreset.id)) {
+                        nextPreset = {
+                            ...nextPreset,
+                            id: generateAiPresetId()
+                        };
+                    }
+                    if (usedNames.has(nextPreset.name)) {
+                        nextPreset = {
+                            ...nextPreset,
+                            name: makeUniqueAiPresetName(nextPreset.name, usedNames)
+                        };
+                    }
+                    nextPresets.push(nextPreset);
+                    usedIds.add(nextPreset.id);
+                    usedNames.add(nextPreset.name);
+                });
+            } else {
+                nextPresets = currentPresets.slice();
+                const usedIds = new Set(currentPresets.map(preset => preset.id));
+                const usedNames = new Set(currentPresets.map(preset => preset.name));
+
+                normalizedImportedPresets.forEach(preset => {
+                    let nextPreset = { ...preset };
+                    if (usedIds.has(nextPreset.id)) {
+                        nextPreset = {
+                            ...nextPreset,
+                            id: generateAiPresetId()
+                        };
+                    }
+                    if (usedNames.has(nextPreset.name)) {
+                        nextPreset = {
+                            ...nextPreset,
+                            name: makeUniqueAiPresetName(nextPreset.name, usedNames)
+                        };
+                    }
+                    nextPresets.push(nextPreset);
+                    usedIds.add(nextPreset.id);
+                    usedNames.add(nextPreset.name);
+                });
+            }
+
+            nextPresets = normalizeAiPresetList(nextPresets);
+            saveAiPresets(nextPresets);
+            const nextPresetMap = new Map(nextPresets.map(preset => [preset.id, preset]));
+            const activeMainPresetId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
+            const activeBatchPresetId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || '';
+            if (importMode === 'replace' && activeMainPresetId && importedPresetIdSet.has(activeMainPresetId)) {
+                const updatedMainPreset = nextPresetMap.get(activeMainPresetId);
+                if (updatedMainPreset) {
+                    applyAiPreset(updatedMainPreset);
+                }
+            }
+            if (importMode === 'replace' && activeBatchPresetId && importedPresetIdSet.has(activeBatchPresetId)) {
+                const updatedBatchPreset = nextPresetMap.get(activeBatchPresetId);
+                if (updatedBatchPreset) {
+                    applyBatchWorkbenchPreset(updatedBatchPreset);
+                }
+            }
+            const syncResult = syncActiveAiPresetKeys(nextPresets);
+            if (syncResult.batchRemoved) {
+                applyBatchWorkbenchSettingsToUI();
+            }
+            updateAiPresetSelect();
+            updateQuickAiPresetSelect();
+            updateBatchWorkbenchPresetSelect();
+
+            return nextPresets.length;
+        }
+
+        async function handleAiPresetImport(event) {
+            const input = event.target;
+            const file = input && input.files ? input.files[0] : null;
+            const importMode = input?.dataset?.importMode || 'merge';
+
+            try {
+                if (!file) {
+                    return;
+                }
+
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                const importedCount = importAiPresetsFromData(parsed, importMode);
+                alert(`导入成功，当前共有 ${importedCount} 个预设`);
+            } catch (error) {
+                alert(error.message || '导入失败');
+            } finally {
+                if (input) {
+                    input.value = '';
+                    if (input.dataset) {
+                        delete input.dataset.importMode;
+                    }
+                }
             }
         }
 
