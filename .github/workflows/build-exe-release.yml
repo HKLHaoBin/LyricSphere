@@ -83,9 +83,30 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
+          $placeholder = 'APP_VERSION = "0.0.0-dev"'
+          $newLine = "APP_VERSION = ""$version"""
           $content = Get-Content .\backend.py -Raw
-          $content = $content -replace 'APP_VERSION = "0.0.0-dev"', "APP_VERSION = \"$version\""
+          if (-not $content.Contains($placeholder)) {
+            Write-Error "Placeholder for version not found in backend.py"
+            exit 1
+          }
+          $content = $content.Replace($placeholder, $newLine)
           Set-Content -Path .\backend.py -Value $content -Encoding UTF8
+
+      - name: Verify injected version
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
+          $matches = Select-String -Path .\backend.py -Pattern '^APP_VERSION = "([^"]+)"' -AllMatches
+          if ($matches.Count -ne 1) {
+            Write-Error "Expected exactly one APP_VERSION assignment, found $($matches.Count)"
+            exit 1
+          }
+          $value = $matches[0].Matches[0].Groups[1].Value
+          if ($value -ne $version) {
+            Write-Error "Injected version mismatch. Expected $version, found $value"
+            exit 1
+          }
 
       - name: Install dependencies
         run: |
