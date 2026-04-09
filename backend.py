@@ -9604,37 +9604,162 @@ def restart_on_port(port, open_url=None, executable_override: Optional[Path] = N
     import time
     import subprocess
     import webbrowser
+
+    swap_initial_delay_ms = 1000
+    swap_retry_delay_ms = 500
+    swap_max_wait_ms = 60000
+    service_ready_timeout_ms = 30000
+    service_ready_interval_ms = 500
+
     time.sleep(1)  # Give the client time to receive the response.
     if open_url:
         try:
             webbrowser.open(open_url)
         except Exception:
             pass
+
     def _launch_with_swap(new_path: Path, target_path: Path):
         ts = datetime.now().strftime('%Y%m%d%H%M%S')
         script_path = BASE_PATH / f"apply_swap_{ts}.ps1"
+        log_path = BASE_PATH / "update_swap.log"
+        status_path = UPDATE_STATUS_FILE
+        max_attempts = max(1, int(swap_max_wait_ms / swap_retry_delay_ms))
         ps = f"""
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
+
 $new = '{str(new_path)}'
 $target = '{str(target_path)}'
 $bak = "$target.bak.{ts}"
 $port = '{port}'
 $openUrl = '{open_url or ''}'
+$logPath = '{str(log_path)}'
+$statusPath = '{str(status_path)}'
+$initialDelayMs = {swap_initial_delay_ms}
+$retryDelayMs = {swap_retry_delay_ms}
+$maxAttempts = {max_attempts}
+$serviceReadyTimeoutMs = {service_ready_timeout_ms}
+$serviceReadyIntervalMs = {service_ready_interval_ms}
 
-Start-Sleep -Milliseconds 800
-for ($i=0; $i -lt 30; $i++) {{
+function Write-Log($msg) {{
   try {{
-    if (Test-Path $target) {{ Move-Item -Path $target -Destination $bak -Force -ErrorAction Stop }}
-    if (Test-Path $new) {{ Move-Item -Path $new -Destination $target -Force -ErrorAction Stop }}
-    break
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
+    Add-Content -LiteralPath $logPath -Value "[$ts] $msg"
   }} catch {{}}
-  Start-Sleep -Milliseconds 500
 }}
-if (Test-Path $target) {{
-  Start-Process -FilePath $target -ArgumentList $port
-  if ($openUrl) {{ Start-Process $openUrl }}
+
+function Update-Status($status, $message) {{
+  try {{
+    $json = @{{}}
+    if (Test-Path $statusPath) {{
+      $raw = Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop
+      $json = $raw | ConvertFrom-Json
+    }}
+    if (-not $json) {{ $json = @{{}} }}
+    $json.status = $status
+    $json.last_error = $message
+    $json.update_in_progress = $false
+    $json.needs_swap = $false
+    $json | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statusPath -Encoding UTF8
+  }} catch {{
+    Write-Log "Update status write failed: $($_.Exception.Message)"
+  }}
 }}
-Remove-Item -Path '{str(script_path)}' -Force -ErrorAction SilentlyContinue
+
+Write-Log "Swap helper started. target=$target new=$new port=$port openUrl=$openUrl"
+Start-Sleep -Milliseconds $initialDelayMs
+
+if (-not (Test-Path $new)) {{
+  $msg = "New executable missing: $new"
+  Write-Log $msg
+  Update-Status "error" $msg
+  return
+}}
+
+$swapped = $false
+$lastError = ""
+for ($i=0; $i -lt $maxAttempts; $i++) {{
+  try {{
+    if (Test-Path $target) {{
+      Move-Item -LiteralPath $target -Destination $bak -Force -ErrorAction Stop
+      Write-Log "Existing backend moved to $bak"
+    }}
+    Move-Item -LiteralPath $new -Destination $target -Force -ErrorAction Stop
+    Write-Log "Swap succeeded on attempt $($i + 1)"
+    $swapped = $true
+    break
+  }} catch {{
+    $lastError = $_.Exception.Message
+    Start-Sleep -Milliseconds $retryDelayMs
+  }}
+}}
+
+if (-not $swapped) {{
+  $msg = "Swap failed after $maxAttempts attempts: $lastError"
+  Write-Log $msg
+  Update-Status "error" $msg
+  if (Test-Path $target) {{
+    try {{
+      $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
+      Write-Log "Fallback restart with existing backend started. PID=$($proc.Id)"
+    }} catch {{
+      Write-Log "Fallback restart failed: $($_.Exception.Message)"
+    }}
+  }}
+  return
+}}
+
+try {{
+  $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
+  Write-Log "Started new backend process. PID=$($proc.Id)"
+  Update-Status "process_started" ""
+  $ready = $false
+  $deadline = [DateTime]::UtcNow.AddMilliseconds($serviceReadyTimeoutMs)
+  while ([DateTime]::UtcNow -lt $deadline) {{
+    try {{
+      if (Test-NetConnection -ComputerName '127.0.0.1' -Port $port -InformationLevel Quiet) {{
+        $ready = $true
+        break
+      }}
+    }} catch {{}}
+    Start-Sleep -Milliseconds $serviceReadyIntervalMs
+  }}
+  if ($ready) {{
+    Write-Log "Service ready on port $port"
+    Update-Status "updated" ""
+  }} else {{
+    $msg = "Process started but port $port not ready after $($serviceReadyTimeoutMs/1000)s"
+    Write-Log $msg
+    Update-Status "error" $msg
+  }}
+  if ($openUrl) {{
+    try {{
+      Start-Process $openUrl -ErrorAction Stop | Out-Null
+      Write-Log "Opened URL $openUrl"
+    }} catch {{
+      Write-Log "Open URL failed: $($_.Exception.Message)"
+    }}
+  }}
+}} catch {{
+  $msg = "Start-Process failed: $($_.Exception.Message)"
+  Write-Log $msg
+  Update-Status "error" $msg
+  if (Test-Path $bak) {{
+    try {{
+      Start-Process -FilePath $bak -ArgumentList $port -ErrorAction Stop | Out-Null
+      Write-Log "Attempted fallback launch from backup"
+    }} catch {{
+      Write-Log "Backup launch failed: $($_.Exception.Message)"
+    }}
+  }}
+  return
+}}
+
+try {{
+  Remove-Item -LiteralPath '{str(script_path)}' -Force -ErrorAction Stop
+  Write-Log "Cleanup: script removed"
+}} catch {{
+  Write-Log "Cleanup failed: $($_.Exception.Message)"
+}}
 """
         script_path.write_text(ps, encoding='utf-8')
         subprocess.Popen([
