@@ -9637,11 +9637,49 @@ $port = '{port}'
 $openUrl = '{open_url or ''}'
 $logPath = Join-Path $root 'update_swap.log'
 $statusPath = Join-Path $root 'update_status.json'
+$stdoutLog = Join-Path $root 'backend_start_stdout_{ts}.log'
+$stderrLog = Join-Path $root 'backend_start_stderr_{ts}.log'
+$probeUrls = @("http://127.0.0.1:$port/get_port_status","http://127.0.0.1:$port/")
 $initialDelayMs = {swap_initial_delay_ms}
 $retryDelayMs = {swap_retry_delay_ms}
 $maxAttempts = {max_attempts}
 $serviceReadyTimeoutMs = {service_ready_timeout_ms}
 $serviceReadyIntervalMs = {service_ready_interval_ms}
+$httpTimeoutSec = [Math]::Max(1, [Math]::Ceiling($serviceReadyIntervalMs / 1000.0))
+$keepLogCount = 5
+
+function Start-BackupIfExists {
+  param([string]$bakPath)
+  if (-not (Test-Path $bakPath)) {
+    Write-Log "Backup not found: $bakPath"
+    if (Test-Path $target) {
+      try {
+        $procExisting = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
+        Write-Log "Started existing target without swap. PID=$($procExisting.Id)"
+      } catch {
+        Write-Log "Start existing target failed: $($_.Exception.Message)"
+      }
+    } else {
+      Write-Log "No target executable present to start"
+    }
+    return
+  }
+  try {
+    if (Test-Path $target) {
+      Remove-Item -LiteralPath $target -Force -ErrorAction Stop
+    }
+  } catch {
+    Write-Log "Remove existing target failed before restore: $($_.Exception.Message)"
+  }
+  try {
+    Move-Item -LiteralPath $bakPath -Destination $target -Force -ErrorAction Stop
+    Write-Log "Restored backup to $target"
+    $procBackup = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
+    Write-Log "Backup launch started. PID=$($procBackup.Id)"
+  } catch {
+    Write-Log "Backup restore/launch failed: $($_.Exception.Message)"
+  }
+}
 
 function Write-Log($msg) {{
   try {{
@@ -9668,8 +9706,38 @@ function Update-Status($status, $message) {{
   }}
 }}
 
+function Cleanup-OldLogs($pattern, $keep) {{
+  try {{
+    $files = Get-ChildItem -LiteralPath $root -Filter $pattern -File | Sort-Object LastWriteTime -Descending
+    $removeList = $files | Select-Object -Skip $keep
+    foreach ($f in $removeList) {{ Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop }}
+  }} catch {{ Write-Log "Log cleanup failed: $($_.Exception.Message)" }}
+}}
+
+function Test-HttpReady($urls) {{
+  foreach ($u in $urls) {{
+    try {{
+      $resp = Invoke-WebRequest -Uri $u -Method Get -TimeoutSec $httpTimeoutSec -UseBasicParsing
+      if ($resp.StatusCode -eq 200) {{ return $true }}
+    }} catch {{}}
+  }}
+  return $false
+}}
+
+function Get-PortState {{
+  try {{ return (netstat -ano | Select-String ":$port") -join "`n" }} catch {{ return "" }}
+}}
+
+function Get-StderrTail {{
+  try {{ if (Test-Path $stderrLog) {{ return (Get-Content -LiteralPath $stderrLog -Tail 20 -ErrorAction Stop) -join "`n" }} }} catch {{}}
+  return ""
+}}
+
 Write-Log "Swap helper started. target=$target new=$new port=$port openUrl=$openUrl"
 Start-Sleep -Milliseconds $initialDelayMs
+
+Cleanup-OldLogs "backend_start_stdout_*.log" $keepLogCount
+Cleanup-OldLogs "backend_start_stderr_*.log" $keepLogCount
 
 if (-not (Test-Path $new)) {{
   $msg = "New executable missing: $new"
@@ -9700,60 +9768,60 @@ if (-not $swapped) {{
   $msg = "Swap failed after $maxAttempts attempts: $lastError"
   Write-Log $msg
   Update-Status "error" $msg
-  if (Test-Path $target) {{
-    try {{
-      $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
-      Write-Log "Fallback restart with existing backend started. PID=$($proc.Id)"
-    }} catch {{
-      Write-Log "Fallback restart failed: $($_.Exception.Message)"
-    }}
-  }}
+  Start-BackupIfExists $bak
   return
 }}
 
+$startCmd = "$target $port"
 try {{
-  $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
-  Write-Log "Started new backend process. PID=$($proc.Id)"
+  $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ErrorAction Stop
+  Write-Log "Started new backend process. PID=$($proc.Id) stdout=$stdoutLog stderr=$stderrLog"
   Update-Status "process_started" ""
   $ready = $false
   $deadline = [DateTime]::UtcNow.AddMilliseconds($serviceReadyTimeoutMs)
+  $attempt = 0
   while ([DateTime]::UtcNow -lt $deadline) {{
-    try {{
-      if (Test-NetConnection -ComputerName '127.0.0.1' -Port $port -InformationLevel Quiet) {{
-        $ready = $true
-        break
-      }}
-    }} catch {{}}
+    $attempt++
+    $httpOk = Test-HttpReady $probeUrls
+    if ($httpOk) {{
+      Write-Log "Health probe success on attempt $attempt"
+      $ready = $true
+      break
+    }}
+    if ($proc.HasExited) {{
+      Write-Log "Backend exited before ready. ExitCode=$($proc.ExitCode)"
+      break
+    }}
     Start-Sleep -Milliseconds $serviceReadyIntervalMs
   }}
   if ($ready) {{
-    Write-Log "Service ready on port $port"
+    Write-Log "Backend ready on http://127.0.0.1:$port"
     Update-Status "updated" ""
+    if ($openUrl) {{
+      try {{
+        Start-Process $openUrl -ErrorAction Stop | Out-Null
+        Write-Log "Opened URL $openUrl"
+      }} catch {{
+        Write-Log "Open URL failed: $($_.Exception.Message)"
+      }}
+    }}
   }} else {{
-    $msg = "Process started but port $port not ready after $($serviceReadyTimeoutMs/1000)s"
+    $exitCode = "running"
+    if ($proc -and $proc.HasExited) {{ $exitCode = $proc.ExitCode }}
+    $stderrTail = Get-StderrTail
+    $portState = Get-PortState
+    $msg = "Startup failed after $($serviceReadyTimeoutMs/1000)s. exit=$exitCode cmd=$startCmd stderr_log=$stderrLog stdout_log=$stdoutLog"
+    if ($stderrTail) {{ $msg += " stderr_tail: ``n$stderrTail" }}
+    if ($portState) {{ $msg += " port_state: ``n$portState" }}
     Write-Log $msg
     Update-Status "error" $msg
-  }}
-  if ($openUrl) {{
-    try {{
-      Start-Process $openUrl -ErrorAction Stop | Out-Null
-      Write-Log "Opened URL $openUrl"
-    }} catch {{
-      Write-Log "Open URL failed: $($_.Exception.Message)"
-    }}
+    Start-BackupIfExists $bak
   }}
 }} catch {{
   $msg = "Start-Process failed: $($_.Exception.Message)"
   Write-Log $msg
   Update-Status "error" $msg
-  if (Test-Path $bak) {{
-    try {{
-      Start-Process -FilePath $bak -ArgumentList $port -ErrorAction Stop | Out-Null
-      Write-Log "Attempted fallback launch from backup"
-    }} catch {{
-      Write-Log "Backup launch failed: $($_.Exception.Message)"
-    }}
-  }}
+  Start-BackupIfExists $bak
   return
 }}
 
