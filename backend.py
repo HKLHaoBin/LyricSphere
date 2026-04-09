@@ -847,6 +847,10 @@ def get_base_path():
 # 全局基础路径
 BASE_PATH = get_base_path()
 
+APP_VERSION = "0.0.0-dev"
+AUTO_UPDATE_ENABLED = getattr(sys, 'frozen', False) and os.environ.get("AUTO_UPDATE_ENABLED", "1") != "0"
+CURRENT_PORT: Optional[int] = None
+
 # 创建导出目录
 EXPORTS_DIR = BASE_PATH / 'exports'
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1029,11 +1033,361 @@ def cleanup_exports_dir(max_keep: int = 20) -> int:
 
 cleanup_exports_dir(max_keep=20)
 
+
+def _parse_semver(raw: Optional[str]) -> Tuple[int, int, int]:
+    cleaned = (raw or "").strip().lstrip("vV")
+    parts: List[int] = []
+    for piece in cleaned.split('.'):
+        match = re.match(r"(\d+)", piece.strip())
+        if match:
+            parts.append(int(match.group(1)))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def _is_remote_newer(remote_version: str, local_version: str) -> bool:
+    return _parse_semver(remote_version) > _parse_semver(local_version)
+
+
+def _load_update_status() -> Dict[str, Any]:
+    default = {
+        "current_version": APP_VERSION,
+        "latest_version": APP_VERSION,
+        "last_checked": 0,
+        "status": "idle",
+        "last_error": "",
+        "last_backup": "",
+        "applied": [],
+        "checksum": "",
+        "last_success_version": "",
+        "update_in_progress": False,
+        "needs_swap": False,
+    }
+    if UPDATE_STATUS_FILE.exists():
+        try:
+            with open(UPDATE_STATUS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                default.update(data)
+        except Exception:
+            pass
+    default["current_version"] = APP_VERSION
+    return default
+
+
+def _save_update_status(data: Dict[str, Any]) -> None:
+    snapshot = _load_update_status()
+    snapshot.update(data)
+    snapshot["current_version"] = APP_VERSION
+    snapshot["update_in_progress"] = snapshot.get("update_in_progress", False)
+    UPDATE_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(UPDATE_STATUS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(snapshot, f, ensure_ascii=False, indent=2)
+
+
+def _safe_copy_file(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _should_skip_static(rel_path: Path) -> bool:
+    if not rel_path.parts:
+        return True
+    if len(rel_path.parts) >= 1:
+        first = rel_path.parts[0]
+        if first in {"songs", "backups"}:
+            return True
+    if len(rel_path.parts) == 1 and rel_path.suffix.lower() == '.json':
+        return True
+    return False
+
+
+def perform_pre_update_backup() -> Path:
+    backup_root = BACKUP_DIR / 'updates' / datetime.now().strftime('%Y%m%d_%H%M%S')
+    static_backup = backup_root / 'static_root_json'
+    config_backup = backup_root / 'config'
+
+    try:
+        for json_file in STATIC_DIR.glob('*.json'):
+            _safe_copy_file(json_file, static_backup / json_file.name)
+    except Exception as exc:
+        app.logger.warning("Backup static root JSON failed: %s", exc)
+
+    for name in ['security_config.json', 'trusted_devices.json', 'keys_config.json', 'port_status.json', 'amll_settings_cache.json']:
+        candidate = BASE_PATH / name
+        if candidate.exists():
+            try:
+                _safe_copy_file(candidate, config_backup / candidate.name)
+            except Exception as exc:
+                app.logger.warning("Backup config %s failed: %s", name, exc)
+
+    _save_update_status({"last_backup": str(backup_root)})
+    return backup_root
+
+
+def _fetch_latest_release() -> Optional[Dict[str, Any]]:
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    headers = {"Accept": "application/vnd.github+json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        app.logger.warning("Fetch latest release failed: %s", exc)
+        _save_update_status({"status": "error", "last_error": str(exc)})
+        return None
+
+    tag = str(data.get('tag_name') or '').strip()
+    asset = None
+    checksum_asset = None
+    for item in data.get('assets') or []:
+        if item.get('name') == RELEASE_ASSET_NAME:
+            asset = item
+        if item.get('name') == RELEASE_ASSET_CHECKSUM_NAME:
+            checksum_asset = item
+    download_url = asset.get('browser_download_url') if asset else None
+    checksum_url = checksum_asset.get('browser_download_url') if checksum_asset else None
+    if not tag or not download_url or not checksum_url:
+        _save_update_status({"status": "error", "last_error": "Release asset or checksum missing"})
+        return None
+
+    return {
+        "tag": tag,
+        "version": tag.lstrip('vV'),
+        "download_url": download_url,
+        "checksum_url": checksum_url,
+        "release_notes": data.get('body') or '',
+    }
+
+
+def _download_release_asset(download_url: str) -> Optional[Path]:
+    try:
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.zip')
+        os.close(tmp_fd)
+        with requests.get(download_url, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            with open(tmp_path, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+        return Path(tmp_path)
+    except Exception as exc:
+        app.logger.warning("Download release asset failed: %s", exc)
+        _save_update_status({"status": "error", "last_error": str(exc)})
+        return None
+
+
+def _download_text_asset(download_url: str) -> Optional[str]:
+    try:
+        resp = requests.get(download_url, timeout=15)
+        resp.raise_for_status()
+        return resp.text.strip()
+    except Exception as exc:
+        app.logger.warning("Download checksum failed: %s", exc)
+        _save_update_status({"status": "error", "last_error": str(exc)})
+        return None
+
+
+def _sha256_of_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _apply_update_from_extract(extract_root: Path) -> Dict[str, Any]:
+    root = extract_root / 'LyricSphere.exe'
+    if not root.exists():
+        root = extract_root
+
+    applied: List[str] = []
+    next_executable: Optional[Path] = None
+
+    backend_src = root / 'backend.exe'
+    needs_swap = False
+    if backend_src.exists():
+        dest = BASE_PATH / 'backend.exe'
+        try:
+            _safe_copy_file(backend_src, dest)
+            next_executable = dest
+            applied.append('backend.exe')
+        except PermissionError:
+            alt = BASE_PATH / 'backend.exe.new'
+            _safe_copy_file(backend_src, alt)
+            next_executable = alt
+            applied.append('backend.exe.new')
+            needs_swap = True
+
+    templates_src = root / 'templates'
+    if templates_src.exists():
+        for file in templates_src.rglob('*'):
+            if file.is_dir():
+                continue
+            rel = file.relative_to(templates_src)
+            dest = BASE_PATH / 'templates' / rel
+            _safe_copy_file(file, dest)
+            applied.append(f"templates/{rel}")
+
+    static_src = root / 'static'
+    if static_src.exists():
+        for file in static_src.rglob('*'):
+            if file.is_dir():
+                continue
+            rel = file.relative_to(static_src)
+            if _should_skip_static(rel):
+                continue
+            dest = STATIC_DIR / rel
+            _safe_copy_file(file, dest)
+            applied.append(f"static/{rel}")
+
+    return {"applied": applied, "next_executable": next_executable, "needs_swap": needs_swap}
+
+
+def _get_current_port() -> int:
+    if CURRENT_PORT and 1 <= CURRENT_PORT <= 65535:
+        return CURRENT_PORT
+    try:
+        status = get_port_status()
+        port_val = int(status.get('port', 5000))
+        if 1 <= port_val <= 65535:
+            return port_val
+    except Exception:
+        pass
+    return 5000
+
+
+def _check_and_apply_update(force: bool = False) -> None:
+    if not AUTO_UPDATE_ENABLED:
+        return
+
+    global _UPDATE_IN_PROGRESS
+    with _UPDATE_LOCK:
+        now = time.time()
+        status = _load_update_status()
+        if _UPDATE_IN_PROGRESS:
+            return
+        if not force and now - status.get('last_checked', 0) < 60:
+            return
+        _UPDATE_IN_PROGRESS = True
+        _save_update_status({"status": "checking", "last_error": "", "last_checked": now, "update_in_progress": True})
+
+    try:
+        release = _fetch_latest_release()
+        if not release:
+            return
+
+        remote_version = release['version']
+        if not _is_remote_newer(remote_version, APP_VERSION):
+            _save_update_status({
+                "status": "up_to_date",
+                "latest_version": remote_version,
+                "last_checked": time.time(),
+                "update_in_progress": False,
+            })
+            return
+
+        expected_checksum = _download_text_asset(release['checksum_url'])
+        if not expected_checksum:
+            _save_update_status({"status": "error", "last_error": "Checksum missing", "update_in_progress": False})
+            return
+
+        _save_update_status({
+            "status": "updating",
+            "latest_version": remote_version,
+            "last_checked": time.time(),
+            "checksum": expected_checksum or "",
+            "update_in_progress": True,
+        })
+
+        perform_pre_update_backup()
+
+        zip_path = _download_release_asset(release['download_url'])
+        if not zip_path:
+            return
+
+        if expected_checksum:
+            actual = _sha256_of_file(zip_path)
+            if actual.lower() != expected_checksum.lower():
+                _save_update_status({"status": "error", "last_error": "Checksum mismatch", "update_in_progress": False})
+                try:
+                    zip_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return
+
+        applied: Dict[str, Any] = {"applied": [], "next_executable": None, "needs_swap": False}
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                tmp_dir = Path(td)
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(tmp_dir)
+                applied = _apply_update_from_extract(tmp_dir)
+        except Exception as exc:
+            _save_update_status({"status": "error", "last_error": str(exc), "update_in_progress": False})
+            app.logger.error("Apply update failed: %s", exc, exc_info=True)
+            return
+        finally:
+            try:
+                zip_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        _save_update_status({
+            "status": "updated",
+            "latest_version": remote_version,
+            "applied": applied.get("applied", []),
+            "last_checked": time.time(),
+            "last_success_version": remote_version,
+            "update_in_progress": False,
+            "needs_swap": applied.get("needs_swap", False),
+        })
+
+        port = _get_current_port()
+        try:
+            restart_on_port(
+                port,
+                open_url=f"http://127.0.0.1:{port}",
+                executable_override=applied.get("next_executable"),
+                swap_target=BASE_PATH / 'backend.exe' if applied.get("needs_swap") else None
+            )
+        except Exception as exc:
+            app.logger.error("Scheduled restart after update failed: %s", exc)
+    finally:
+        with _UPDATE_LOCK:
+            _UPDATE_IN_PROGRESS = False
+            _save_update_status({"update_in_progress": False})
+
+
+def _update_loop():
+    _check_and_apply_update(force=True)
+    while True:
+        time.sleep(UPDATE_CHECK_INTERVAL)
+        _check_and_apply_update(force=True)
+
+
+def start_auto_update_scheduler() -> None:
+    global _AUTO_UPDATE_THREAD
+    if _AUTO_UPDATE_THREAD or not AUTO_UPDATE_ENABLED:
+        return
+    _AUTO_UPDATE_THREAD = threading.Thread(target=_update_loop, name="AutoUpdate", daemon=True)
+    _AUTO_UPDATE_THREAD.start()
+
 RESOURCE_DIRECTORIES = {
     'static': STATIC_DIR,
     'songs': SONGS_DIR,
     'backups': BACKUP_DIR,
 }
+
+GITHUB_REPO = "HKLHaoBin/LyricSphere"
+RELEASE_ASSET_NAME = "LyricSphere.exe.zip"
+RELEASE_ASSET_CHECKSUM_NAME = "LyricSphere.exe.zip.sha256"
+UPDATE_STATUS_FILE = BASE_PATH / "update_status.json"
+UPDATE_CHECK_INTERVAL = 24 * 60 * 60
+_AUTO_UPDATE_THREAD: Optional[threading.Thread] = None
+_UPDATE_LOCK = threading.Lock()
+_UPDATE_IN_PROGRESS = False
 
 WINDOWS_STRICT_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 WINDOWS_RESERVED_FILENAMES = {
@@ -9148,6 +9502,31 @@ def set_port_status(mode, port):
 def api_get_port_status():
     return jsonify(get_port_status())
 
+
+@app.route('/version')
+def api_get_version():
+    status = _load_update_status()
+    return jsonify({
+        "version": APP_VERSION,
+        "latest_version": status.get("latest_version", APP_VERSION),
+        "status": status.get("status", "idle"),
+        "last_checked": status.get("last_checked", 0),
+    })
+
+
+@app.route('/update/status')
+def api_update_status():
+    return jsonify(_load_update_status())
+
+
+@app.route('/update/check', methods=['POST'])
+def api_update_check():
+    # 允许本机或已解锁/受信任设备触发
+    if not (is_local_request() or is_device_unlocked()):
+        return abort(403)
+    threading.Thread(target=_check_and_apply_update, kwargs={"force": True}, daemon=True).start()
+    return jsonify({"status": "started"})
+
 @app.route('/get_security_status')
 def api_get_security_status():
     return jsonify(get_security_config())
@@ -9221,7 +9600,7 @@ def api_restore_port():
     ).start()
     return jsonify({'status': 'success'})
 
-def restart_on_port(port, open_url=None):
+def restart_on_port(port, open_url=None, executable_override: Optional[Path] = None, swap_target: Optional[Path] = None):
     import time
     import subprocess
     import webbrowser
@@ -9231,12 +9610,50 @@ def restart_on_port(port, open_url=None):
             webbrowser.open(open_url)
         except Exception:
             pass
-    executable = sys.executable
-    if getattr(sys, 'frozen', False):
-        args = [executable, str(port)]
+    def _launch_with_swap(new_path: Path, target_path: Path):
+        ts = datetime.now().strftime('%Y%m%d%H%M%S')
+        script_path = BASE_PATH / f"apply_swap_{ts}.ps1"
+        ps = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+$new = '{str(new_path)}'
+$target = '{str(target_path)}'
+$bak = "$target.bak.{ts}"
+$port = '{port}'
+$openUrl = '{open_url or ''}'
+
+Start-Sleep -Milliseconds 800
+for ($i=0; $i -lt 30; $i++) {{
+  try {{
+    if (Test-Path $target) {{ Move-Item -Path $target -Destination $bak -Force -ErrorAction Stop }}
+    if (Test-Path $new) {{ Move-Item -Path $new -Destination $target -Force -ErrorAction Stop }}
+    break
+  }} catch {{}}
+  Start-Sleep -Milliseconds 500
+}}
+if (Test-Path $target) {{
+  Start-Process -FilePath $target -ArgumentList $port
+  if ($openUrl) {{ Start-Process $openUrl }}
+}}
+Remove-Item -Path '{str(script_path)}' -Force -ErrorAction SilentlyContinue
+"""
+        script_path.write_text(ps, encoding='utf-8')
+        subprocess.Popen([
+            "powershell",
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(script_path)
+        ], close_fds=True)
+
+    if executable_override and swap_target:
+        _launch_with_swap(Path(executable_override), Path(swap_target))
+    elif executable_override:
+        args = [str(executable_override), str(port)]
+        subprocess.Popen(args, close_fds=True)
+    elif getattr(sys, 'frozen', False):
+        args = [sys.executable, str(port)]
+        subprocess.Popen(args, close_fds=True)
     else:
-        args = [executable, __file__, str(port)]
-    subprocess.Popen(args, close_fds=True)
+        args = [sys.executable, __file__, str(port)]
+        subprocess.Popen(args, close_fds=True)
     os._exit(0)
 
 @app.route('/get_my_ip')
@@ -9392,6 +9809,8 @@ def amll_create_song():
 
 # Mount static directory at root to mirror Flask static_url_path=''
 app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
+
+start_auto_update_scheduler()
 
 # ===== AMLL CSV 导出功能 =====
 def norm_type(t):
@@ -10936,6 +11355,8 @@ if __name__ == '__main__':
             启动成功返回True，失败返回False
         """
         try:
+            global CURRENT_PORT
+            CURRENT_PORT = port
             # 启动时同步 port_status.json
             if port == 5000:
                 set_port_status('normal', 5000)
