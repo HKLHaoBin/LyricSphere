@@ -9648,38 +9648,38 @@ $serviceReadyIntervalMs = {service_ready_interval_ms}
 $httpTimeoutSec = [Math]::Max(1, [Math]::Ceiling($serviceReadyIntervalMs / 1000.0))
 $keepLogCount = 5
 
-function Start-BackupIfExists {
+function Start-BackupIfExists {{
   param([string]$bakPath)
-  if (-not (Test-Path $bakPath)) {
+  if (-not (Test-Path $bakPath)) {{
     Write-Log "Backup not found: $bakPath"
-    if (Test-Path $target) {
-      try {
+    if (Test-Path $target) {{
+      try {{
         $procExisting = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
         Write-Log "Started existing target without swap. PID=$($procExisting.Id)"
-      } catch {
+      }} catch {{
         Write-Log "Start existing target failed: $($_.Exception.Message)"
-      }
-    } else {
+      }}
+    }} else {{
       Write-Log "No target executable present to start"
-    }
+    }}
     return
-  }
-  try {
-    if (Test-Path $target) {
+  }}
+  try {{
+    if (Test-Path $target) {{
       Remove-Item -LiteralPath $target -Force -ErrorAction Stop
-    }
-  } catch {
+    }}
+  }} catch {{
     Write-Log "Remove existing target failed before restore: $($_.Exception.Message)"
-  }
-  try {
+  }}
+  try {{
     Move-Item -LiteralPath $bakPath -Destination $target -Force -ErrorAction Stop
     Write-Log "Restored backup to $target"
     $procBackup = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
     Write-Log "Backup launch started. PID=$($procBackup.Id)"
-  } catch {
+  }} catch {{
     Write-Log "Backup restore/launch failed: $($_.Exception.Message)"
-  }
-}
+  }}
+}}
 
 function Write-Log($msg) {{
   try {{
