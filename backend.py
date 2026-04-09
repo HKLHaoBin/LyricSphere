@@ -9618,22 +9618,25 @@ def restart_on_port(port, open_url=None, executable_override: Optional[Path] = N
         except Exception:
             pass
 
-    def _launch_with_swap(new_path: Path, target_path: Path):
+    def _launch_with_swap(new_path: Path, target_path: Path) -> bool:
         ts = datetime.now().strftime('%Y%m%d%H%M%S')
         script_path = BASE_PATH / f"apply_swap_{ts}.ps1"
-        log_path = BASE_PATH / "update_swap.log"
-        status_path = UPDATE_STATUS_FILE
         max_attempts = max(1, int(swap_max_wait_ms / swap_retry_delay_ms))
         ps = f"""
 $ErrorActionPreference = 'Stop'
 
-$new = '{str(new_path)}'
-$target = '{str(target_path)}'
+$root = $PSScriptRoot
+if (-not $root) {{
+  $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+}}
+
+$new = Join-Path $root 'backend.exe.new'
+$target = Join-Path $root 'backend.exe'
 $bak = "$target.bak.{ts}"
 $port = '{port}'
 $openUrl = '{open_url or ''}'
-$logPath = '{str(log_path)}'
-$statusPath = '{str(status_path)}'
+$logPath = Join-Path $root 'update_swap.log'
+$statusPath = Join-Path $root 'update_status.json'
 $initialDelayMs = {swap_initial_delay_ms}
 $retryDelayMs = {swap_retry_delay_ms}
 $maxAttempts = {max_attempts}
@@ -9755,31 +9758,59 @@ try {{
 }}
 
 try {{
-  Remove-Item -LiteralPath '{str(script_path)}' -Force -ErrorAction Stop
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction Stop
   Write-Log "Cleanup: script removed"
 }} catch {{
   Write-Log "Cleanup failed: $($_.Exception.Message)"
 }}
 """
-        script_path.write_text(ps, encoding='utf-8')
-        subprocess.Popen([
-            "powershell",
+        script_path.write_text(ps, encoding='utf-8-sig')
+        helper_cmd = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
             "-ExecutionPolicy", "Bypass",
             "-File", str(script_path)
-        ], close_fds=True)
+        ]
+        try:
+            subprocess.Popen(helper_cmd, close_fds=True)
+            app.logger.info(
+                "Swap helper launched", extra={
+                    "script": str(script_path),
+                    "cmd": helper_cmd
+                }
+            )
+            return True
+        except Exception as exc:
+            app.logger.error("Swap helper launch failed: %s", exc, exc_info=True)
+            _save_update_status({
+                "status": "error",
+                "last_error": f"swap helper launch failed: {exc}",
+                "needs_swap": True,
+                "update_in_progress": False,
+            })
+            return False
 
+    should_exit = False
     if executable_override and swap_target:
-        _launch_with_swap(Path(executable_override), Path(swap_target))
+        if _launch_with_swap(Path(executable_override), Path(swap_target)):
+            should_exit = True
+        else:
+            app.logger.error("Swap helper failed to launch; keeping current process alive")
     elif executable_override:
         args = [str(executable_override), str(port)]
         subprocess.Popen(args, close_fds=True)
+        should_exit = True
     elif getattr(sys, 'frozen', False):
         args = [sys.executable, str(port)]
         subprocess.Popen(args, close_fds=True)
+        should_exit = True
     else:
         args = [sys.executable, __file__, str(port)]
         subprocess.Popen(args, close_fds=True)
-    os._exit(0)
+        should_exit = True
+    if should_exit:
+        os._exit(0)
 
 @app.route('/get_my_ip')
 def get_my_ip():
