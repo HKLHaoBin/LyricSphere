@@ -1331,13 +1331,19 @@ def get_public_base_url() -> str:
     return f"http://127.0.0.1:{port}".rstrip('/')
 
 
+def _ensure_trailing_slash(url: str) -> str:
+    if not url:
+        return '/'
+    return url.rstrip('/') + '/'
+
+
 def get_amll_web_player_base_url() -> str:
     override = app.config.get('AMLL_WEB_BASE_URL') or os.environ.get('AMLL_WEB_BASE_URL')
     if override:
-        return override.rstrip('/')
+        return _ensure_trailing_slash(override)
 
     base = get_public_base_url()
-    return f"{base.rstrip('/')}/amll-web"
+    return _ensure_trailing_slash(f"{base.rstrip('/')}/amll-web")
 
 
 def build_public_url(resource: str, relative_path: str) -> str:
@@ -2727,8 +2733,8 @@ def favicon():
 
 @app.route('/service-worker.js')
 def service_worker():
-    """Serve the AMLL service worker from the origin root so it can control app-shell routes."""
-    return send_from_directory(STATIC_DIR / 'public', 'service-worker.js', mimetype='application/javascript')
+    """Serve a legacy service worker to unregister the root scope registration."""
+    return send_from_directory(STATIC_DIR / 'public', 'legacy-service-worker.js', mimetype='application/javascript')
 
 
 @app.route('/amll-web/service-worker.js')

@@ -3270,6 +3270,10 @@
     <script>
         const backendOrigin = window.location.origin;
         const backendRootUrl = new URL('/', backendOrigin).toString();
+        const ensureTrailingSlash = (value) => {
+            if (!value) return '';
+            return value.endsWith('/') ? value : `${value}/`;
+        };
         const amllPlayerConfigElement = document.getElementById('amllPlayerConfig');
         let amllPlayerBaseUrl = null;
         if (amllPlayerConfigElement && amllPlayerConfigElement.textContent) {
@@ -3279,7 +3283,9 @@
                 console.warn('Failed to parse AMLL player base URL from config, fallback to local path.', error);
             }
         }
-        amllPlayerBaseUrl = amllPlayerBaseUrl || new URL('/amll-web', backendOrigin).toString();
+        amllPlayerBaseUrl = ensureTrailingSlash(
+            amllPlayerBaseUrl || new URL('/amll-web/', backendOrigin).toString()
+        );
         const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
         const STYLE_PARAM_EXCLUDE = new Set([
             'musicUrl',
@@ -3682,9 +3688,10 @@
                         const mergedQuery = baseQuery
                             ? `${baseQuery}${styleQuery}`
                             : (styleQuery ? styleQuery.replace(/^&/, '') : '');
+                        const safeAmllBase = ensureTrailingSlash(amllPlayerBaseUrl);
                         const amllUrl = mergedQuery
-                            ? `${amllPlayerBaseUrl}?${mergedQuery}`
-                            : amllPlayerBaseUrl;
+                            ? `${safeAmllBase}?${mergedQuery}`
+                            : safeAmllBase;
                         window.open(amllUrl, '_blank');
                     };
                     const preparePlayerLyric = async (sourcePath) => {

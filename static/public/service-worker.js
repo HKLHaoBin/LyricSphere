@@ -1,14 +1,34 @@
 // Service Worker for AMLL Web Player
-const CACHE_NAME = "amll-web-player-v3";
+const CACHE_NAME = "amll-web-player-v4";
 const urlsToCache = [
-  "/",
-  "/index.html",
-  "/assets/icon-96x96.png",
-  "/assets/icon-512x512.png",
-  "/public/jsmediatags.min.js",
+  "/amll-web/",
+  "/amll-web/index.html",
+  "/amll-web/assets/icon-96x96.png",
+  "/amll-web/assets/icon-512x512.png",
+  "/amll-web/public/jsmediatags.min.js",
 ];
 
 const NETWORK_FIRST_EXT = [".js", ".css", ".html", ".wasm"];
+
+const CACHE_ALLOWLIST_PREFIXES = [
+  "/amll-web/",
+  "/amll-web/assets/",
+  "/amll-web/public/",
+];
+
+function shouldCacheRequest(request, url) {
+  if (url.origin !== self.location.origin) {
+    return false;
+  }
+  if (request.method !== "GET") {
+    return false;
+  }
+  const path = url.pathname || "";
+  if (path === "/amll-web") {
+    return true;
+  }
+  return CACHE_ALLOWLIST_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
 
 function shouldUseNetworkFirst(request, url) {
   if (request.mode === "navigate") {
@@ -52,8 +72,17 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
+  if (request.method !== "GET") {
+    return;
+  }
+
+  if (!shouldCacheRequest(request, url)) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   // 对核心静态资源使用网络优先，避免升级后仍拿到旧缓存。
-  if (request.method === "GET" && shouldUseNetworkFirst(request, url)) {
+  if (shouldUseNetworkFirst(request, url)) {
     event.respondWith(
       (async () => {
         try {

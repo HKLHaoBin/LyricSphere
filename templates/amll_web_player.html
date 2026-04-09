@@ -1199,7 +1199,7 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker
-          .register("./service-worker.js", { scope: "./" })
+          .register("/amll-web/service-worker.js", { scope: "/amll-web/" })
           .then((registration) => {
             console.log(
               "Service Worker registered successfully:",
