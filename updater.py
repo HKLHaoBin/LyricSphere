@@ -14,9 +14,14 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import requests
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 APP_VERSION = "0.0.0-dev"
 
@@ -36,7 +41,24 @@ ALLOWED_PREFIXES = (
     "static/icons/",
     "static/monaco/",
 )
+ALLOWED_RESOURCE_DIRS = (
+    "templates",
+    "static/assets",
+    "static/public",
+    "static/icons",
+    "static/monaco",
+)
 FORBIDDEN_PREFIXES = ("static/songs/", "static/backups/")
+IO_RETRY_DELAY_MS = 500
+IO_RETRY_MAX_ATTEMPTS = 6
+
+T = TypeVar("T")
+
+
+@dataclass
+class InstanceLock:
+    path: Path
+    file_obj: Any
 
 
 def now_iso() -> str:
@@ -63,6 +85,18 @@ def write_status(work_dir: Path, state: str, message: str, extra: Optional[dict[
         payload.update(extra)
     status_file = work_dir / STATUS_FILE_NAME
     status_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_phase_status(
+    work_dir: Path,
+    state: str,
+    message: str,
+    phase: str,
+    extra: Optional[dict[str, Any]] = None,
+) -> None:
+    payload = dict(extra or {})
+    payload["phase"] = phase
+    write_status(work_dir, state, message, payload)
 
 
 def parse_version(value: str) -> Optional[tuple[int, int, int]]:
@@ -110,30 +144,97 @@ def is_pid_running(pid: int) -> bool:
         return False
 
 
-def acquire_single_instance_lock(work_dir: Path) -> bool:
+def acquire_single_instance_lock(work_dir: Path) -> Optional[InstanceLock]:
     lock_path = work_dir / LOCK_FILE_NAME
-    current_pid = os.getpid()
-    if lock_path.exists():
-        try:
-            existing_pid = int(lock_path.read_text(encoding="utf-8").strip())
-        except Exception:
-            existing_pid = -1
-        if existing_pid > 0 and existing_pid != current_pid and is_pid_running(existing_pid):
-            return False
-    lock_path.write_text(str(current_pid), encoding="utf-8")
-    return True
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    file_obj = lock_path.open("a+", encoding="utf-8")
+
+    try:
+        if os.name == "nt":
+            file_obj.seek(0)
+            marker = file_obj.read(1)
+            if not marker:
+                file_obj.write("\0")
+                file_obj.flush()
+            file_obj.seek(0)
+            msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except Exception:
+        file_obj.close()
+        return None
+
+    file_obj.seek(0)
+    file_obj.truncate()
+    file_obj.write(str(os.getpid()))
+    file_obj.flush()
+    return InstanceLock(path=lock_path, file_obj=file_obj)
 
 
-def release_single_instance_lock(work_dir: Path) -> None:
-    lock_path = work_dir / LOCK_FILE_NAME
-    if not lock_path.exists():
+def release_single_instance_lock(lock: Optional[InstanceLock]) -> None:
+    if lock is None:
         return
     try:
-        content = lock_path.read_text(encoding="utf-8").strip()
-        if int(content) == os.getpid():
-            lock_path.unlink(missing_ok=True)
+        if os.name == "nt":
+            lock.file_obj.seek(0)
+            msvcrt.locking(lock.file_obj.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(lock.file_obj.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
+    try:
+        lock.file_obj.close()
+    except Exception:
+        pass
+
+
+def is_retryable_io_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        if exc.errno in {5, 13, 16, 26, 32, 33}:  # access denied, busy, text file busy, sharing violation
+            return True
+        if getattr(exc, "winerror", None) in {5, 32, 33}:  # type: ignore[arg-type]
+            return True
+    return False
+
+
+def retry_io(
+    operation: str,
+    func: Callable[[], T],
+    *,
+    work_dir: Optional[Path] = None,
+    max_attempts: int = IO_RETRY_MAX_ATTEMPTS,
+    delay_ms: int = IO_RETRY_DELAY_MS,
+    trace_stage: str = "io:retry",
+) -> T:
+    if max_attempts < 1:
+        max_attempts = 1
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = func()
+            if work_dir is not None and attempt > 1:
+                trace(work_dir, f"{trace_stage}:ok", operation=operation, attempt=attempt)
+            return result
+        except Exception as exc:
+            last_exc = exc
+            can_retry = is_retryable_io_error(exc) and attempt < max_attempts
+            if work_dir is not None:
+                trace(
+                    work_dir,
+                    f"{trace_stage}:error",
+                    operation=operation,
+                    attempt=attempt,
+                    retry=can_retry,
+                    error=repr(exc),
+                )
+            if not can_retry:
+                raise
+            time.sleep(max(0.01, float(delay_ms) / 1000.0))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"retry failed without exception: {operation}")
 
 
 def github_latest_release(repo: str, timeout: int = 20) -> dict[str, Any]:
@@ -423,140 +524,419 @@ def resolve_restart_command(ctx: RuntimeContext) -> list[str]:
     return [str(python_exec), str(backend_script), str(ctx.port)]
 
 
-def apply_whitelist_copy(extracted_root: Path, work_dir: Path) -> dict[str, Any]:
-    copied: list[str] = []
-    skipped: list[str] = []
+@dataclass
+class PreparedUpdate:
+    repo: str
+    latest_tag: str
+    extract_path: Path
+    backup_dir: Path
+
+
+class UpdateApplyError(RuntimeError):
+    def __init__(self, message: str, new_backend_pid: int = 0):
+        super().__init__(message)
+        self.new_backend_pid = int(new_backend_pid)
+
+
+def apply_file_copy(src: Path, dst: Path, rel: str, work_dir: Path, stage: str) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    trace(work_dir, stage, action="copy:start", rel=rel, src=str(src), dst=str(dst))
+    try:
+        retry_io(
+            f"copy {rel}",
+            lambda: shutil.copy2(src, dst),
+            work_dir=work_dir,
+            trace_stage=stage,
+        )
+    except PermissionError as exc:
+        raise PermissionError(f"copy failed for {rel} ({src} -> {dst}): {exc}") from exc
+    trace(work_dir, stage, action="copy:done", rel=rel)
+
+
+def replace_backend_executable(src: Path, dst: Path, work_dir: Path) -> None:
+    rel = "backend.exe"
+    temp_old = dst.with_name(f"{dst.name}.old.{int(time.time())}")
+    trace(work_dir, "apply:file", action="backend-replace:start", src=str(src), dst=str(dst))
+
+    renamed_old = False
+    replace_ok = False
+    try:
+        if dst.exists():
+            retry_io(
+                "rename old backend.exe",
+                lambda: dst.rename(temp_old),
+                work_dir=work_dir,
+                trace_stage="apply:file",
+            )
+            renamed_old = True
+        apply_file_copy(src, dst, rel, work_dir, "apply:file")
+        replace_ok = True
+    except Exception:
+        if renamed_old and temp_old.exists():
+            if dst.exists():
+                retry_io(
+                    "remove partial backend.exe before restore",
+                    lambda: dst.unlink(),
+                    work_dir=work_dir,
+                    trace_stage="rollback:file",
+                )
+            retry_io(
+                "restore old backend.exe",
+                lambda: temp_old.rename(dst),
+                work_dir=work_dir,
+                trace_stage="rollback:file",
+            )
+        raise
+    finally:
+        if replace_ok and temp_old.exists() and dst.exists():
+            retry_io(
+                "cleanup old backend.exe temp",
+                lambda: temp_old.unlink(),
+                work_dir=work_dir,
+                trace_stage="apply:file",
+            )
+
+    trace(work_dir, "apply:file", action="backend-replace:done", rel=rel)
+
+
+def replace_directory_from_stage(src_dir: Path, dst_dir: Path, rel: str, stage_root: Path, work_dir: Path) -> None:
+    staged_dir = stage_root / rel
+    staged_dir.parent.mkdir(parents=True, exist_ok=True)
+    if staged_dir.exists():
+        retry_io(
+            f"cleanup stage {rel}",
+            lambda: shutil.rmtree(staged_dir),
+            work_dir=work_dir,
+            trace_stage="apply:file",
+        )
+
+    trace(work_dir, "apply:file", action="stage-dir:start", rel=rel)
+    retry_io(
+        f"copy stage {rel}",
+        lambda: shutil.copytree(src_dir, staged_dir),
+        work_dir=work_dir,
+        trace_stage="apply:file",
+    )
+
+    backup_old = stage_root / "old" / rel
+    backup_old.parent.mkdir(parents=True, exist_ok=True)
+    renamed_old = False
+    try:
+        if dst_dir.exists():
+            retry_io(
+                f"rename old dir {rel}",
+                lambda: dst_dir.rename(backup_old),
+                work_dir=work_dir,
+                trace_stage="apply:file",
+            )
+            renamed_old = True
+
+        retry_io(
+            f"deploy dir {rel}",
+            lambda: shutil.copytree(staged_dir, dst_dir),
+            work_dir=work_dir,
+            trace_stage="apply:file",
+        )
+    except Exception:
+        if dst_dir.exists():
+            retry_io(
+                f"cleanup partial dir {rel}",
+                lambda: shutil.rmtree(dst_dir),
+                work_dir=work_dir,
+                trace_stage="rollback:file",
+            )
+        if renamed_old and backup_old.exists():
+            retry_io(
+                f"restore old dir {rel}",
+                lambda: backup_old.rename(dst_dir),
+                work_dir=work_dir,
+                trace_stage="rollback:file",
+            )
+        raise
+    else:
+        if renamed_old and backup_old.exists():
+            retry_io(
+                f"cleanup old dir backup {rel}",
+                lambda: shutil.rmtree(backup_old),
+                work_dir=work_dir,
+                trace_stage="apply:file",
+            )
+    trace(work_dir, "apply:file", action="stage-dir:done", rel=rel)
+
+
+def apply_whitelist_copy(extracted_root: Path, work_dir: Path, stage_root: Path) -> dict[str, Any]:
+    updated_targets: list[str] = []
+    skipped_count = 0
 
     for src in extracted_root.rglob("*"):
         if not src.is_file():
             continue
         rel = normalize_rel_path(src, extracted_root)
-        if is_forbidden(rel):
-            skipped.append(rel)
-            continue
-        if not is_allowed(rel):
-            skipped.append(rel)
-            continue
+        if not is_allowed(rel) or is_forbidden(rel):
+            skipped_count += 1
 
-        dst = work_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        copied.append(rel)
+    backend_src = extracted_root / "backend.exe"
+    backend_dst = work_dir / "backend.exe"
+    if backend_src.exists() and backend_src.is_file() and is_allowed("backend.exe"):
+        replace_backend_executable(backend_src, backend_dst, work_dir)
+        updated_targets.append("backend.exe")
+
+    for rel in ALLOWED_RESOURCE_DIRS:
+        src_dir = extracted_root / rel
+        if not src_dir.exists() or not src_dir.is_dir():
+            continue
+        dst_dir = work_dir / rel
+        replace_directory_from_stage(src_dir, dst_dir, rel, stage_root, work_dir)
+        updated_targets.append(rel)
 
     return {
-        "copied_count": len(copied),
-        "skipped_count": len(skipped),
+        "updated_targets": updated_targets,
+        "updated_count": len(updated_targets),
+        "skipped_count": skipped_count,
+    }
+
+
+def restore_from_backup(backup_dir: Path, work_dir: Path) -> dict[str, Any]:
+    restored: list[str] = []
+    trace(work_dir, "rollback:start", backup_dir=str(backup_dir))
+
+    backend_backup = backup_dir / "backend.exe"
+    backend_dst = work_dir / "backend.exe"
+    if backend_backup.exists() and backend_backup.is_file():
+        apply_file_copy(backend_backup, backend_dst, "backend.exe", work_dir, "rollback:file")
+        restored.append("backend.exe")
+    elif backend_dst.exists():
+        retry_io(
+            "remove backend.exe added by failed update",
+            lambda: backend_dst.unlink(),
+            work_dir=work_dir,
+            trace_stage="rollback:file",
+        )
+
+    for rel in ALLOWED_RESOURCE_DIRS:
+        src_dir = backup_dir / rel
+        dst_dir = work_dir / rel
+        if not src_dir.exists() or not src_dir.is_dir():
+            if dst_dir.exists():
+                retry_io(
+                    f"remove newly created dir {rel} during rollback",
+                    lambda d=dst_dir: shutil.rmtree(d),
+                    work_dir=work_dir,
+                    trace_stage="rollback:file",
+                )
+            continue
+        if dst_dir.exists():
+            retry_io(
+                f"clear target dir for rollback {rel}",
+                lambda d=dst_dir: shutil.rmtree(d),
+                work_dir=work_dir,
+                trace_stage="rollback:file",
+            )
+        retry_io(
+            f"restore dir {rel}",
+            lambda s=src_dir, d=dst_dir: shutil.copytree(s, d),
+            work_dir=work_dir,
+            trace_stage="rollback:file",
+        )
+        trace(work_dir, "rollback:file", action="restore-dir:done", rel=rel)
+        restored.append(rel)
+
+    trace(work_dir, "rollback:done", restored_count=len(restored))
+    return {"restored": restored, "restored_count": len(restored)}
+
+
+def prepare_update(ctx: RuntimeContext, repo: str, latest_tag: str, zip_url: str, sha_url: str, temp_root: Path) -> PreparedUpdate:
+    zip_path = temp_root / RELEASE_ZIP_NAME
+    sha_path = temp_root / RELEASE_SHA256_NAME
+    extract_path = temp_root / "extract"
+
+    trace(ctx.work_dir, "update:prepare", phase="downloading", zip_url=zip_url, sha_url=sha_url)
+    write_phase_status(ctx.work_dir, "downloading", "downloading release assets", "downloading", {"repo": repo, "tag": latest_tag})
+    download_to(zip_url, zip_path)
+    download_to(sha_url, sha_path)
+
+    expected_sha = parse_sha256_file(sha_path)
+    actual_sha = file_sha256(zip_path)
+    if actual_sha != expected_sha:
+        raise RuntimeError("sha256 verification failed")
+
+    write_phase_status(ctx.work_dir, "extracting", "extracting update package", "extracting", {"repo": repo, "tag": latest_tag})
+    with zipfile.ZipFile(zip_path) as archive:
+        archive.extractall(extract_path)
+
+    backup_dir = ctx.work_dir / "static" / "backups" / "updater" / datetime.now().strftime("%Y%m%d_%H%M%S")
+    trace(ctx.work_dir, "backup:start", backup_dir=str(backup_dir))
+    write_phase_status(
+        ctx.work_dir,
+        "backup",
+        "creating backup",
+        "backing_up",
+        {"repo": repo, "tag": latest_tag, "backup_dir": str(backup_dir)},
+    )
+    backup_targets(ctx.work_dir, backup_dir)
+    trace(ctx.work_dir, "backup:done", backup_dir=str(backup_dir))
+
+    trace(ctx.work_dir, "update:prepare", phase="stopping_backend", backend_pid=ctx.backend_pid)
+    write_phase_status(
+        ctx.work_dir,
+        "stopping",
+        "stopping current backend process",
+        "stopping_backend",
+        {"repo": repo, "tag": latest_tag, "backend_pid": ctx.backend_pid},
+    )
+    stop_ok = stop_backend_process(ctx.backend_pid, work_dir=ctx.work_dir)
+    if not stop_ok:
+        raise RuntimeError("failed to stop backend process")
+    if os.name == "nt":
+        trace(ctx.work_dir, "backend:post-stop-wait", seconds=2.0)
+        time.sleep(2.0)
+
+    return PreparedUpdate(repo=repo, latest_tag=latest_tag, extract_path=extract_path, backup_dir=backup_dir)
+
+
+def apply_update(ctx: RuntimeContext, prepared: PreparedUpdate) -> dict[str, Any]:
+    trace(ctx.work_dir, "apply:start", extract_path=str(prepared.extract_path))
+    write_phase_status(
+        ctx.work_dir,
+        "applying",
+        "applying whitelist update",
+        "applying",
+        {"repo": prepared.repo, "tag": prepared.latest_tag},
+    )
+    with tempfile.TemporaryDirectory(prefix="famyliam-stage-", dir=str(ctx.work_dir)) as stage_dir:
+        result = apply_whitelist_copy(prepared.extract_path, ctx.work_dir, Path(stage_dir))
+    trace(ctx.work_dir, "apply:done", **result)
+
+    restart_command = resolve_restart_command(ctx)
+    trace(ctx.work_dir, "restart:spawn", command=restart_command)
+    write_phase_status(
+        ctx.work_dir,
+        "restarting",
+        "starting backend after applying update",
+        "restarting",
+        {"repo": prepared.repo, "tag": prepared.latest_tag, "restart_command": restart_command},
+    )
+
+    restart_started_at = time.time()
+    new_pid = start_backend_detached(restart_command, ctx.work_dir)
+    verify_ok, verify_message, verify_extra = verify_backend_restart(ctx, new_pid, restart_started_at)
+    trace(ctx.work_dir, "restart:verify", ok=verify_ok, message=verify_message, **verify_extra)
+    if not verify_ok:
+        raise UpdateApplyError(f"backend restart verification failed: {verify_message}", new_backend_pid=new_pid)
+
+    ctx.backend_pid = new_pid
+    return {
+        "new_backend_pid": new_pid,
+        "restart_command": restart_command,
+        "restart_verify": verify_message,
+        **verify_extra,
+        **result,
+    }
+
+
+def finalize_or_rollback(ctx: RuntimeContext, prepared: PreparedUpdate, apply_error: Optional[Exception], apply_extra: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if apply_error is None:
+        extra = {
+            "latest_tag": prepared.latest_tag,
+            "repo": prepared.repo,
+            **(apply_extra or {}),
+        }
+        write_phase_status(
+            ctx.work_dir,
+            "updated",
+            "update finished and backend restarted",
+            "completed",
+            extra,
+        )
+        return {"state": "updated", "message": "update finished and backend restarted", "extra": extra}
+
+    trace(ctx.work_dir, "rollback:start", reason=repr(apply_error))
+    failed_new_pid = 0
+    if isinstance(apply_error, UpdateApplyError):
+        failed_new_pid = int(apply_error.new_backend_pid or 0)
+    if failed_new_pid > 0:
+        trace(ctx.work_dir, "rollback:stop-new-backend:start", failed_new_pid=failed_new_pid)
+        stop_ok = stop_backend_process(failed_new_pid, work_dir=ctx.work_dir)
+        trace(ctx.work_dir, "rollback:stop-new-backend:done", failed_new_pid=failed_new_pid, stop_ok=stop_ok)
+        if not stop_ok:
+            raise RuntimeError(f"rollback failed: unable to stop failed new backend pid={failed_new_pid}")
+        if os.name == "nt":
+            trace(ctx.work_dir, "rollback:post-stop-wait", seconds=2.0)
+            time.sleep(2.0)
+
+    write_phase_status(
+        ctx.work_dir,
+        "rollback",
+        f"update failed, rolling back: {apply_error}",
+        "rollback",
+        {"repo": prepared.repo, "tag": prepared.latest_tag},
+    )
+    rollback_info = restore_from_backup(prepared.backup_dir, ctx.work_dir)
+
+    restart_command = resolve_restart_command(ctx)
+    old_pid = start_backend_detached(restart_command, ctx.work_dir)
+    verify_ok, verify_message, verify_extra = verify_backend_restart(ctx, old_pid, time.time())
+    if not verify_ok:
+        raise RuntimeError(
+            f"update failed and rollback restart also failed: {apply_error}; rollback verify: {verify_message}"
+        )
+
+    ctx.backend_pid = old_pid
+    extra = {
+        "repo": prepared.repo,
+        "latest_tag": prepared.latest_tag,
+        "rollback_reason": str(apply_error),
+        "rollback_restart_verify": verify_message,
+        "rolled_back_backend_pid": old_pid,
+        **verify_extra,
+        **rollback_info,
+    }
+    write_phase_status(ctx.work_dir, "rolled_back", "update failed and rollback recovered old version", "completed", extra)
+    return {
+        "state": "rolled_back",
+        "message": "update failed and rollback recovered old version",
+        "extra": extra,
     }
 
 
 def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
     local_version = (ctx.app_version or "").strip() or APP_VERSION
     trace(ctx.work_dir, "release:checking", repo=repo, local_version=local_version)
-    write_status(ctx.work_dir, "checking", "checking latest release", {"repo": repo, "local_version": local_version})
+    write_phase_status(
+        ctx.work_dir,
+        "checking",
+        "checking latest release",
+        "checking",
+        {"repo": repo, "local_version": local_version},
+    )
     release = github_latest_release(repo)
     latest_tag = str(release.get("tag_name") or "")
 
     if not is_remote_newer(local_version, latest_tag):
         trace(ctx.work_dir, "release:no-update", repo=repo, local_version=local_version, latest_tag=latest_tag)
-        write_status(
-            ctx.work_dir,
-            "idle",
-            "already up-to-date",
-            {"repo": repo, "local_version": local_version, "latest_tag": latest_tag},
-        )
+        extra = {"repo": repo, "local_version": local_version, "latest_tag": latest_tag}
+        write_phase_status(ctx.work_dir, "idle", "already up-to-date", "completed", extra)
         return {
             "state": "idle",
             "message": "already up-to-date",
-            "extra": {"repo": repo, "local_version": local_version, "latest_tag": latest_tag},
+            "extra": extra,
         }
 
     zip_url = find_asset_url(release, RELEASE_ZIP_NAME)
     sha_url = find_asset_url(release, RELEASE_SHA256_NAME)
     if not zip_url or not sha_url:
         raise RuntimeError("release assets are incomplete")
-
     trace(ctx.work_dir, "release:update-found", repo=repo, latest_tag=latest_tag)
 
     with tempfile.TemporaryDirectory(prefix="famyliam-update-") as temp_dir:
-        temp_root = Path(temp_dir)
-        zip_path = temp_root / RELEASE_ZIP_NAME
-        sha_path = temp_root / RELEASE_SHA256_NAME
-        extract_path = temp_root / "extract"
-
-        trace(ctx.work_dir, "download:start", zip_url=zip_url, sha_url=sha_url)
-        write_status(ctx.work_dir, "downloading", "downloading release assets", {"repo": repo, "tag": latest_tag})
-        download_to(zip_url, zip_path)
-        trace(ctx.work_dir, "download:zip-done", zip_path=str(zip_path))
-        download_to(sha_url, sha_path)
-        trace(ctx.work_dir, "download:sha-done", sha_path=str(sha_path))
-
-        expected_sha = parse_sha256_file(sha_path)
-        actual_sha = file_sha256(zip_path)
-        if actual_sha != expected_sha:
-            raise RuntimeError("sha256 verification failed")
-        trace(ctx.work_dir, "verify:sha256-ok", sha256=actual_sha)
-
-        write_status(ctx.work_dir, "extracting", "extracting update package", {"repo": repo, "tag": latest_tag})
-        with zipfile.ZipFile(zip_path) as archive:
-            archive.extractall(extract_path)
-        trace(ctx.work_dir, "extract:done", extract_path=str(extract_path))
-
-        backup_dir = ctx.work_dir / "static" / "backups" / "updater" / datetime.now().strftime("%Y%m%d_%H%M%S")
-        write_status(ctx.work_dir, "backup", "creating backup", {"repo": repo, "backup_dir": str(backup_dir)})
-        backup_targets(ctx.work_dir, backup_dir)
-        trace(ctx.work_dir, "backup:done", backup_dir=str(backup_dir))
-
-        trace(ctx.work_dir, "backend:stopping", backend_pid=ctx.backend_pid)
-        write_status(ctx.work_dir, "stopping", "stopping current backend process", {"repo": repo, "backend_pid": ctx.backend_pid})
-        stop_ok = stop_backend_process(ctx.backend_pid, work_dir=ctx.work_dir)
-        trace(ctx.work_dir, "backend:stopped", backend_pid=ctx.backend_pid, stop_ok=stop_ok)
-        if not stop_ok:
-            raise RuntimeError("failed to stop backend process")
-
-        trace(ctx.work_dir, "apply:start", extract_path=str(extract_path))
-        write_status(ctx.work_dir, "applying", "applying whitelist update", {"repo": repo, "tag": latest_tag})
-        result = apply_whitelist_copy(extract_path, ctx.work_dir)
-        trace(ctx.work_dir, "apply:done", **result)
-
-        restart_command = resolve_restart_command(ctx)
-        trace(ctx.work_dir, "backend:restart-command", command=restart_command)
-        restart_started_at = time.time()
-        new_pid = start_backend_detached(restart_command, ctx.work_dir)
-        trace(ctx.work_dir, "backend:restart-spawned", new_backend_pid=new_pid)
-        ctx.backend_pid = new_pid
-
-        verify_ok, verify_message, verify_extra = verify_backend_restart(ctx, new_pid, restart_started_at)
-        if not verify_ok:
-            raise RuntimeError(f"backend restart verification failed: {verify_message}")
-
-        trace(ctx.work_dir, "backend:restart-verified", verify_message=verify_message, **verify_extra)
-        write_status(
-            ctx.work_dir,
-            "updated",
-            "update finished and backend restarted",
-            {
-                "latest_tag": latest_tag,
-                "repo": repo,
-                "new_backend_pid": new_pid,
-                "restart_command": restart_command,
-                "restart_verify": verify_message,
-                **verify_extra,
-                **result,
-            },
-        )
-        return {
-            "state": "updated",
-            "message": "update finished and backend restarted",
-            "extra": {
-                "latest_tag": latest_tag,
-                "repo": repo,
-                "new_backend_pid": new_pid,
-                "restart_command": restart_command,
-                "restart_verify": verify_message,
-                **verify_extra,
-                **result,
-            },
-        }
+        prepared = prepare_update(ctx, repo, latest_tag, zip_url, sha_url, Path(temp_dir))
+        apply_error: Optional[Exception] = None
+        apply_extra: Optional[dict[str, Any]] = None
+        try:
+            apply_extra = apply_update(ctx, prepared)
+        except Exception as exc:
+            apply_error = exc
+        return finalize_or_rollback(ctx, prepared, apply_error, apply_extra)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -590,10 +970,12 @@ def main() -> int:
         app_version=APP_VERSION,
     )
 
-    if not acquire_single_instance_lock(work_dir):
+    trace(work_dir, "lock:acquire", pid=os.getpid())
+    instance_lock = acquire_single_instance_lock(work_dir)
+    if instance_lock is None:
         trace(work_dir, "lock:exists", pid=os.getpid())
         return 0
-    trace(work_dir, "lock:acquired", pid=os.getpid())
+    trace(work_dir, "lock:acquire:ok", pid=os.getpid())
 
     interval_seconds = max(60, int(float(args.interval_hours) * 3600))
     last_result_state = "idle"
@@ -621,7 +1003,7 @@ def main() -> int:
                 last_result_state = "error"
                 last_result_message = f"update failed: {exc}"
                 last_result_extra = {"repo": str(args.repo)}
-                write_status(work_dir, last_result_state, last_result_message, last_result_extra)
+                write_phase_status(work_dir, last_result_state, last_result_message, "failed", last_result_extra)
 
             if not args.watch:
                 break
@@ -633,12 +1015,12 @@ def main() -> int:
                 "last_result_state": last_result_state,
                 "last_result_message": last_result_message,
             }
-            write_status(work_dir, last_result_state, last_result_message, sleep_payload)
+            write_phase_status(work_dir, last_result_state, last_result_message, "sleeping", sleep_payload)
             trace(work_dir, "loop:sleeping", interval_seconds=interval_seconds, last_result_state=last_result_state)
             time.sleep(interval_seconds)
     finally:
-        trace(work_dir, "lock:released", pid=os.getpid())
-        release_single_instance_lock(work_dir)
+        trace(work_dir, "lock:release", pid=os.getpid())
+        release_single_instance_lock(instance_lock)
 
     return 0
 
