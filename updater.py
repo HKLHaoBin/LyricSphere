@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,6 +41,16 @@ FORBIDDEN_PREFIXES = ("static/songs/", "static/backups/")
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def trace(work_dir: Path, stage: str, **extra: Any) -> None:
+    payload: dict[str, Any] = {
+        "timestamp": now_iso(),
+        "stage": stage,
+    }
+    payload.update(extra)
+    line = json.dumps(payload, ensure_ascii=False)
+    print(line, flush=True)
 
 
 def write_status(work_dir: Path, state: str, message: str, extra: Optional[dict[str, Any]] = None) -> None:
@@ -233,6 +244,14 @@ def stop_backend_process(pid: int, wait_seconds: int = 25) -> bool:
     return False
 
 
+def is_port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.5) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def start_backend_detached(command: list[str], work_dir: Path) -> int:
     if os.name == "nt":
         creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
@@ -256,6 +275,56 @@ def start_backend_detached(command: list[str], work_dir: Path) -> int:
             start_new_session=True,
         )
     return process.pid
+
+
+def verify_backend_restart(ctx: "RuntimeContext", new_pid: int, restart_started_at: float, timeout_seconds: float = 12.0) -> tuple[bool, str, dict[str, Any]]:
+    deadline = time.time() + timeout_seconds
+    runtime_seen = False
+    runtime_matched = False
+
+    while time.time() < deadline:
+        if not is_pid_running(new_pid):
+            return False, "backend process exited early", {"new_backend_pid": new_pid}
+
+        runtime_file = ctx.work_dir / RUNTIME_FILE_NAME
+        if runtime_file.exists():
+            runtime_seen = True
+            try:
+                payload = json.loads(runtime_file.read_text(encoding="utf-8"))
+                runtime_pid = int(payload.get("backend_pid") or 0)
+            except Exception:
+                runtime_pid = 0
+
+            try:
+                runtime_mtime = runtime_file.stat().st_mtime
+            except Exception:
+                runtime_mtime = 0.0
+
+            if runtime_pid == new_pid and runtime_mtime >= (restart_started_at - 0.5):
+                runtime_matched = True
+                return True, "runtime file refreshed by new backend", {
+                    "new_backend_pid": new_pid,
+                    "runtime_pid": runtime_pid,
+                    "runtime_mtime": runtime_mtime,
+                }
+
+        if is_port_open(ctx.port):
+            return True, "backend port is listening", {
+                "new_backend_pid": new_pid,
+                "port": ctx.port,
+                "runtime_seen": runtime_seen,
+                "runtime_matched": runtime_matched,
+            }
+
+        time.sleep(0.5)
+
+    return False, "backend restart verification timed out", {
+        "new_backend_pid": new_pid,
+        "runtime_seen": runtime_seen,
+        "runtime_matched": runtime_matched,
+        "pid_alive": is_pid_running(new_pid),
+        "port": ctx.port,
+    }
 
 
 @dataclass
@@ -348,25 +417,33 @@ def apply_whitelist_copy(extracted_root: Path, work_dir: Path) -> dict[str, Any]
     }
 
 
-def run_update_once(ctx: RuntimeContext, repo: str) -> None:
+def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
     local_version = (ctx.app_version or "").strip() or APP_VERSION
+    trace(ctx.work_dir, "release:checking", repo=repo, local_version=local_version)
     write_status(ctx.work_dir, "checking", "checking latest release", {"repo": repo, "local_version": local_version})
     release = github_latest_release(repo)
     latest_tag = str(release.get("tag_name") or "")
 
     if not is_remote_newer(local_version, latest_tag):
+        trace(ctx.work_dir, "release:no-update", repo=repo, local_version=local_version, latest_tag=latest_tag)
         write_status(
             ctx.work_dir,
             "idle",
             "already up-to-date",
             {"repo": repo, "local_version": local_version, "latest_tag": latest_tag},
         )
-        return
+        return {
+            "state": "idle",
+            "message": "already up-to-date",
+            "extra": {"repo": repo, "local_version": local_version, "latest_tag": latest_tag},
+        }
 
     zip_url = find_asset_url(release, RELEASE_ZIP_NAME)
     sha_url = find_asset_url(release, RELEASE_SHA256_NAME)
     if not zip_url or not sha_url:
         raise RuntimeError("release assets are incomplete")
+
+    trace(ctx.work_dir, "release:update-found", repo=repo, latest_tag=latest_tag)
 
     with tempfile.TemporaryDirectory(prefix="famyliam-update-") as temp_dir:
         temp_root = Path(temp_dir)
@@ -374,33 +451,53 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> None:
         sha_path = temp_root / RELEASE_SHA256_NAME
         extract_path = temp_root / "extract"
 
+        trace(ctx.work_dir, "download:start", zip_url=zip_url, sha_url=sha_url)
         write_status(ctx.work_dir, "downloading", "downloading release assets", {"repo": repo, "tag": latest_tag})
         download_to(zip_url, zip_path)
+        trace(ctx.work_dir, "download:zip-done", zip_path=str(zip_path))
         download_to(sha_url, sha_path)
+        trace(ctx.work_dir, "download:sha-done", sha_path=str(sha_path))
 
         expected_sha = parse_sha256_file(sha_path)
         actual_sha = file_sha256(zip_path)
         if actual_sha != expected_sha:
             raise RuntimeError("sha256 verification failed")
+        trace(ctx.work_dir, "verify:sha256-ok", sha256=actual_sha)
 
         write_status(ctx.work_dir, "extracting", "extracting update package", {"repo": repo, "tag": latest_tag})
         with zipfile.ZipFile(zip_path) as archive:
             archive.extractall(extract_path)
+        trace(ctx.work_dir, "extract:done", extract_path=str(extract_path))
 
         backup_dir = ctx.work_dir / "static" / "backups" / "updater" / datetime.now().strftime("%Y%m%d_%H%M%S")
         write_status(ctx.work_dir, "backup", "creating backup", {"repo": repo, "backup_dir": str(backup_dir)})
         backup_targets(ctx.work_dir, backup_dir)
+        trace(ctx.work_dir, "backup:done", backup_dir=str(backup_dir))
 
+        trace(ctx.work_dir, "backend:stopping", backend_pid=ctx.backend_pid)
         write_status(ctx.work_dir, "stopping", "stopping current backend process", {"repo": repo, "backend_pid": ctx.backend_pid})
-        if not stop_backend_process(ctx.backend_pid):
+        stop_ok = stop_backend_process(ctx.backend_pid)
+        trace(ctx.work_dir, "backend:stopped", backend_pid=ctx.backend_pid, stop_ok=stop_ok)
+        if not stop_ok:
             raise RuntimeError("failed to stop backend process")
 
+        trace(ctx.work_dir, "apply:start", extract_path=str(extract_path))
         write_status(ctx.work_dir, "applying", "applying whitelist update", {"repo": repo, "tag": latest_tag})
         result = apply_whitelist_copy(extract_path, ctx.work_dir)
+        trace(ctx.work_dir, "apply:done", **result)
 
         restart_command = resolve_restart_command(ctx)
+        trace(ctx.work_dir, "backend:restart-command", command=restart_command)
+        restart_started_at = time.time()
         new_pid = start_backend_detached(restart_command, ctx.work_dir)
+        trace(ctx.work_dir, "backend:restart-spawned", new_backend_pid=new_pid)
         ctx.backend_pid = new_pid
+
+        verify_ok, verify_message, verify_extra = verify_backend_restart(ctx, new_pid, restart_started_at)
+        if not verify_ok:
+            raise RuntimeError(f"backend restart verification failed: {verify_message}")
+
+        trace(ctx.work_dir, "backend:restart-verified", verify_message=verify_message, **verify_extra)
         write_status(
             ctx.work_dir,
             "updated",
@@ -410,9 +507,24 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> None:
                 "repo": repo,
                 "new_backend_pid": new_pid,
                 "restart_command": restart_command,
+                "restart_verify": verify_message,
+                **verify_extra,
                 **result,
             },
         )
+        return {
+            "state": "updated",
+            "message": "update finished and backend restarted",
+            "extra": {
+                "latest_tag": latest_tag,
+                "repo": repo,
+                "new_backend_pid": new_pid,
+                "restart_command": restart_command,
+                "restart_verify": verify_message,
+                **verify_extra,
+                **result,
+            },
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -433,6 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     work_dir = Path(args.work_dir).resolve() if args.work_dir else Path(__file__).resolve().parent
+    trace(work_dir, "main:start", pid=os.getpid(), watch=bool(args.watch), repo=str(args.repo))
 
     ctx = RuntimeContext(
         work_dir=work_dir,
@@ -446,22 +559,53 @@ def main() -> int:
     )
 
     if not acquire_single_instance_lock(work_dir):
+        trace(work_dir, "lock:exists", pid=os.getpid())
         return 0
+    trace(work_dir, "lock:acquired", pid=os.getpid())
 
     interval_seconds = max(60, int(float(args.interval_hours) * 3600))
+    last_result_state = "idle"
+    last_result_message = "not checked yet"
+    last_result_extra: dict[str, Any] = {"repo": str(args.repo)}
     try:
         while True:
             try:
                 sync_runtime_context(ctx)
-                run_update_once(ctx, str(args.repo))
+                trace(
+                    work_dir,
+                    "runtime:loaded",
+                    backend_pid=ctx.backend_pid,
+                    port=ctx.port,
+                    backend_mode=ctx.backend_mode,
+                    app_version=ctx.app_version,
+                )
+                result = run_update_once(ctx, str(args.repo))
+                last_result_state = str(result.get("state") or "idle")
+                last_result_message = str(result.get("message") or "")
+                last_result_extra = dict(result.get("extra") or {})
             except Exception as exc:
-                write_status(work_dir, "error", f"update failed: {exc}", {"repo": str(args.repo)})
+                print(repr(exc), flush=True)
+                trace(work_dir, "error:exception", error=repr(exc))
+                last_result_state = "error"
+                last_result_message = f"update failed: {exc}"
+                last_result_extra = {"repo": str(args.repo)}
+                write_status(work_dir, last_result_state, last_result_message, last_result_extra)
 
             if not args.watch:
                 break
-            write_status(work_dir, "sleeping", "waiting for next update check", {"repo": str(args.repo), "interval_seconds": interval_seconds})
+            sleep_payload = {
+                **last_result_extra,
+                "repo": str(args.repo),
+                "loop_state": "sleeping",
+                "interval_seconds": interval_seconds,
+                "last_result_state": last_result_state,
+                "last_result_message": last_result_message,
+            }
+            write_status(work_dir, last_result_state, last_result_message, sleep_payload)
+            trace(work_dir, "loop:sleeping", interval_seconds=interval_seconds, last_result_state=last_result_state)
             time.sleep(interval_seconds)
     finally:
+        trace(work_dir, "lock:released", pid=os.getpid())
         release_single_instance_lock(work_dir)
 
     return 0

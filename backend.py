@@ -936,10 +936,20 @@ def launch_updater_sidecar(port: int) -> None:
         app.logger.info('Updater sidecar not found, skip launch.')
         return
 
+    updater_stdout_log = BASE_PATH / 'updater-debug.log'
+    updater_stderr_log = BASE_PATH / 'updater-error.log'
+    stdout_handle: Optional[TextIO] = None
+    stderr_handle: Optional[TextIO] = None
+    try:
+        stdout_handle = open(updater_stdout_log, 'a', encoding='utf-8')
+        stderr_handle = open(updater_stderr_log, 'a', encoding='utf-8')
+    except Exception as exc:
+        app.logger.warning('Failed to open updater log files: %s', exc)
+
     kwargs: Dict[str, Any] = {
         'cwd': str(BASE_PATH),
-        'stdout': subprocess.DEVNULL,
-        'stderr': subprocess.DEVNULL,
+        'stdout': stdout_handle if stdout_handle else subprocess.DEVNULL,
+        'stderr': stderr_handle if stderr_handle else subprocess.DEVNULL,
         'stdin': subprocess.DEVNULL,
         'close_fds': True,
     }
@@ -954,6 +964,17 @@ def launch_updater_sidecar(port: int) -> None:
         app.logger.info('Updater sidecar launched: %s', command[0])
     except Exception as exc:
         app.logger.warning('Failed to launch updater sidecar: %s', exc)
+    finally:
+        try:
+            if stdout_handle:
+                stdout_handle.close()
+        except Exception:
+            pass
+        try:
+            if stderr_handle:
+                stderr_handle.close()
+        except Exception:
+            pass
 
 
 @app.route('/api/runtime/version', methods=['GET'])
