@@ -79,33 +79,37 @@ jobs:
           $releaseBody | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           $delimiter | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Inject version into backend.py
+      - name: Inject version into backend.py and updater.py
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
           $placeholder = 'APP_VERSION = "0.0.0-dev"'
           $newLine = "APP_VERSION = ""$version"""
-          $content = Get-Content .\backend.py -Raw
-          if (-not $content.Contains($placeholder)) {
-            Write-Error "Placeholder for version not found in backend.py"
-            exit 1
+          foreach ($target in @('.\backend.py', '.\updater.py')) {
+            $content = Get-Content $target -Raw
+            if (-not $content.Contains($placeholder)) {
+              Write-Error "Placeholder for version not found in $target"
+              exit 1
+            }
+            $content = $content.Replace($placeholder, $newLine)
+            Set-Content -Path $target -Value $content -Encoding UTF8
           }
-          $content = $content.Replace($placeholder, $newLine)
-          Set-Content -Path .\backend.py -Value $content -Encoding UTF8
 
-      - name: Verify injected version
+      - name: Verify injected version in backend.py and updater.py
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.tag }}".TrimStart('v')
-          $matches = Select-String -Path .\backend.py -Pattern '^APP_VERSION = "([^"]+)"' -AllMatches
-          if ($matches.Count -ne 1) {
-            Write-Error "Expected exactly one APP_VERSION assignment, found $($matches.Count)"
-            exit 1
-          }
-          $value = $matches[0].Matches[0].Groups[1].Value
-          if ($value -ne $version) {
-            Write-Error "Injected version mismatch. Expected $version, found $value"
-            exit 1
+          foreach ($target in @('.\backend.py', '.\updater.py')) {
+            $matches = Select-String -Path $target -Pattern '^APP_VERSION = "([^"]+)"' -AllMatches
+            if ($matches.Count -ne 1) {
+              Write-Error "Expected exactly one APP_VERSION assignment in $target, found $($matches.Count)"
+              exit 1
+            }
+            $value = $matches[0].Matches[0].Groups[1].Value
+            if ($value -ne $version) {
+              Write-Error "Injected version mismatch in $target. Expected $version, found $value"
+              exit 1
+            }
           }
 
       - name: Install dependencies
@@ -119,11 +123,18 @@ jobs:
         run: |
           pyinstaller --noconfirm --onefile --console --add-data ".\static;static/" --add-data ".\templates;templates/" ".\backend.py"
 
+      - name: Build updater.exe
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --onefile --console ".\updater.py"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: backend.exe
-          path: dist/backend.exe
+          name: backend-and-updater.exe
+          path: |
+            dist/backend.exe
+            dist/updater.exe
           if-no-files-found: error
 
       - name: Prepare release zip
@@ -133,6 +144,7 @@ jobs:
           New-Item -ItemType Directory -Path release/LyricSphere.exe -Force | Out-Null
 
           Copy-Item dist/backend.exe release/LyricSphere.exe/backend.exe -Force
+          Copy-Item dist/updater.exe release/LyricSphere.exe/updater.exe -Force
           Copy-Item templates release/LyricSphere.exe/templates -Recurse -Force
 
           $staticDest = "release/LyricSphere.exe/static"

@@ -49,6 +49,8 @@ from urllib.parse import urlparse, unquote
 import requests
 from PIL import Image
 
+APP_VERSION = "0.0.0-dev"
+
 _request_context: ContextVar[Optional["RequestContext"]] = ContextVar("request_context", default=None)
 _MISSING = object()
 TEMP_TTML_FILES: Dict[str, float] = {}
@@ -847,10 +849,6 @@ def get_base_path():
 # 全局基础路径
 BASE_PATH = get_base_path()
 
-APP_VERSION = "0.0.0-dev"
-AUTO_UPDATE_ENABLED = getattr(sys, 'frozen', False) and os.environ.get("AUTO_UPDATE_ENABLED", "1") != "0"
-CURRENT_PORT: Optional[int] = None
-
 # 创建导出目录
 EXPORTS_DIR = BASE_PATH / 'exports'
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -880,6 +878,97 @@ def url_for(endpoint: str, **values: Any) -> str:
 
 
 app.jinja_env.globals.update(url_for=url_for)
+
+_updater_started = False
+UPDATER_STATUS_FILE = BASE_PATH / '.updater.status.json'
+UPDATER_RUNTIME_FILE = BASE_PATH / '.updater.runtime.json'
+
+
+def launch_updater_sidecar(port: int) -> None:
+    global _updater_started
+    backend_pid = os.getpid()
+    backend_mode = 'exe' if getattr(sys, 'frozen', False) else 'python'
+    backend_executable_path = str(Path(sys.executable).resolve()) if backend_mode == 'exe' else ''
+    backend_script_path = '' if backend_mode == 'exe' else str(Path(__file__).resolve())
+    python_executable_path = '' if backend_mode == 'exe' else str(Path(sys.executable).resolve())
+
+    runtime_payload = {
+        'timestamp': datetime.now().isoformat(timespec='seconds'),
+        'app_version': APP_VERSION,
+        'backend_pid': backend_pid,
+        'port': port,
+        'backend_mode': backend_mode,
+        'backend_executable': backend_executable_path,
+        'backend_script': backend_script_path,
+        'python_executable': python_executable_path,
+    }
+    try:
+        UPDATER_RUNTIME_FILE.write_text(json.dumps(runtime_payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception as exc:
+        app.logger.warning('Failed to write updater runtime file: %s', exc)
+
+    if _updater_started:
+        return
+
+    updater_exe = BASE_PATH / 'updater.exe'
+    updater_py = BASE_PATH / 'updater.py'
+
+    sidecar_args = [
+        '--watch',
+        '--work-dir', str(BASE_PATH),
+        '--backend-pid', str(backend_pid),
+        '--port', str(port),
+        '--backend-mode', backend_mode,
+    ]
+    if backend_mode == 'exe':
+        sidecar_args += ['--backend-executable', backend_executable_path]
+    else:
+        sidecar_args += [
+            '--backend-script', backend_script_path,
+            '--python-executable', python_executable_path,
+        ]
+
+    if updater_exe.exists():
+        command = [str(updater_exe), *sidecar_args]
+    elif updater_py.exists():
+        command = [str(Path(sys.executable).resolve()), str(updater_py), *sidecar_args]
+    else:
+        app.logger.info('Updater sidecar not found, skip launch.')
+        return
+
+    kwargs: Dict[str, Any] = {
+        'cwd': str(BASE_PATH),
+        'stdout': subprocess.DEVNULL,
+        'stderr': subprocess.DEVNULL,
+        'stdin': subprocess.DEVNULL,
+        'close_fds': True,
+    }
+    if os.name == 'nt':
+        kwargs['creationflags'] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs['start_new_session'] = True
+
+    try:
+        subprocess.Popen(command, **kwargs)
+        _updater_started = True
+        app.logger.info('Updater sidecar launched: %s', command[0])
+    except Exception as exc:
+        app.logger.warning('Failed to launch updater sidecar: %s', exc)
+
+
+@app.route('/api/runtime/version', methods=['GET'])
+def api_runtime_version():
+    updater_status = None
+    if UPDATER_STATUS_FILE.exists():
+        try:
+            updater_status = json.loads(UPDATER_STATUS_FILE.read_text(encoding='utf-8'))
+        except Exception as exc:
+            updater_status = {'state': 'error', 'message': f'parse failed: {exc}'}
+    return {
+        'app_version': APP_VERSION,
+        'backend_pid': os.getpid(),
+        'updater_status': updater_status,
+    }
 
 
 def render_template(template_name: str, **context: Any) -> HTMLResponse:
@@ -1033,361 +1122,11 @@ def cleanup_exports_dir(max_keep: int = 20) -> int:
 
 cleanup_exports_dir(max_keep=20)
 
-
-def _parse_semver(raw: Optional[str]) -> Tuple[int, int, int]:
-    cleaned = (raw or "").strip().lstrip("vV")
-    parts: List[int] = []
-    for piece in cleaned.split('.'):
-        match = re.match(r"(\d+)", piece.strip())
-        if match:
-            parts.append(int(match.group(1)))
-    while len(parts) < 3:
-        parts.append(0)
-    return tuple(parts[:3])
-
-
-def _is_remote_newer(remote_version: str, local_version: str) -> bool:
-    return _parse_semver(remote_version) > _parse_semver(local_version)
-
-
-def _load_update_status() -> Dict[str, Any]:
-    default = {
-        "current_version": APP_VERSION,
-        "latest_version": APP_VERSION,
-        "last_checked": 0,
-        "status": "idle",
-        "last_error": "",
-        "last_backup": "",
-        "applied": [],
-        "checksum": "",
-        "last_success_version": "",
-        "update_in_progress": False,
-        "needs_swap": False,
-    }
-    if UPDATE_STATUS_FILE.exists():
-        try:
-            with open(UPDATE_STATUS_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                default.update(data)
-        except Exception:
-            pass
-    default["current_version"] = APP_VERSION
-    return default
-
-
-def _save_update_status(data: Dict[str, Any]) -> None:
-    snapshot = _load_update_status()
-    snapshot.update(data)
-    snapshot["current_version"] = APP_VERSION
-    snapshot["update_in_progress"] = snapshot.get("update_in_progress", False)
-    UPDATE_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(UPDATE_STATUS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(snapshot, f, ensure_ascii=False, indent=2)
-
-
-def _safe_copy_file(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-
-
-def _should_skip_static(rel_path: Path) -> bool:
-    if not rel_path.parts:
-        return True
-    if len(rel_path.parts) >= 1:
-        first = rel_path.parts[0]
-        if first in {"songs", "backups"}:
-            return True
-    if len(rel_path.parts) == 1 and rel_path.suffix.lower() == '.json':
-        return True
-    return False
-
-
-def perform_pre_update_backup() -> Path:
-    backup_root = BACKUP_DIR / 'updates' / datetime.now().strftime('%Y%m%d_%H%M%S')
-    static_backup = backup_root / 'static_root_json'
-    config_backup = backup_root / 'config'
-
-    try:
-        for json_file in STATIC_DIR.glob('*.json'):
-            _safe_copy_file(json_file, static_backup / json_file.name)
-    except Exception as exc:
-        app.logger.warning("Backup static root JSON failed: %s", exc)
-
-    for name in ['security_config.json', 'trusted_devices.json', 'keys_config.json', 'port_status.json', 'amll_settings_cache.json']:
-        candidate = BASE_PATH / name
-        if candidate.exists():
-            try:
-                _safe_copy_file(candidate, config_backup / candidate.name)
-            except Exception as exc:
-                app.logger.warning("Backup config %s failed: %s", name, exc)
-
-    _save_update_status({"last_backup": str(backup_root)})
-    return backup_root
-
-
-def _fetch_latest_release() -> Optional[Dict[str, Any]]:
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-    headers = {"Accept": "application/vnd.github+json"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        app.logger.warning("Fetch latest release failed: %s", exc)
-        _save_update_status({"status": "error", "last_error": str(exc)})
-        return None
-
-    tag = str(data.get('tag_name') or '').strip()
-    asset = None
-    checksum_asset = None
-    for item in data.get('assets') or []:
-        if item.get('name') == RELEASE_ASSET_NAME:
-            asset = item
-        if item.get('name') == RELEASE_ASSET_CHECKSUM_NAME:
-            checksum_asset = item
-    download_url = asset.get('browser_download_url') if asset else None
-    checksum_url = checksum_asset.get('browser_download_url') if checksum_asset else None
-    if not tag or not download_url or not checksum_url:
-        _save_update_status({"status": "error", "last_error": "Release asset or checksum missing"})
-        return None
-
-    return {
-        "tag": tag,
-        "version": tag.lstrip('vV'),
-        "download_url": download_url,
-        "checksum_url": checksum_url,
-        "release_notes": data.get('body') or '',
-    }
-
-
-def _download_release_asset(download_url: str) -> Optional[Path]:
-    try:
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix='.zip')
-        os.close(tmp_fd)
-        with requests.get(download_url, stream=True, timeout=60) as resp:
-            resp.raise_for_status()
-            with open(tmp_path, 'wb') as f:
-                for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-        return Path(tmp_path)
-    except Exception as exc:
-        app.logger.warning("Download release asset failed: %s", exc)
-        _save_update_status({"status": "error", "last_error": str(exc)})
-        return None
-
-
-def _download_text_asset(download_url: str) -> Optional[str]:
-    try:
-        resp = requests.get(download_url, timeout=15)
-        resp.raise_for_status()
-        return resp.text.strip()
-    except Exception as exc:
-        app.logger.warning("Download checksum failed: %s", exc)
-        _save_update_status({"status": "error", "last_error": str(exc)})
-        return None
-
-
-def _sha256_of_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _apply_update_from_extract(extract_root: Path) -> Dict[str, Any]:
-    root = extract_root / 'LyricSphere.exe'
-    if not root.exists():
-        root = extract_root
-
-    applied: List[str] = []
-    next_executable: Optional[Path] = None
-
-    backend_src = root / 'backend.exe'
-    needs_swap = False
-    if backend_src.exists():
-        dest = BASE_PATH / 'backend.exe'
-        try:
-            _safe_copy_file(backend_src, dest)
-            next_executable = dest
-            applied.append('backend.exe')
-        except PermissionError:
-            alt = BASE_PATH / 'backend.exe.new'
-            _safe_copy_file(backend_src, alt)
-            next_executable = alt
-            applied.append('backend.exe.new')
-            needs_swap = True
-
-    templates_src = root / 'templates'
-    if templates_src.exists():
-        for file in templates_src.rglob('*'):
-            if file.is_dir():
-                continue
-            rel = file.relative_to(templates_src)
-            dest = BASE_PATH / 'templates' / rel
-            _safe_copy_file(file, dest)
-            applied.append(f"templates/{rel}")
-
-    static_src = root / 'static'
-    if static_src.exists():
-        for file in static_src.rglob('*'):
-            if file.is_dir():
-                continue
-            rel = file.relative_to(static_src)
-            if _should_skip_static(rel):
-                continue
-            dest = STATIC_DIR / rel
-            _safe_copy_file(file, dest)
-            applied.append(f"static/{rel}")
-
-    return {"applied": applied, "next_executable": next_executable, "needs_swap": needs_swap}
-
-
-def _get_current_port() -> int:
-    if CURRENT_PORT and 1 <= CURRENT_PORT <= 65535:
-        return CURRENT_PORT
-    try:
-        status = get_port_status()
-        port_val = int(status.get('port', 5000))
-        if 1 <= port_val <= 65535:
-            return port_val
-    except Exception:
-        pass
-    return 5000
-
-
-def _check_and_apply_update(force: bool = False) -> None:
-    if not AUTO_UPDATE_ENABLED:
-        return
-
-    global _UPDATE_IN_PROGRESS
-    with _UPDATE_LOCK:
-        now = time.time()
-        status = _load_update_status()
-        if _UPDATE_IN_PROGRESS:
-            return
-        if not force and now - status.get('last_checked', 0) < 60:
-            return
-        _UPDATE_IN_PROGRESS = True
-        _save_update_status({"status": "checking", "last_error": "", "last_checked": now, "update_in_progress": True})
-
-    try:
-        release = _fetch_latest_release()
-        if not release:
-            return
-
-        remote_version = release['version']
-        if not _is_remote_newer(remote_version, APP_VERSION):
-            _save_update_status({
-                "status": "up_to_date",
-                "latest_version": remote_version,
-                "last_checked": time.time(),
-                "update_in_progress": False,
-            })
-            return
-
-        expected_checksum = _download_text_asset(release['checksum_url'])
-        if not expected_checksum:
-            _save_update_status({"status": "error", "last_error": "Checksum missing", "update_in_progress": False})
-            return
-
-        _save_update_status({
-            "status": "updating",
-            "latest_version": remote_version,
-            "last_checked": time.time(),
-            "checksum": expected_checksum or "",
-            "update_in_progress": True,
-        })
-
-        perform_pre_update_backup()
-
-        zip_path = _download_release_asset(release['download_url'])
-        if not zip_path:
-            return
-
-        if expected_checksum:
-            actual = _sha256_of_file(zip_path)
-            if actual.lower() != expected_checksum.lower():
-                _save_update_status({"status": "error", "last_error": "Checksum mismatch", "update_in_progress": False})
-                try:
-                    zip_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                return
-
-        applied: Dict[str, Any] = {"applied": [], "next_executable": None, "needs_swap": False}
-        try:
-            with tempfile.TemporaryDirectory() as td:
-                tmp_dir = Path(td)
-                with zipfile.ZipFile(zip_path, 'r') as zf:
-                    zf.extractall(tmp_dir)
-                applied = _apply_update_from_extract(tmp_dir)
-        except Exception as exc:
-            _save_update_status({"status": "error", "last_error": str(exc), "update_in_progress": False})
-            app.logger.error("Apply update failed: %s", exc, exc_info=True)
-            return
-        finally:
-            try:
-                zip_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        _save_update_status({
-            "status": "updated",
-            "latest_version": remote_version,
-            "applied": applied.get("applied", []),
-            "last_checked": time.time(),
-            "last_success_version": remote_version,
-            "update_in_progress": False,
-            "needs_swap": applied.get("needs_swap", False),
-        })
-
-        port = _get_current_port()
-        try:
-            restart_on_port(
-                port,
-                open_url=f"http://127.0.0.1:{port}",
-                executable_override=applied.get("next_executable"),
-                swap_target=BASE_PATH / 'backend.exe' if applied.get("needs_swap") else None
-            )
-        except Exception as exc:
-            app.logger.error("Scheduled restart after update failed: %s", exc)
-    finally:
-        with _UPDATE_LOCK:
-            _UPDATE_IN_PROGRESS = False
-            _save_update_status({"update_in_progress": False})
-
-
-def _update_loop():
-    _check_and_apply_update(force=True)
-    while True:
-        time.sleep(UPDATE_CHECK_INTERVAL)
-        _check_and_apply_update(force=True)
-
-
-def start_auto_update_scheduler() -> None:
-    global _AUTO_UPDATE_THREAD
-    if _AUTO_UPDATE_THREAD or not AUTO_UPDATE_ENABLED:
-        return
-    _AUTO_UPDATE_THREAD = threading.Thread(target=_update_loop, name="AutoUpdate", daemon=True)
-    _AUTO_UPDATE_THREAD.start()
-
 RESOURCE_DIRECTORIES = {
     'static': STATIC_DIR,
     'songs': SONGS_DIR,
     'backups': BACKUP_DIR,
 }
-
-GITHUB_REPO = "HKLHaoBin/LyricSphere"
-RELEASE_ASSET_NAME = "LyricSphere.exe.zip"
-RELEASE_ASSET_CHECKSUM_NAME = "LyricSphere.exe.zip.sha256"
-UPDATE_STATUS_FILE = BASE_PATH / "update_status.json"
-UPDATE_CHECK_INTERVAL = 24 * 60 * 60
-_AUTO_UPDATE_THREAD: Optional[threading.Thread] = None
-_UPDATE_LOCK = threading.Lock()
-_UPDATE_IN_PROGRESS = False
 
 WINDOWS_STRICT_INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 WINDOWS_RESERVED_FILENAMES = {
@@ -9502,31 +9241,6 @@ def set_port_status(mode, port):
 def api_get_port_status():
     return jsonify(get_port_status())
 
-
-@app.route('/version')
-def api_get_version():
-    status = _load_update_status()
-    return jsonify({
-        "version": APP_VERSION,
-        "latest_version": status.get("latest_version", APP_VERSION),
-        "status": status.get("status", "idle"),
-        "last_checked": status.get("last_checked", 0),
-    })
-
-
-@app.route('/update/status')
-def api_update_status():
-    return jsonify(_load_update_status())
-
-
-@app.route('/update/check', methods=['POST'])
-def api_update_check():
-    # 允许本机或已解锁/受信任设备触发
-    if not (is_local_request() or is_device_unlocked()):
-        return abort(403)
-    threading.Thread(target=_check_and_apply_update, kwargs={"force": True}, daemon=True).start()
-    return jsonify({"status": "started"})
-
 @app.route('/get_security_status')
 def api_get_security_status():
     return jsonify(get_security_config())
@@ -9600,285 +9314,23 @@ def api_restore_port():
     ).start()
     return jsonify({'status': 'success'})
 
-def restart_on_port(port, open_url=None, executable_override: Optional[Path] = None, swap_target: Optional[Path] = None):
+def restart_on_port(port, open_url=None):
     import time
     import subprocess
     import webbrowser
-
-    swap_initial_delay_ms = 1000
-    swap_retry_delay_ms = 500
-    swap_max_wait_ms = 60000
-    service_ready_timeout_ms = 30000
-    service_ready_interval_ms = 500
-
     time.sleep(1)  # Give the client time to receive the response.
     if open_url:
         try:
             webbrowser.open(open_url)
         except Exception:
             pass
-
-    def _launch_with_swap(new_path: Path, target_path: Path) -> bool:
-        ts = datetime.now().strftime('%Y%m%d%H%M%S')
-        script_path = BASE_PATH / f"apply_swap_{ts}.ps1"
-        max_attempts = max(1, int(swap_max_wait_ms / swap_retry_delay_ms))
-        ps = f"""
-$ErrorActionPreference = 'Stop'
-
-$root = $PSScriptRoot
-if (-not $root) {{
-  $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-}}
-
-$new = Join-Path $root 'backend.exe.new'
-$target = Join-Path $root 'backend.exe'
-$bak = "$target.bak.{ts}"
-$port = '{port}'
-$openUrl = '{open_url or ''}'
-$logPath = Join-Path $root 'update_swap.log'
-$statusPath = Join-Path $root 'update_status.json'
-$stdoutLog = Join-Path $root 'backend_start_stdout_{ts}.log'
-$stderrLog = Join-Path $root 'backend_start_stderr_{ts}.log'
-$probeUrls = @("http://127.0.0.1:$port/get_port_status","http://127.0.0.1:$port/")
-$initialDelayMs = {swap_initial_delay_ms}
-$retryDelayMs = {swap_retry_delay_ms}
-$maxAttempts = {max_attempts}
-$serviceReadyTimeoutMs = {service_ready_timeout_ms}
-$serviceReadyIntervalMs = {service_ready_interval_ms}
-$httpTimeoutSec = [Math]::Max(1, [Math]::Ceiling($serviceReadyIntervalMs / 1000.0))
-$keepLogCount = 5
-
-function Start-BackupIfExists {{
-  param([string]$bakPath)
-  if (-not (Test-Path $bakPath)) {{
-    Write-Log "Backup not found: $bakPath"
-    if (Test-Path $target) {{
-      try {{
-        $procExisting = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
-        Write-Log "Started existing target without swap. PID=$($procExisting.Id)"
-      }} catch {{
-        Write-Log "Start existing target failed: $($_.Exception.Message)"
-      }}
-    }} else {{
-      Write-Log "No target executable present to start"
-    }}
-    return
-  }}
-  try {{
-    if (Test-Path $target) {{
-      Remove-Item -LiteralPath $target -Force -ErrorAction Stop
-    }}
-  }} catch {{
-    Write-Log "Remove existing target failed before restore: $($_.Exception.Message)"
-  }}
-  try {{
-    Move-Item -LiteralPath $bakPath -Destination $target -Force -ErrorAction Stop
-    Write-Log "Restored backup to $target"
-    $procBackup = Start-Process -FilePath $target -ArgumentList $port -PassThru -ErrorAction Stop
-    Write-Log "Backup launch started. PID=$($procBackup.Id)"
-  }} catch {{
-    Write-Log "Backup restore/launch failed: $($_.Exception.Message)"
-  }}
-}}
-
-function Write-Log($msg) {{
-  try {{
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-    Add-Content -LiteralPath $logPath -Value "[$ts] $msg"
-  }} catch {{}}
-}}
-
-function Update-Status($status, $message) {{
-  try {{
-    $json = @{{}}
-    if (Test-Path $statusPath) {{
-      $raw = Get-Content -LiteralPath $statusPath -Raw -ErrorAction Stop
-      $json = $raw | ConvertFrom-Json
-    }}
-    if (-not $json) {{ $json = @{{}} }}
-    $json.status = $status
-    $json.last_error = $message
-    $json.update_in_progress = $false
-    $json.needs_swap = $false
-    $json | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $statusPath -Encoding UTF8
-  }} catch {{
-    Write-Log "Update status write failed: $($_.Exception.Message)"
-  }}
-}}
-
-function Cleanup-OldLogs($pattern, $keep) {{
-  try {{
-    $files = Get-ChildItem -LiteralPath $root -Filter $pattern -File | Sort-Object LastWriteTime -Descending
-    $removeList = $files | Select-Object -Skip $keep
-    foreach ($f in $removeList) {{ Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop }}
-  }} catch {{ Write-Log "Log cleanup failed: $($_.Exception.Message)" }}
-}}
-
-function Test-HttpReady($urls) {{
-  foreach ($u in $urls) {{
-    try {{
-      $resp = Invoke-WebRequest -Uri $u -Method Get -TimeoutSec $httpTimeoutSec -UseBasicParsing
-      if ($resp.StatusCode -eq 200) {{ return $true }}
-    }} catch {{}}
-  }}
-  return $false
-}}
-
-function Get-PortState {{
-  try {{ return (netstat -ano | Select-String ":$port") -join "`n" }} catch {{ return "" }}
-}}
-
-function Get-StderrTail {{
-  try {{ if (Test-Path $stderrLog) {{ return (Get-Content -LiteralPath $stderrLog -Tail 20 -ErrorAction Stop) -join "`n" }} }} catch {{}}
-  return ""
-}}
-
-Write-Log "Swap helper started. target=$target new=$new port=$port openUrl=$openUrl"
-Start-Sleep -Milliseconds $initialDelayMs
-
-Cleanup-OldLogs "backend_start_stdout_*.log" $keepLogCount
-Cleanup-OldLogs "backend_start_stderr_*.log" $keepLogCount
-
-if (-not (Test-Path $new)) {{
-  $msg = "New executable missing: $new"
-  Write-Log $msg
-  Update-Status "error" $msg
-  return
-}}
-
-$swapped = $false
-$lastError = ""
-for ($i=0; $i -lt $maxAttempts; $i++) {{
-  try {{
-    if (Test-Path $target) {{
-      Move-Item -LiteralPath $target -Destination $bak -Force -ErrorAction Stop
-      Write-Log "Existing backend moved to $bak"
-    }}
-    Move-Item -LiteralPath $new -Destination $target -Force -ErrorAction Stop
-    Write-Log "Swap succeeded on attempt $($i + 1)"
-    $swapped = $true
-    break
-  }} catch {{
-    $lastError = $_.Exception.Message
-    Start-Sleep -Milliseconds $retryDelayMs
-  }}
-}}
-
-if (-not $swapped) {{
-  $msg = "Swap failed after $maxAttempts attempts: $lastError"
-  Write-Log $msg
-  Update-Status "error" $msg
-  Start-BackupIfExists $bak
-  return
-}}
-
-$startCmd = "$target $port"
-try {{
-  $proc = Start-Process -FilePath $target -ArgumentList $port -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ErrorAction Stop
-  Write-Log "Started new backend process. PID=$($proc.Id) stdout=$stdoutLog stderr=$stderrLog"
-  Update-Status "process_started" ""
-  $ready = $false
-  $deadline = [DateTime]::UtcNow.AddMilliseconds($serviceReadyTimeoutMs)
-  $attempt = 0
-  while ([DateTime]::UtcNow -lt $deadline) {{
-    $attempt++
-    $httpOk = Test-HttpReady $probeUrls
-    if ($httpOk) {{
-      Write-Log "Health probe success on attempt $attempt"
-      $ready = $true
-      break
-    }}
-    if ($proc.HasExited) {{
-      Write-Log "Backend exited before ready. ExitCode=$($proc.ExitCode)"
-      break
-    }}
-    Start-Sleep -Milliseconds $serviceReadyIntervalMs
-  }}
-  if ($ready) {{
-    Write-Log "Backend ready on http://127.0.0.1:$port"
-    Update-Status "updated" ""
-    if ($openUrl) {{
-      try {{
-        Start-Process $openUrl -ErrorAction Stop | Out-Null
-        Write-Log "Opened URL $openUrl"
-      }} catch {{
-        Write-Log "Open URL failed: $($_.Exception.Message)"
-      }}
-    }}
-  }} else {{
-    $exitCode = "running"
-    if ($proc -and $proc.HasExited) {{ $exitCode = $proc.ExitCode }}
-    $stderrTail = Get-StderrTail
-    $portState = Get-PortState
-    $msg = "Startup failed after $($serviceReadyTimeoutMs/1000)s. exit=$exitCode cmd=$startCmd stderr_log=$stderrLog stdout_log=$stdoutLog"
-    if ($stderrTail) {{ $msg += " stderr_tail: ``n$stderrTail" }}
-    if ($portState) {{ $msg += " port_state: ``n$portState" }}
-    Write-Log $msg
-    Update-Status "error" $msg
-    Start-BackupIfExists $bak
-  }}
-}} catch {{
-  $msg = "Start-Process failed: $($_.Exception.Message)"
-  Write-Log $msg
-  Update-Status "error" $msg
-  Start-BackupIfExists $bak
-  return
-}}
-
-try {{
-  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction Stop
-  Write-Log "Cleanup: script removed"
-}} catch {{
-  Write-Log "Cleanup failed: $($_.Exception.Message)"
-}}
-"""
-        script_path.write_text(ps, encoding='utf-8-sig')
-        helper_cmd = [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy", "Bypass",
-            "-File", str(script_path)
-        ]
-        try:
-            subprocess.Popen(helper_cmd, close_fds=True)
-            app.logger.info(
-                "Swap helper launched", extra={
-                    "script": str(script_path),
-                    "cmd": helper_cmd
-                }
-            )
-            return True
-        except Exception as exc:
-            app.logger.error("Swap helper launch failed: %s", exc, exc_info=True)
-            _save_update_status({
-                "status": "error",
-                "last_error": f"swap helper launch failed: {exc}",
-                "needs_swap": True,
-                "update_in_progress": False,
-            })
-            return False
-
-    should_exit = False
-    if executable_override and swap_target:
-        if _launch_with_swap(Path(executable_override), Path(swap_target)):
-            should_exit = True
-        else:
-            app.logger.error("Swap helper failed to launch; keeping current process alive")
-    elif executable_override:
-        args = [str(executable_override), str(port)]
-        subprocess.Popen(args, close_fds=True)
-        should_exit = True
-    elif getattr(sys, 'frozen', False):
-        args = [sys.executable, str(port)]
-        subprocess.Popen(args, close_fds=True)
-        should_exit = True
+    executable = sys.executable
+    if getattr(sys, 'frozen', False):
+        args = [executable, str(port)]
     else:
-        args = [sys.executable, __file__, str(port)]
-        subprocess.Popen(args, close_fds=True)
-        should_exit = True
-    if should_exit:
-        os._exit(0)
+        args = [executable, __file__, str(port)]
+    subprocess.Popen(args, close_fds=True)
+    os._exit(0)
 
 @app.route('/get_my_ip')
 def get_my_ip():
@@ -10033,8 +9485,6 @@ def amll_create_song():
 
 # Mount static directory at root to mirror Flask static_url_path=''
 app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
-
-start_auto_update_scheduler()
 
 # ===== AMLL CSV 导出功能 =====
 def norm_type(t):
@@ -11579,8 +11029,6 @@ if __name__ == '__main__':
             启动成功返回True，失败返回False
         """
         try:
-            global CURRENT_PORT
-            CURRENT_PORT = port
             # 启动时同步 port_status.json
             if port == 5000:
                 set_port_status('normal', 5000)
@@ -11604,6 +11052,9 @@ if __name__ == '__main__':
                 f.write(startup_cmd)
             with open(BASE_PATH / 'last_startup.txt', 'w', encoding='utf-8') as f:
                 f.write(startup_cmd)
+
+            launch_updater_sidecar(port)
+
             use_waitress = os.environ.get('USE_WAITRESS', '0') == '1'
             if use_waitress:
                 app.logger.info("USE_WAITRESS=1 detected; FastAPI will use uvicorn instead of waitress.")
