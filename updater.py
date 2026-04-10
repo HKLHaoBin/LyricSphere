@@ -256,6 +256,15 @@ def find_asset_url(release: dict[str, Any], asset_name: str) -> Optional[str]:
     return None
 
 
+def release_summary(release: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "latest_tag": str(release.get("tag_name") or ""),
+        "release_title": str(release.get("name") or ""),
+        "release_body": str(release.get("body") or ""),
+        "release_published_at": str(release.get("published_at") or ""),
+    }
+
+
 def download_to(url: str, output_path: Path, timeout: int = 60) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with requests.get(url, stream=True, timeout=timeout) as response:
@@ -910,11 +919,17 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
         {"repo": repo, "local_version": local_version},
     )
     release = github_latest_release(repo)
+    summary = release_summary(release)
     latest_tag = str(release.get("tag_name") or "")
 
     if not is_remote_newer(local_version, latest_tag):
         trace(ctx.work_dir, "release:no-update", repo=repo, local_version=local_version, latest_tag=latest_tag)
-        extra = {"repo": repo, "local_version": local_version, "latest_tag": latest_tag}
+        extra = {
+            "repo": repo,
+            "local_version": local_version,
+            "latest_tag": latest_tag,
+            **summary,
+        }
         write_phase_status(ctx.work_dir, "idle", "already up-to-date", "completed", extra)
         return {
             "state": "idle",
@@ -927,6 +942,17 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
     if not zip_url or not sha_url:
         raise RuntimeError("release assets are incomplete")
     trace(ctx.work_dir, "release:update-found", repo=repo, latest_tag=latest_tag)
+    write_phase_status(
+        ctx.work_dir,
+        "checking",
+        "new release found",
+        "checking",
+        {
+            "repo": repo,
+            "local_version": local_version,
+            **summary,
+        },
+    )
 
     with tempfile.TemporaryDirectory(prefix="famyliam-update-") as temp_dir:
         prepared = prepare_update(ctx, repo, latest_tag, zip_url, sha_url, Path(temp_dir))
@@ -936,7 +962,13 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
             apply_extra = apply_update(ctx, prepared)
         except Exception as exc:
             apply_error = exc
-        return finalize_or_rollback(ctx, prepared, apply_error, apply_extra)
+        result = finalize_or_rollback(ctx, prepared, apply_error, apply_extra)
+        extra = dict(result.get("extra") or {})
+        for key, value in summary.items():
+            if key not in extra:
+                extra[key] = value
+        result["extra"] = extra
+        return result
 
 
 def build_parser() -> argparse.ArgumentParser:

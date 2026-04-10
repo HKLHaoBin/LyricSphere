@@ -882,6 +882,8 @@ app.jinja_env.globals.update(url_for=url_for)
 _updater_started = False
 UPDATER_STATUS_FILE = BASE_PATH / '.updater.status.json'
 UPDATER_RUNTIME_FILE = BASE_PATH / '.updater.runtime.json'
+UPDATER_GITHUB_REPO = os.getenv('UPDATER_GITHUB_REPO', 'HKLHaoBin/LyricSphere')
+UPDATER_RELEASE_LATEST_API = 'https://api.github.com/repos/{repo}/releases/latest'
 
 
 def launch_updater_sidecar(port: int) -> None:
@@ -990,6 +992,75 @@ def api_runtime_version():
         'backend_pid': os.getpid(),
         'updater_status': updater_status,
     }
+
+
+def _parse_updater_release_summary(updater_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        'latest_tag': '',
+        'release_title': '',
+        'release_body': '',
+        'published_at': '',
+    }
+    if not isinstance(updater_status, dict):
+        return summary
+
+    extra = updater_status.get('extra') if isinstance(updater_status.get('extra'), dict) else {}
+    summary['latest_tag'] = str(
+        extra.get('latest_tag')
+        or updater_status.get('latest_tag')
+        or updater_status.get('tag')
+        or ''
+    )
+    summary['release_title'] = str(extra.get('release_title') or updater_status.get('release_title') or '')
+    summary['release_body'] = str(extra.get('release_body') or updater_status.get('release_body') or '')
+    summary['published_at'] = str(extra.get('release_published_at') or updater_status.get('published_at') or '')
+    return summary
+
+
+def _fetch_latest_release_notes(repo: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    api_url = UPDATER_RELEASE_LATEST_API.format(repo=repo)
+    headers = {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'Famyliam-Backend',
+    }
+    try:
+        response = requests.get(api_url, headers=headers, timeout=8)
+        response.raise_for_status()
+        payload = response.json()
+        return {
+            'latest_tag': str(payload.get('tag_name') or ''),
+            'release_title': str(payload.get('name') or ''),
+            'release_body': str(payload.get('body') or ''),
+            'published_at': str(payload.get('published_at') or ''),
+        }, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+@app.route('/api/runtime/release-notes', methods=['GET'])
+def api_runtime_release_notes():
+    repo = str(request.args.get('repo') or UPDATER_GITHUB_REPO)
+    updater_status = None
+    if UPDATER_STATUS_FILE.exists():
+        try:
+            updater_status = json.loads(UPDATER_STATUS_FILE.read_text(encoding='utf-8'))
+        except Exception:
+            updater_status = None
+
+    cached = _parse_updater_release_summary(updater_status)
+    remote, remote_error = _fetch_latest_release_notes(repo)
+    release_info = remote if remote else cached
+
+    return jsonify({
+        'current_version': APP_VERSION,
+        'repo': repo,
+        'latest_tag': release_info.get('latest_tag', ''),
+        'release_title': release_info.get('release_title', ''),
+        'release_body': release_info.get('release_body', ''),
+        'published_at': release_info.get('published_at', ''),
+        'source': 'github' if remote else 'updater_status',
+        'remote_error': remote_error if remote_error else '',
+    })
 
 
 def render_template(template_name: str, **context: Any) -> HTMLResponse:
@@ -2885,6 +2956,21 @@ def index_html_alias():
 def get_lyric_sphere_v2_dist_dir() -> Path:
     """Return the dist directory for the LyricSphere v2 frontend build."""
     return BASE_PATH / 'templates' / 'lyric-sphere-v2' / 'dist'
+
+
+@app.route('/update-screen')
+@app.route('/update-screen/')
+def update_screen_frontend():
+    """Serve the standalone browser resource update screen."""
+    dist_dir = get_lyric_sphere_v2_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({'status': 'error', 'message': 'LyricSphere v2 dist not found. Please run npm run build.'}), 404
+
+    update_screen_file = dist_dir / 'update-screen.html'
+    if not update_screen_file.exists():
+        return jsonify({'status': 'error', 'message': 'Update screen build not found. Please run npm run build.'}), 404
+
+    return send_from_directory(dist_dir, 'update-screen.html')
 
 
 @app.route('/lyric-sphere-v2')
