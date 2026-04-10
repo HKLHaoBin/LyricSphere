@@ -888,6 +888,10 @@ UPDATER_RELEASE_LATEST_API = 'https://api.github.com/repos/{repo}/releases/lates
 
 def launch_updater_sidecar(port: int) -> None:
     global _updater_started
+    if not getattr(sys, 'frozen', False):
+        app.logger.info('Source mode detected; built-in updater is disabled. Please update via git.')
+        return
+
     backend_pid = os.getpid()
     backend_mode = 'exe' if getattr(sys, 'frozen', False) else 'python'
     backend_executable_path = str(Path(sys.executable).resolve()) if backend_mode == 'exe' else ''
@@ -11160,7 +11164,10 @@ if __name__ == '__main__':
             with open(BASE_PATH / 'last_startup.txt', 'w', encoding='utf-8') as f:
                 f.write(startup_cmd)
 
-            launch_updater_sidecar(port)
+            if getattr(sys, 'frozen', False):
+                launch_updater_sidecar(port)
+            else:
+                app.logger.info('Source mode startup: skip updater sidecar launch.')
 
             use_waitress = os.environ.get('USE_WAITRESS', '0') == '1'
             if use_waitress:
