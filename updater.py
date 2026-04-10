@@ -86,10 +86,27 @@ def is_remote_newer(local_version: str, remote_tag: str) -> bool:
 def is_pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            proc = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode == 0:
+                output = (proc.stdout or "").strip()
+                if not output:
+                    return False
+                lowered = output.lower()
+                if "no tasks are running" in lowered:
+                    return False
+                return str(pid) in output
+        except Exception:
+            pass
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except Exception:
         return False
 
 
@@ -215,14 +232,29 @@ def backup_targets(work_dir: Path, backup_dir: Path) -> None:
             shutil.copytree(src, dst, dirs_exist_ok=True)
 
 
-def stop_backend_process(pid: int, wait_seconds: int = 25) -> bool:
+def stop_backend_process(pid: int, wait_seconds: int = 25, work_dir: Optional[Path] = None) -> bool:
     if pid <= 0:
         return True
-    if not is_pid_running(pid):
+
+    def _trace(stage: str, **extra: Any) -> None:
+        if work_dir is not None:
+            trace(work_dir, stage, **extra)
+
+    pid_running = is_pid_running(pid)
+    _trace("backend:pid-check", pid=pid, pid_running=pid_running)
+    if not pid_running:
         return True
 
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True)
+        _trace("backend:taskkill:start", pid=pid)
+        taskkill_result = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True)
+        _trace(
+            "backend:taskkill:result",
+            pid=pid,
+            returncode=taskkill_result.returncode,
+            stdout=(taskkill_result.stdout or "").strip(),
+            stderr=(taskkill_result.stderr or "").strip(),
+        )
     else:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -476,7 +508,7 @@ def run_update_once(ctx: RuntimeContext, repo: str) -> dict[str, Any]:
 
         trace(ctx.work_dir, "backend:stopping", backend_pid=ctx.backend_pid)
         write_status(ctx.work_dir, "stopping", "stopping current backend process", {"repo": repo, "backend_pid": ctx.backend_pid})
-        stop_ok = stop_backend_process(ctx.backend_pid)
+        stop_ok = stop_backend_process(ctx.backend_pid, work_dir=ctx.work_dir)
         trace(ctx.work_dir, "backend:stopped", backend_pid=ctx.backend_pid, stop_ok=stop_ok)
         if not stop_ok:
             raise RuntimeError("failed to stop backend process")
