@@ -2544,6 +2544,14 @@
                                     <span style="color: var(--text-primary);">去括号预处理</span>
                                 </label>
                                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbExperimentalFullLineBracketStrip" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">实验性：仅去除整句外层括号</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="batchWbExperimentalBracketLineAsSubline" onchange="syncBatchWbSettingsSummary()">
+                                    <span style="color: var(--text-primary);">实验性：整句括号并入上一句</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                                     <input type="checkbox" id="batchWbThinkingEnabled" onchange="syncBatchWbSettingsSummary()">
                                     <span style="color: var(--text-primary);">启用思考模式</span>
                                 </label>
@@ -3204,6 +3212,16 @@
                 <div>
                     <label>
                         <input type="checkbox" id="aiStripBrackets"> 预处理歌词时去掉括号
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExperimentalFullLineBracketStrip"> 实验性：仅去除整句外层括号
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExperimentalBracketLineAsSubline"> 实验性：整句括号行并入上一句作为从句
                     </label>
                 </div>
                 <div>
@@ -3904,6 +3922,8 @@
                   settingsNote: document.getElementById('batchWbSettingsNote'),
                   compatModeCheck: document.getElementById('batchWbCompatMode'),
                   stripBracketsCheck: document.getElementById('batchWbStripBrackets'),
+                  experimentalFullLineBracketStripCheck: document.getElementById('batchWbExperimentalFullLineBracketStrip'),
+                  experimentalBracketLineAsSublineCheck: document.getElementById('batchWbExperimentalBracketLineAsSubline'),
                   thinkingEnabledCheck: document.getElementById('batchWbThinkingEnabled'),
                  expectReasoningCheck: document.getElementById('batchWbExpectReasoning'),
                  onlyEmptyCheck: document.getElementById('batchWbOnlyEmpty'),
@@ -4037,7 +4057,9 @@
                     system_prompt: settings.systemPrompt,
                     expect_reasoning: settings.expectReasoning,
                     compat_mode: settings.compatMode,
-                    strip_brackets: settings.stripBrackets
+                    strip_brackets: settings.stripBrackets,
+                    experimental_full_line_bracket_strip: settings.experimentalFullLineBracketStrip,
+                    experimental_bracket_line_as_subline: settings.experimentalBracketLineAsSubline
                 },
                 thinking: {
                     enabled: settings.thinkingEnabled,
@@ -4066,7 +4088,9 @@
                     system_prompt: preset?.translation?.system_prompt || '',
                     expect_reasoning: Boolean(preset?.translation?.expect_reasoning),
                     compat_mode: Boolean(preset?.translation?.compat_mode),
-                    strip_brackets: Boolean(preset?.translation?.strip_brackets)
+                    strip_brackets: Boolean(preset?.translation?.strip_brackets),
+                    experimental_full_line_bracket_strip: Boolean(preset?.translation?.experimental_full_line_bracket_strip),
+                    experimental_bracket_line_as_subline: Boolean(preset?.translation?.experimental_bracket_line_as_subline)
                 },
                 thinking: {
                     enabled: preset?.thinking?.enabled !== undefined ? Boolean(preset.thinking.enabled) : true,
@@ -4095,7 +4119,9 @@
                     system_prompt: state?.translation?.system_prompt || '',
                     expect_reasoning: Boolean(state?.translation?.expect_reasoning),
                     compat_mode: Boolean(state?.translation?.compat_mode),
-                    strip_brackets: Boolean(state?.translation?.strip_brackets)
+                    strip_brackets: Boolean(state?.translation?.strip_brackets),
+                    experimental_full_line_bracket_strip: Boolean(state?.translation?.experimental_full_line_bracket_strip),
+                    experimental_bracket_line_as_subline: Boolean(state?.translation?.experimental_bracket_line_as_subline)
                 },
                 thinking: {
                     enabled: state?.thinking?.enabled !== undefined ? Boolean(state.thinking.enabled) : true
@@ -4160,6 +4186,8 @@
             if (controls.aiKey) controls.aiKey.value = state.translation.api_key
             if (controls.compatModeCheck) controls.compatModeCheck.checked = state.translation.compat_mode
             if (controls.stripBracketsCheck) controls.stripBracketsCheck.checked = state.translation.strip_brackets
+            if (controls.experimentalFullLineBracketStripCheck) controls.experimentalFullLineBracketStripCheck.checked = state.translation.experimental_full_line_bracket_strip
+            if (controls.experimentalBracketLineAsSublineCheck) controls.experimentalBracketLineAsSublineCheck.checked = state.translation.experimental_bracket_line_as_subline
             if (controls.thinkingEnabledCheck) controls.thinkingEnabledCheck.checked = state.thinking.enabled
             if (controls.expectReasoningCheck) controls.expectReasoningCheck.checked = state.translation.expect_reasoning
             if (controls.systemPrompt) controls.systemPrompt.value = state.translation.system_prompt
@@ -4801,6 +4829,8 @@
                 expectReasoning: controls.expectReasoningCheck ? controls.expectReasoningCheck.checked : (localStorage.getItem('aiExpectReasoning') === 'true'),
                 compatMode: controls.compatModeCheck ? controls.compatModeCheck.checked : (localStorage.getItem('aiCompatMode') === 'true'),
                 stripBrackets: controls.stripBracketsCheck ? controls.stripBracketsCheck.checked : (localStorage.getItem('aiStripBrackets') === 'true'),
+                experimentalFullLineBracketStrip: controls.experimentalFullLineBracketStripCheck ? controls.experimentalFullLineBracketStripCheck.checked : (localStorage.getItem('aiExperimentalFullLineBracketStrip') === 'true'),
+                experimentalBracketLineAsSubline: controls.experimentalBracketLineAsSublineCheck ? controls.experimentalBracketLineAsSublineCheck.checked : (localStorage.getItem('aiExperimentalBracketLineAsSubline') === 'true'),
                 thinkingEnabled: controls.thinkingEnabledCheck ? controls.thinkingEnabledCheck.checked : (localStorage.getItem('aiThinkingEnabled') !== 'false'),
                 autoSave: controls.autoSave ? controls.autoSave.checked : true,
                 onlyEmpty: controls.onlyEmptyCheck ? controls.onlyEmptyCheck.checked : true,
@@ -4828,6 +4858,8 @@
             if (controls.expectReasoningCheck) controls.expectReasoningCheck.checked = activePreset ? sourceState.translation.expect_reasoning : (localStorage.getItem('aiExpectReasoning') !== null ? localStorage.getItem('aiExpectReasoning') === 'true' : (document.getElementById('aiExpectReasoning')?.checked ?? true))
             if (controls.compatModeCheck) controls.compatModeCheck.checked = activePreset ? sourceState.translation.compat_mode : (localStorage.getItem('aiCompatMode') !== null ? localStorage.getItem('aiCompatMode') === 'true' : (document.getElementById('aiCompatMode')?.checked ?? false))
             if (controls.stripBracketsCheck) controls.stripBracketsCheck.checked = activePreset ? sourceState.translation.strip_brackets : (localStorage.getItem('aiStripBrackets') !== null ? localStorage.getItem('aiStripBrackets') === 'true' : (document.getElementById('aiStripBrackets')?.checked ?? false))
+            if (controls.experimentalFullLineBracketStripCheck) controls.experimentalFullLineBracketStripCheck.checked = activePreset ? sourceState.translation.experimental_full_line_bracket_strip : (localStorage.getItem('aiExperimentalFullLineBracketStrip') !== null ? localStorage.getItem('aiExperimentalFullLineBracketStrip') === 'true' : (document.getElementById('aiExperimentalFullLineBracketStrip')?.checked ?? false))
+            if (controls.experimentalBracketLineAsSublineCheck) controls.experimentalBracketLineAsSublineCheck.checked = activePreset ? sourceState.translation.experimental_bracket_line_as_subline : (localStorage.getItem('aiExperimentalBracketLineAsSubline') !== null ? localStorage.getItem('aiExperimentalBracketLineAsSubline') === 'true' : (document.getElementById('aiExperimentalBracketLineAsSubline')?.checked ?? false))
             if (controls.thinkingEnabledCheck) controls.thinkingEnabledCheck.checked = activePreset ? sourceState.thinking.enabled : (localStorage.getItem('aiThinkingEnabled') !== null ? localStorage.getItem('aiThinkingEnabled') === 'true' : (document.getElementById('aiThinkingEnabled')?.checked ?? true))
             if (controls.autoSave) controls.autoSave.checked = activePreset ? sourceState.batch.auto_save : localStorage.getItem('batchWorkbenchAutoSave') !== 'false'
             if (controls.onlyEmptyCheck) controls.onlyEmptyCheck.checked = activePreset ? sourceState.batch.only_empty : localStorage.getItem('batchWorkbenchOnlyEmpty') !== 'false'
@@ -4871,6 +4903,8 @@
             localStorage.setItem('aiExpectReasoning', String(settings.expectReasoning))
             localStorage.setItem('aiCompatMode', String(settings.compatMode))
             localStorage.setItem('aiStripBrackets', String(settings.stripBrackets))
+            localStorage.setItem('aiExperimentalFullLineBracketStrip', String(settings.experimentalFullLineBracketStrip))
+            localStorage.setItem('aiExperimentalBracketLineAsSubline', String(settings.experimentalBracketLineAsSubline))
             localStorage.setItem('aiThinkingEnabled', String(settings.thinkingEnabled))
             localStorage.setItem('batchWorkbenchAutoSave', String(settings.autoSave))
             localStorage.setItem('batchWorkbenchOnlyEmpty', String(settings.onlyEmpty))
@@ -4894,6 +4928,8 @@
                 expectReasoning: document.getElementById('aiExpectReasoning'),
                 compatMode: document.getElementById('aiCompatMode'),
                 stripBrackets: document.getElementById('aiStripBrackets'),
+                experimentalFullLineBracketStrip: document.getElementById('aiExperimentalFullLineBracketStrip'),
+                experimentalBracketLineAsSubline: document.getElementById('aiExperimentalBracketLineAsSubline'),
                 thinkingEnabled: document.getElementById('aiThinkingEnabled'),
                 systemPrompt: document.getElementById('aiSystemPrompt')
             }
@@ -4904,6 +4940,8 @@
             if (mainControls.expectReasoning) mainControls.expectReasoning.checked = settings.expectReasoning
             if (mainControls.compatMode) mainControls.compatMode.checked = settings.compatMode
             if (mainControls.stripBrackets) mainControls.stripBrackets.checked = settings.stripBrackets
+            if (mainControls.experimentalFullLineBracketStrip) mainControls.experimentalFullLineBracketStrip.checked = settings.experimentalFullLineBracketStrip
+            if (mainControls.experimentalBracketLineAsSubline) mainControls.experimentalBracketLineAsSubline.checked = settings.experimentalBracketLineAsSubline
             if (mainControls.thinkingEnabled) mainControls.thinkingEnabled.checked = settings.thinkingEnabled
             if (mainControls.systemPrompt) mainControls.systemPrompt.value = settings.systemPrompt
 
@@ -4931,6 +4969,8 @@
                         && settings.apiKey === (localStorage.getItem('aiApiKey') || '')
                         && settings.compatMode === (localStorage.getItem('aiCompatMode') === 'true')
                         && settings.stripBrackets === (localStorage.getItem('aiStripBrackets') === 'true')
+                        && settings.experimentalFullLineBracketStrip === (localStorage.getItem('aiExperimentalFullLineBracketStrip') === 'true')
+                        && settings.experimentalBracketLineAsSubline === (localStorage.getItem('aiExperimentalBracketLineAsSubline') === 'true')
                         && settings.thinkingEnabled === (localStorage.getItem('aiThinkingEnabled') !== 'false')
                         && settings.autoSave === (localStorage.getItem('batchWorkbenchAutoSave') !== 'false')
                         && settings.onlyEmpty === (localStorage.getItem('batchWorkbenchOnlyEmpty') !== 'false')
@@ -4953,7 +4993,9 @@
                             system_prompt: localStorage.getItem('aiSystemPrompt') || '',
                             expect_reasoning: localStorage.getItem('aiExpectReasoning') === 'true',
                             compat_mode: localStorage.getItem('aiCompatMode') === 'true',
-                            strip_brackets: localStorage.getItem('aiStripBrackets') === 'true'
+                            strip_brackets: localStorage.getItem('aiStripBrackets') === 'true',
+                            experimental_full_line_bracket_strip: localStorage.getItem('aiExperimentalFullLineBracketStrip') === 'true',
+                            experimental_bracket_line_as_subline: localStorage.getItem('aiExperimentalBracketLineAsSubline') === 'true'
                         },
                         thinking: {
                             enabled: localStorage.getItem('aiThinkingEnabled') !== 'false'
@@ -5005,7 +5047,7 @@
         function captureAISettingsSnapshot() {
             const keys = [
                 'aiApiKey', 'aiSystemPrompt', 'aiProvider', 'aiBaseUrl', 'aiModel',
-                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiThinkingEnabled',
+                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiExperimentalFullLineBracketStrip', 'aiExperimentalBracketLineAsSubline', 'aiThinkingEnabled',
                 'aiThinkingApiKey', 'aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel',
                 'aiThinkingPrompt', 'batchWorkbenchAutoSave', 'batchWorkbenchOnlyEmpty',
                 'batchWorkbenchAlwaysOverride', 'batchExtraPrompt'
@@ -5016,7 +5058,7 @@
             })
             const ids = [
                 'aiApiKey', 'aiSystemPrompt', 'aiProvider', 'aiBaseUrl', 'aiModel',
-                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiThinkingEnabled',
+                'aiExpectReasoning', 'aiCompatMode', 'aiStripBrackets', 'aiExperimentalFullLineBracketStrip', 'aiExperimentalBracketLineAsSubline', 'aiThinkingEnabled',
                 'aiThinkingApiKey', 'aiThinkingProvider', 'aiThinkingBaseUrl', 'aiThinkingModel',
                 'aiThinkingPrompt', 'batchExtraPrompt'
             ]
@@ -6262,6 +6304,8 @@
                 const expectReasoning = Boolean(settings.expectReasoning)
                 const compatMode = Boolean(settings.compatMode)
                 const stripBrackets = Boolean(settings.stripBrackets)
+                const experimentalFullLineBracketStrip = Boolean(settings.experimentalFullLineBracketStrip)
+                const experimentalBracketLineAsSubline = Boolean(settings.experimentalBracketLineAsSubline)
                 const thinkingEnabled = Boolean(settings.thinkingEnabled)
 
                 const basePrompt = settings.systemPrompt || ''
@@ -6443,7 +6487,9 @@
                         expect_reasoning: expectReasoning,
                         compat_mode: compatMode,
                         thinking_enabled: thinkingEnabled,
-                        strip_brackets: stripBrackets
+                        strip_brackets: stripBrackets,
+                        experimental_full_line_bracket_strip: experimentalFullLineBracketStrip,
+                        experimental_bracket_line_as_subline: experimentalBracketLineAsSubline
                     })
                 })
 
@@ -6835,7 +6881,7 @@
                 syncBatchWbHeaderSummary()
                 renderBatchWorkbenchSummary()
             }
-            ;['aiProvider', 'aiBaseUrl', 'aiModel', 'aiKey', 'expectReasoningCheck', 'compatModeCheck', 'stripBracketsCheck', 'thinkingEnabledCheck', 'autoSave', 'onlyEmptyCheck', 'systemPrompt', 'extraPrompt'].forEach(key => {
+            ;['aiProvider', 'aiBaseUrl', 'aiModel', 'aiKey', 'expectReasoningCheck', 'compatModeCheck', 'stripBracketsCheck', 'experimentalFullLineBracketStripCheck', 'experimentalBracketLineAsSublineCheck', 'thinkingEnabledCheck', 'autoSave', 'onlyEmptyCheck', 'systemPrompt', 'extraPrompt'].forEach(key => {
                 const el = wbControls[key]
                 if (!el) return
                 const evt = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'radio') ? 'input' : 'change'
@@ -8966,25 +9012,101 @@
                 .trim();
         }
 
-        function preprocessLyricsLinesForPrompt(rawContent = '', stripBracketsEnabled = false) {
+        function isFullyWrappedByOuterBrackets(text = '') {
+            const stripped = String(text || '').trim();
+            if (stripped.length < 2) {
+                return false;
+            }
+            const pairMap = { '(': ')', '（': '）' };
+            const opening = stripped[0];
+            const closing = pairMap[opening];
+            if (!closing || stripped[stripped.length - 1] !== closing) {
+                return false;
+            }
+            let depth = 0;
+            for (let i = 0; i < stripped.length; i += 1) {
+                const ch = stripped[i];
+                if (ch === opening) {
+                    depth += 1;
+                } else if (ch === closing) {
+                    depth -= 1;
+                    if (depth < 0) {
+                        return false;
+                    }
+                    if (depth === 0 && i !== stripped.length - 1) {
+                        return false;
+                    }
+                }
+            }
+            if (depth !== 0) {
+                return false;
+            }
+            return stripped.slice(1, -1).trim().length > 0;
+        }
+
+        function stripOuterBracketsIfFullLine(text = '') {
+            const stripped = String(text || '').trim();
+            if (!isFullyWrappedByOuterBrackets(stripped)) {
+                return stripped;
+            }
+            return stripped.slice(1, -1).trim();
+        }
+
+        function preprocessLyricsLinesForPrompt(
+            rawContent = '',
+            stripBracketsEnabled = false,
+            experimentalFullLineBracketStrip = false,
+            experimentalBracketLineAsSubline = false
+        ) {
             const lines = (rawContent || '').split('\n');
-            const cleaned = [];
+            const structured = [];
+            let mainIndex = 0;
+            let activeMainIndex = 0;
+            const sublineCounter = new Map();
             for (const line of lines) {
-                let text = line.replace(/\[.*?\]/g, '');
-                // 只去掉时间戳格式的括号内容 (数字,数字)，保留其他括号内容如(20)
+                const rawLine = String(line ?? '');
+                const tagMatch = rawLine.match(/^\s*\[(\d+)\]/);
+                const lineTag = tagMatch ? tagMatch[1] : '';
+                const isTagSublineCandidate = lineTag === '6' || lineTag === '7' || lineTag === '8';
+                let text = rawLine.replace(/\[.*?\]/g, '');
                 text = text.replace(/\(\d+,\d+\)/g, '');
                 text = text.trim();
                 if (!text) {
                     continue;
                 }
+                const isFullLineBracket = isFullyWrappedByOuterBrackets(text);
                 if (stripBracketsEnabled) {
                     text = stripBracketCharacters(text);
                 }
+                if (isFullLineBracket && (experimentalFullLineBracketStrip || experimentalBracketLineAsSubline)) {
+                    text = stripOuterBracketsIfFullLine(text);
+                }
                 if (text) {
-                    cleaned.push(text);
+                    let isSubline = false;
+                    let subIndex = 0;
+                    let currentMainIndex;
+                    const isSublineCandidate = isFullLineBracket || isTagSublineCandidate;
+                    if (experimentalBracketLineAsSubline && isSublineCandidate && activeMainIndex > 0) {
+                        isSubline = true;
+                        currentMainIndex = activeMainIndex;
+                        subIndex = (sublineCounter.get(currentMainIndex) || 0) + 1;
+                        sublineCounter.set(currentMainIndex, subIndex);
+                    } else {
+                        mainIndex += 1;
+                        activeMainIndex = mainIndex;
+                        currentMainIndex = mainIndex;
+                    }
+                    const displayIndex = isSubline ? `${currentMainIndex}_${subIndex}` : String(currentMainIndex);
+                    structured.push({
+                        display_index: displayIndex,
+                        text,
+                        parent_index: isSubline ? String(currentMainIndex) : '',
+                        is_subline: isSubline,
+                        is_full_line_bracket: isFullLineBracket
+                    });
                 }
             }
-            return cleaned;
+            return structured;
         }
 
         function setCurrentFileNameAsLyrics() {
@@ -9111,7 +9233,7 @@
                     const rawTranslation = translationEditor.value || '';
                     const translationLines = rawTranslation
                         .split(/\r?\n/)
-                        .map(line => line.replace(/^\s*\d+[\.、．:：]?\s*/, '').trim())
+                        .map(line => line.replace(/^\s*\d+(?:_\d+)?[\.、．:：]?\s*/, '').trim())
                         .filter(line => line.length > 0);
 
                     if (translationLines.length === data.timestamps.length && translationLines.length > 0) {
@@ -9542,6 +9664,10 @@
                 const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
                 const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
                 const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
+                const experimentalFullLineBracketStripStored = localStorage.getItem('aiExperimentalFullLineBracketStrip');
+                const experimentalBracketLineAsSublineStored = localStorage.getItem('aiExperimentalBracketLineAsSubline');
+                const experimentalFullLineBracketStrip = experimentalFullLineBracketStripStored ? experimentalFullLineBracketStripStored === 'true' : false;
+                const experimentalBracketLineAsSubline = experimentalBracketLineAsSublineStored ? experimentalBracketLineAsSublineStored === 'true' : false;
 
                 // 获取并追加附加提示词
                 const extraTranslationPrompt = getExtraTranslationPrompt();
@@ -9606,7 +9732,9 @@
                         thinking_base_url: thinkingBaseUrl,
                         thinking_model: thinkingModel,
                         thinking_system_prompt: finalThinkingPrompt,
-                        strip_brackets: stripBrackets
+                        strip_brackets: stripBrackets,
+                        experimental_full_line_bracket_strip: experimentalFullLineBracketStrip,
+                        experimental_bracket_line_as_subline: experimentalBracketLineAsSubline
                     })
                 });
 
@@ -9873,15 +10001,25 @@
                 }
 
                 const stripBracketsStored = localStorage.getItem('aiStripBrackets');
+                const experimentalFullLineBracketStripStored = localStorage.getItem('aiExperimentalFullLineBracketStrip');
+                const experimentalBracketLineAsSublineStored = localStorage.getItem('aiExperimentalBracketLineAsSubline');
                 const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
-                const processedLines = preprocessLyricsLinesForPrompt(processedLyricsContent, stripBrackets);
+                const experimentalFullLineBracketStrip = experimentalFullLineBracketStripStored ? experimentalFullLineBracketStripStored === 'true' : false;
+                const experimentalBracketLineAsSubline = experimentalBracketLineAsSublineStored ? experimentalBracketLineAsSublineStored === 'true' : false;
+                const processedLines = preprocessLyricsLinesForPrompt(
+                    processedLyricsContent,
+                    stripBrackets,
+                    experimentalFullLineBracketStrip,
+                    experimentalBracketLineAsSubline
+                );
                 if (!processedLines.length) {
                     alert('未提取到可用歌词内容，请检查歌词格式');
                     resetButton();
                     return;
                 }
 
-                const numberedLyrics = processedLines.map((line, idx) => `${idx + 1}.${line}`).join('\n');
+                const numberedLyrics = processedLines.map(line => `${line.display_index}.${line.text}`).join('\n');
+                const hasSublines = processedLines.some(line => line.is_subline);
                 const thinkingBlock = lastThinkingSummary ? `歌曲理解：\n${lastThinkingSummary}` : '';
 
                 let systemPrompt = localStorage.getItem('aiSystemPrompt') || '';
@@ -9909,6 +10047,9 @@
                     if (thinkingEnabled) {
                         promptSections.push('请先完成思考阶段，再进行逐行翻译。');
                     }
+                    if (hasSublines) {
+                        promptSections.push('形如 N_1、N_2 的编号表示它们从属于主句 N。这些从句可能来自整句括号行，或来自原歌词中的 [6]、[7]、[8] 标签行。请保持这种主从关系输出，不要把子句改成新的主编号。');
+                    }
                     promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
                     finalPrompt = promptSections.filter(Boolean).join('\n\n');
                 } else {
@@ -9923,6 +10064,9 @@
                     }
                     if (thinkingEnabled) {
                         promptSections.push('请先完成思考阶段，再进行逐行翻译。');
+                    }
+                    if (hasSublines) {
+                        promptSections.push('形如 N_1、N_2 的编号表示它们从属于主句 N。这些从句可能来自整句括号行，或来自原歌词中的 [6]、[7]、[8] 标签行。请保持这种主从关系输出，不要把子句改成新的主编号。');
                     }
                     promptSections.push(`待翻译歌词：\n${numberedLyrics}`);
                     finalPrompt = promptSections.filter(Boolean).join('\n\n');
@@ -9958,6 +10102,8 @@
             const savedThinkingApiKey = localStorage.getItem('aiThinkingApiKey');
             const savedThinkingPrompt = localStorage.getItem('aiThinkingPrompt');
             const savedStripBrackets = localStorage.getItem('aiStripBrackets');
+            const savedExperimentalFullLineBracketStrip = localStorage.getItem('aiExperimentalFullLineBracketStrip');
+            const savedExperimentalBracketLineAsSubline = localStorage.getItem('aiExperimentalBracketLineAsSubline');
             const resolveStoredValue = (storedValue, fallbackValue) => {
                 if (storedValue !== null && storedValue !== undefined) {
                     return storedValue;
@@ -9974,6 +10120,12 @@
                         const backendStripBrackets = backendSettings.strip_brackets !== undefined
                             ? !!backendSettings.strip_brackets
                             : false;
+                        const backendExperimentalFullLineBracketStrip = backendSettings.experimental_full_line_bracket_strip !== undefined
+                            ? !!backendSettings.experimental_full_line_bracket_strip
+                            : false;
+                        const backendExperimentalBracketLineAsSubline = backendSettings.experimental_bracket_line_as_subline !== undefined
+                            ? !!backendSettings.experimental_bracket_line_as_subline
+                            : false;
                         const effectiveSettings = {
                             translation: {
                                 provider: resolveStoredValue(savedProvider, backendSettings.provider || 'deepseek'),
@@ -9989,7 +10141,13 @@
                                     : (backendSettings.compat_mode !== undefined ? backendSettings.compat_mode : false),
                                 strip_brackets: savedStripBrackets !== null
                                     ? savedStripBrackets === 'true'
-                                    : backendStripBrackets
+                                    : backendStripBrackets,
+                                experimental_full_line_bracket_strip: savedExperimentalFullLineBracketStrip !== null
+                                    ? savedExperimentalFullLineBracketStrip === 'true'
+                                    : backendExperimentalFullLineBracketStrip,
+                                experimental_bracket_line_as_subline: savedExperimentalBracketLineAsSubline !== null
+                                    ? savedExperimentalBracketLineAsSubline === 'true'
+                                    : backendExperimentalBracketLineAsSubline
                             },
                             thinking: {
                                 enabled: savedThinkingEnabled !== null
@@ -10071,7 +10229,9 @@
                     system_prompt: document.getElementById('aiSystemPrompt').value,
                     expect_reasoning: document.getElementById('aiExpectReasoning').checked,
                     compat_mode: document.getElementById('aiCompatMode').checked,
-                    strip_brackets: document.getElementById('aiStripBrackets').checked
+                    strip_brackets: document.getElementById('aiStripBrackets').checked,
+                    experimental_full_line_bracket_strip: document.getElementById('aiExperimentalFullLineBracketStrip').checked,
+                    experimental_bracket_line_as_subline: document.getElementById('aiExperimentalBracketLineAsSubline').checked
                 },
                 thinking: {
                     enabled: document.getElementById('aiThinkingEnabled').checked,
@@ -10095,6 +10255,8 @@
                 document.getElementById('aiExpectReasoning').checked = settings.translation.expect_reasoning || false;
                 document.getElementById('aiCompatMode').checked = settings.translation.compat_mode || false;
                 document.getElementById('aiStripBrackets').checked = settings.translation.strip_brackets || false;
+                document.getElementById('aiExperimentalFullLineBracketStrip').checked = settings.translation.experimental_full_line_bracket_strip || false;
+                document.getElementById('aiExperimentalBracketLineAsSubline').checked = settings.translation.experimental_bracket_line_as_subline || false;
             }
             if (settings.thinking) {
                 document.getElementById('aiThinkingEnabled').checked = settings.thinking.enabled !== undefined ? settings.thinking.enabled : true;
@@ -10130,6 +10292,8 @@
             localStorage.setItem('aiExpectReasoning', translation.expect_reasoning);
             localStorage.setItem('aiCompatMode', translation.compat_mode);
             localStorage.setItem('aiStripBrackets', translation.strip_brackets);
+            localStorage.setItem('aiExperimentalFullLineBracketStrip', translation.experimental_full_line_bracket_strip);
+            localStorage.setItem('aiExperimentalBracketLineAsSubline', translation.experimental_bracket_line_as_subline);
 
             localStorage.setItem('aiThinkingEnabled', thinking.enabled);
             localStorage.setItem('aiThinkingProvider', thinking.provider);
@@ -10166,7 +10330,9 @@
                     system_prompt: localStorage.getItem('aiSystemPrompt') || '',
                     expect_reasoning: localStorage.getItem('aiExpectReasoning') === 'true',
                     compat_mode: localStorage.getItem('aiCompatMode') === 'true',
-                    strip_brackets: localStorage.getItem('aiStripBrackets') === 'true'
+                    strip_brackets: localStorage.getItem('aiStripBrackets') === 'true',
+                    experimental_full_line_bracket_strip: localStorage.getItem('aiExperimentalFullLineBracketStrip') === 'true',
+                    experimental_bracket_line_as_subline: localStorage.getItem('aiExperimentalBracketLineAsSubline') === 'true'
                 },
                 thinking: {
                     enabled: localStorage.getItem('aiThinkingEnabled') !== 'false',
@@ -10740,6 +10906,8 @@
             const expectReasoning = document.getElementById('aiExpectReasoning').checked;
             const compatMode = document.getElementById('aiCompatMode').checked;
             const stripBrackets = document.getElementById('aiStripBrackets').checked;
+            const experimentalFullLineBracketStrip = document.getElementById('aiExperimentalFullLineBracketStrip').checked;
+            const experimentalBracketLineAsSubline = document.getElementById('aiExperimentalBracketLineAsSubline').checked;
             const thinkingEnabled = document.getElementById('aiThinkingEnabled').checked;
 
             const thinkingProvider = document.getElementById('aiThinkingProvider').value;
@@ -10769,6 +10937,8 @@
             localStorage.setItem('aiExpectReasoning', expectReasoning);
             localStorage.setItem('aiCompatMode', compatMode);
             localStorage.setItem('aiStripBrackets', stripBrackets);
+            localStorage.setItem('aiExperimentalFullLineBracketStrip', experimentalFullLineBracketStrip);
+            localStorage.setItem('aiExperimentalBracketLineAsSubline', experimentalBracketLineAsSubline);
             localStorage.setItem('aiThinkingEnabled', thinkingEnabled);
 
             if (thinkingApiKey) {
@@ -10810,7 +10980,9 @@
                             system_prompt: activePreset.translation?.system_prompt,
                             expect_reasoning: activePreset.translation?.expect_reasoning,
                             compat_mode: activePreset.translation?.compat_mode,
-                            strip_brackets: activePreset.translation?.strip_brackets
+                            strip_brackets: activePreset.translation?.strip_brackets,
+                            experimental_full_line_bracket_strip: activePreset.translation?.experimental_full_line_bracket_strip,
+                            experimental_bracket_line_as_subline: activePreset.translation?.experimental_bracket_line_as_subline
                         },
                         thinking: {
                             enabled: activePreset.thinking?.enabled,
@@ -10841,6 +11013,8 @@
                 model: model,
                 expect_reasoning: expectReasoning,
                 strip_brackets: stripBrackets,
+                experimental_full_line_bracket_strip: experimentalFullLineBracketStrip,
+                experimental_bracket_line_as_subline: experimentalBracketLineAsSubline,
                 compat_mode: compatMode,
                 thinking_enabled: thinkingEnabled,
                 thinking_api_key: thinkingApiKey,

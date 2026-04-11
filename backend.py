@@ -1995,6 +1995,8 @@ AI_TRANSLATION_SETTINGS = {
     'model': 'deepseek-reasoner',
     'expect_reasoning': True,
     'strip_brackets': False,
+    'experimental_full_line_bracket_strip': False,
+    'experimental_bracket_line_as_subline': False,
     'compat_mode': False,
     'thinking_enabled': True,
     'thinking_api_key': '',
@@ -2008,7 +2010,7 @@ AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
 
 BATCH_TRANSLATION_FIXED_PROMPT = '''批量翻译固定规则：
 1. 每个歌曲块必须先输出对应的 [ID:xxx]。
-2. 每个 [ID:] 下只输出该歌曲的逐行翻译，格式必须是 1. 翻译内容。
+2. 每个 [ID:] 下只输出该歌曲的逐行翻译，编号格式必须与输入保持一致（如 N. 翻译内容，或 N_M. 翻译内容）。
 3. 不要删除编号，不要合并不同歌曲，不要把多个 ID 混在一起。
 4. 只输出翻译结果，不要额外解释或说明。'''
 
@@ -2110,6 +2112,11 @@ NUMERIC_TAG_REGEX = re.compile(r'\(\d+,\d+\)')
 BRACKET_CHARACTERS = '()（）[]【】'
 BRACKET_TRANSLATION = str.maketrans('', '', BRACKET_CHARACTERS)
 BRACKET_ONLY_PATTERN = re.compile(rf'^[\s{re.escape(BRACKET_CHARACTERS)}]+$')
+OUTER_BRACKET_PAIRS = {
+    '(': ')',
+    '（': '）',
+}
+NUMBERED_TRANSLATION_LINE_PATTERN = re.compile(r'^\s*(\d+)(?:_(\d+))?\.(.*)$')
 FONT_FAMILY_META_REGEX = re.compile(r'^\[font-family:\s*([^\]]*)\s*\]$', re.IGNORECASE)
 
 SCRIPT_CHECKERS = {
@@ -2173,6 +2180,135 @@ def strip_bracket_blocks(content: str) -> str:
     cleaned = content.translate(BRACKET_TRANSLATION)
     cleaned = re.sub(r'\s{2,}', ' ', cleaned)
     return cleaned.strip()
+
+
+def is_fully_wrapped_by_outer_brackets(text: str) -> bool:
+    if not text:
+        return False
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return False
+    opening = stripped[0]
+    closing = OUTER_BRACKET_PAIRS.get(opening)
+    if not closing or stripped[-1] != closing:
+        return False
+
+    depth = 0
+    for idx, ch in enumerate(stripped):
+        if ch == opening:
+            depth += 1
+            continue
+        if ch == closing:
+            depth -= 1
+            if depth < 0:
+                return False
+            if depth == 0 and idx != len(stripped) - 1:
+                return False
+    if depth != 0:
+        return False
+    return bool(stripped[1:-1].strip())
+
+
+def strip_outer_brackets_if_full_line(text: str) -> str:
+    stripped = (text or '').strip()
+    if not is_fully_wrapped_by_outer_brackets(stripped):
+        return stripped
+    return stripped[1:-1].strip()
+
+
+def build_translation_prompt_lines(
+    entries: List[Dict[str, Any]],
+    strip_brackets: bool = False,
+    experimental_full_line_bracket_strip: bool = False,
+    experimental_bracket_line_as_subline: bool = False
+) -> List[Dict[str, Any]]:
+    prompt_lines: List[Dict[str, Any]] = []
+    main_index = 0
+    active_main_index = 0
+    subline_counters: Dict[int, int] = {}
+
+    for entry in entries:
+        source_line_no = int(entry.get('source_line_no') or 0)
+        raw_line = str(entry.get('raw_line') or '')
+        original_text = str(entry.get('text') or '')
+        normalized_text = original_text.strip()
+        line_tag = str(entry.get('line_tag') or '').strip()
+        is_tag_subline_candidate = line_tag in {'6', '7', '8'}
+        is_full_line_bracket = is_fully_wrapped_by_outer_brackets(normalized_text)
+
+        if strip_brackets:
+            normalized_text = strip_bracket_blocks(normalized_text)
+
+        should_strip_outer = experimental_full_line_bracket_strip or (
+            experimental_bracket_line_as_subline and is_full_line_bracket
+        )
+        if should_strip_outer and is_full_line_bracket:
+            normalized_text = strip_outer_brackets_if_full_line(normalized_text)
+
+        if not normalized_text:
+            continue
+
+        is_subline = False
+        current_main_index = 0
+        sub_index = 0
+        is_subline_candidate = is_full_line_bracket or is_tag_subline_candidate
+        if experimental_bracket_line_as_subline and is_subline_candidate and active_main_index > 0:
+            is_subline = True
+            current_main_index = active_main_index
+            sub_index = subline_counters.get(current_main_index, 0) + 1
+            subline_counters[current_main_index] = sub_index
+        else:
+            main_index += 1
+            active_main_index = main_index
+            current_main_index = main_index
+
+        display_index = f"{current_main_index}_{sub_index}" if is_subline else str(current_main_index)
+        prompt_lines.append({
+            'source_line_no': source_line_no,
+            'original_text': original_text,
+            'normalized_text': normalized_text,
+            'is_full_line_bracket': is_full_line_bracket,
+            'line_tag': line_tag,
+            'is_tag_subline_candidate': is_tag_subline_candidate,
+            'is_subline_candidate': is_subline_candidate,
+            'is_subline': is_subline,
+            'main_index': current_main_index,
+            'sub_index': sub_index,
+            'display_index': display_index,
+            'raw_line': raw_line,
+        })
+    return prompt_lines
+
+
+def build_subline_prompt_notice() -> str:
+    return (
+        '补充说明：\n'
+        '形如 N_1、N_2 的编号表示它们从属于主句 N。\n'
+        '这些从句可能来自整句括号行，或来自原歌词中的 [6]、[7]、[8] 标签行。\n'
+        '请保持这种主从关系输出，不要把子句改成新的主编号。\n'
+        '主句与从句仍需逐行对应翻译。'
+    )
+
+
+def parse_numbered_translation_line(line: str) -> Optional[Tuple[str, str]]:
+    if not line:
+        return None
+    match = NUMBERED_TRANSLATION_LINE_PATTERN.match(line.strip())
+    if not match:
+        return None
+    main_index = int(match.group(1))
+    if main_index <= 0:
+        return None
+    sub_raw = match.group(2)
+    if sub_raw:
+        sub_index = int(sub_raw)
+        if sub_index <= 0:
+            return None
+        display_index = f"{main_index}_{sub_index}"
+    else:
+        display_index = str(main_index)
+    content = match.group(3).strip()
+    return display_index, content
 
 
 def strip_timing_tags(content: str) -> str:
@@ -6938,15 +7074,27 @@ def extract_timestamps_from_content(lyrics_content: str) -> List[str]:
     return timestamps
 
 
-def extract_lyrics_from_content(lyrics_content: str) -> List[str]:
-    extracted_lyrics: List[str] = []
-    for line in (lyrics_content or '').split('\n'):
-        line_lyrics = re.sub(r'\[.*?\]', '', line)
+def extract_lyrics_entries_from_content(lyrics_content: str) -> List[Dict[str, Any]]:
+    extracted_entries: List[Dict[str, Any]] = []
+    for source_line_no, line in enumerate((lyrics_content or '').split('\n'), 1):
+        raw_line = str(line or '')
+        line_tag_match = re.match(r'^\s*\[(\d+)\]', raw_line)
+        line_tag = line_tag_match.group(1) if line_tag_match else ''
+        line_lyrics = re.sub(r'\[.*?\]', '', raw_line)
         line_lyrics = re.sub(r'\(\d+,\d+\)', '', line_lyrics)
         line_lyrics = line_lyrics.strip()
         if line_lyrics:
-            extracted_lyrics.append(line_lyrics)
-    return extracted_lyrics
+            extracted_entries.append({
+                'source_line_no': source_line_no,
+                'raw_line': raw_line,
+                'line_tag': line_tag,
+                'text': line_lyrics,
+            })
+    return extracted_entries
+
+
+def extract_lyrics_from_content(lyrics_content: str) -> List[str]:
+    return [entry['text'] for entry in extract_lyrics_entries_from_content(lyrics_content)]
 
 
 def has_timestamp_markers(content: str) -> bool:
@@ -6966,10 +7114,9 @@ def has_timestamp_markers(content: str) -> bool:
     )
 
 
-def parse_translations_by_id(raw_text: str) -> Dict[str, Dict[int, str]]:
+def parse_translations_by_id(raw_text: str) -> Dict[str, Dict[str, str]]:
     id_pattern = re.compile(r'^\s*\[ID:(.+?)\]\s*$')
-    line_pattern = re.compile(r'^\s*(\d+)\.(.*)$')
-    grouped: Dict[str, Dict[int, str]] = {}
+    grouped: Dict[str, Dict[str, str]] = {}
     current_id: Optional[str] = None
     for raw_line in (raw_text or '').splitlines():
         line = raw_line.strip()
@@ -6982,13 +7129,11 @@ def parse_translations_by_id(raw_text: str) -> Dict[str, Dict[int, str]]:
             continue
         if current_id is None:
             continue
-        line_match = line_pattern.match(line)
-        if not line_match:
+        parsed_line = parse_numbered_translation_line(line)
+        if not parsed_line:
             continue
-        idx = int(line_match.group(1)) - 1
-        if idx < 0:
-            continue
-        grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+        display_index, text = parsed_line
+        grouped.setdefault(current_id, {})[display_index] = text
     return grouped
 
 
@@ -7030,6 +7175,10 @@ def get_ai_settings():
         AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
     if 'strip_brackets' not in AI_TRANSLATION_SETTINGS:
         AI_TRANSLATION_SETTINGS['strip_brackets'] = AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)
+    if 'experimental_full_line_bracket_strip' not in AI_TRANSLATION_SETTINGS:
+        AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'] = AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)
+    if 'experimental_bracket_line_as_subline' not in AI_TRANSLATION_SETTINGS:
+        AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'] = AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)
     return jsonify({
         'status': 'success',
         'settings': AI_TRANSLATION_SETTINGS,
@@ -7037,6 +7186,8 @@ def get_ai_settings():
             'system_prompt': AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
             'thinking_system_prompt': AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
             'strip_brackets': AI_TRANSLATION_DEFAULTS.get('strip_brackets', False),
+            'experimental_full_line_bracket_strip': AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False),
+            'experimental_bracket_line_as_subline': AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False),
             'batch_fixed_prompt': BATCH_TRANSLATION_FIXED_PROMPT
         }
     })
@@ -7063,6 +7214,20 @@ def save_ai_settings():
             data.get('strip_brackets'),
             AI_TRANSLATION_SETTINGS.get('strip_brackets', AI_TRANSLATION_DEFAULTS.get('strip_brackets', False))
         )
+        AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'] = parse_bool(
+            data.get('experimental_full_line_bracket_strip'),
+            AI_TRANSLATION_SETTINGS.get(
+                'experimental_full_line_bracket_strip',
+                AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)
+            )
+        )
+        AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'] = parse_bool(
+            data.get('experimental_bracket_line_as_subline'),
+            AI_TRANSLATION_SETTINGS.get(
+                'experimental_bracket_line_as_subline',
+                AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)
+            )
+        )
         AI_TRANSLATION_SETTINGS['compat_mode'] = parse_bool(data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
         AI_TRANSLATION_SETTINGS['thinking_enabled'] = parse_bool(data.get('thinking_enabled'), AI_TRANSLATION_SETTINGS['thinking_enabled'])
         AI_TRANSLATION_SETTINGS['thinking_api_key'] = data.get('thinking_api_key', AI_TRANSLATION_SETTINGS['thinking_api_key'])
@@ -7084,6 +7249,8 @@ def save_ai_settings():
             'model': AI_TRANSLATION_SETTINGS['model'],
             'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning'],
             'strip_brackets': AI_TRANSLATION_SETTINGS['strip_brackets'],
+            'experimental_full_line_bracket_strip': AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'],
+            'experimental_bracket_line_as_subline': AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'],
             'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode'],
             'thinking_enabled': AI_TRANSLATION_SETTINGS['thinking_enabled'],
             'thinking_api_key': AI_TRANSLATION_SETTINGS['thinking_api_key'],
@@ -7196,6 +7363,14 @@ def translate_lyrics():
             request_data.get('strip_brackets'),
             AI_TRANSLATION_SETTINGS.get('strip_brackets', False)
         )
+        experimental_full_line_bracket_strip = parse_bool(
+            request_data.get('experimental_full_line_bracket_strip'),
+            AI_TRANSLATION_SETTINGS.get('experimental_full_line_bracket_strip', False)
+        )
+        experimental_bracket_line_as_subline = parse_bool(
+            request_data.get('experimental_bracket_line_as_subline'),
+            AI_TRANSLATION_SETTINGS.get('experimental_bracket_line_as_subline', False)
+        )
 
         compat_mode = parse_bool(request_data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
         thinking_enabled = parse_bool(
@@ -7243,6 +7418,12 @@ def translate_lyrics():
         app.logger.info(f"客户端: {client_ip}, User-Agent: {user_agent}")
         app.logger.info(f"原始歌词内容长度: {len(content)} 字符")
         app.logger.info(f"API密钥: {api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '****'}")
+        app.logger.info(
+            "预处理开关: strip_brackets=%s, experimental_full_line_bracket_strip=%s, experimental_bracket_line_as_subline=%s",
+            strip_brackets,
+            experimental_full_line_bracket_strip,
+            experimental_bracket_line_as_subline
+        )
 
         items = request_data.get('items')
         if isinstance(items, list) and items:
@@ -7254,12 +7435,11 @@ def translate_lyrics():
                 item_content = item.get('content', '')
                 if not isinstance(item_content, str):
                     item_content = str(item_content or '')
-                item_lyrics = extract_lyrics_from_content(item_content)
+                item_entries = extract_lyrics_entries_from_content(item_content)
+                item_lyrics = [entry['text'] for entry in item_entries]
                 item_timestamps = extract_timestamps_from_content(item_content)
                 item_has_timestamps = len(item_timestamps) > 0
                 item_has_timestamp_markers = has_timestamp_markers(item_content)
-                if strip_brackets:
-                    item_lyrics = [strip_bracket_blocks(line) for line in item_lyrics]
 
                 if not item_lyrics or all(not line.strip() for line in item_lyrics):
                     continue
@@ -7268,38 +7448,95 @@ def translate_lyrics():
                 if item_has_timestamps and len(item_timestamps) != len(item_lyrics):
                     continue
 
+                item_prompt_lines = build_translation_prompt_lines(
+                    item_entries,
+                    strip_brackets=strip_brackets,
+                    experimental_full_line_bracket_strip=experimental_full_line_bracket_strip,
+                    experimental_bracket_line_as_subline=experimental_bracket_line_as_subline
+                )
+                if not item_prompt_lines:
+                    continue
+                has_sublines = any(line['is_subline'] for line in item_prompt_lines)
+
                 valid_items.append({
                     'id': item_id,
                     'jsonFile': item.get('jsonFile', ''),
                     'lyricsPath': item.get('lyricsPath', ''),
                     'translationPath': item.get('translationPath', ''),
                     'lyrics': item_lyrics,
+                    'lyrics_entries': item_entries,
+                    'prompt_lines': item_prompt_lines,
                     'timestamps': item_timestamps,
-                    'hasTimestamps': item_has_timestamps
+                    'hasTimestamps': item_has_timestamps,
+                    'hasSublines': has_sublines
                 })
 
             if not valid_items:
                 return jsonify({'status': 'error', 'message': '批量请求中没有可翻译的歌词项'})
 
+            batch_full_line_count = sum(
+                1
+                for item in valid_items
+                for line in item.get('prompt_lines', [])
+                if line.get('is_full_line_bracket')
+            )
+            batch_subline_count = sum(
+                1
+                for item in valid_items
+                for line in item.get('prompt_lines', [])
+                if line.get('is_subline')
+            )
+            batch_tag_line_count = sum(
+                1
+                for item in valid_items
+                for line in item.get('prompt_lines', [])
+                if line.get('is_tag_subline_candidate')
+            )
+            batch_tag_subline_count = sum(
+                1
+                for item in valid_items
+                for line in item.get('prompt_lines', [])
+                if line.get('is_tag_subline_candidate') and line.get('is_subline')
+            )
+            app.logger.info(
+                "批量预处理统计: 歌曲=%d, 整句括号行=%d, 归并从句=%d, 标签行=%d, 标签归并=%d",
+                len(valid_items),
+                batch_full_line_count,
+                batch_subline_count,
+                batch_tag_line_count,
+                batch_tag_subline_count
+            )
+
             def generate_batch():
                 try:
                     batch_blocks = []
+                    has_any_sublines = False
                     for item in valid_items:
-                        numbered = '\n'.join(f"{i+1}.{line}" for i, line in enumerate(item['lyrics']))
+                        if item.get('hasSublines'):
+                            has_any_sublines = True
+                        numbered = '\n'.join(
+                            f"{line['display_index']}.{line['normalized_text']}"
+                            for line in item.get('prompt_lines', [])
+                        )
                         batch_blocks.append(f"[ID:{item['id']}]\n{numbered}")
                     numbered_lyrics = '\n\n'.join(batch_blocks)
                     batch_system_prompt = build_batch_system_prompt(system_prompt)
+                    user_prompt_parts = []
+                    if has_any_sublines:
+                        user_prompt_parts.append(build_subline_prompt_notice())
+                    user_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                    user_prompt = '\n\n'.join(user_prompt_parts)
 
                     if compat_mode:
                         combined_prompt_parts = []
                         if batch_system_prompt:
                             combined_prompt_parts.append(batch_system_prompt.strip())
-                        combined_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                        combined_prompt_parts.append(user_prompt)
                         messages = [{"role": "user", "content": '\n\n'.join(combined_prompt_parts)}]
                     else:
                         messages = [
                             {"role": "system", "content": batch_system_prompt},
-                            {"role": "user", "content": f"待翻译歌词：\n{numbered_lyrics}"}
+                            {"role": "user", "content": user_prompt}
                         ]
 
                     if batch_thinking_enabled:
@@ -7312,13 +7549,12 @@ def translate_lyrics():
                         stream=True
                     )
 
-                    grouped = {item['id']: {} for item in valid_items}
+                    grouped: Dict[str, Dict[str, str]] = {item['id']: {} for item in valid_items}
                     last_sent_counts = {item['id']: 0 for item in valid_items}
                     current_id: Optional[str] = None
                     stream_buffer = ""
                     last_flush_at = time.monotonic()
                     id_pattern = re.compile(r'^\s*\[ID:(.+?)\]\s*$')
-                    line_pattern = re.compile(r'^\s*(\d+)\.(.*)$')
 
                     def emit_updates(force: bool = False):
                         nonlocal last_flush_at
@@ -7332,18 +7568,20 @@ def translate_lyrics():
                             if not translated_dict:
                                 continue
                             line_count = len(translated_dict)
-                            is_complete = line_count >= len(item['lyrics'])
+                            expected_count = len(item.get('prompt_lines', []))
+                            is_complete = line_count >= expected_count
                             if line_count <= last_sent_counts[item_id]:
                                 continue
                             if not force and not is_complete and now - last_flush_at < 1.0:
                                 continue
                             line_prefixes = item['timestamps'] if item['hasTimestamps'] else [''] * len(item['lyrics'])
                             final_lyrics = []
-                            for i in range(len(item['lyrics'])):
-                                translation = translated_dict.get(i)
+                            for prompt_line in item.get('prompt_lines', []):
+                                translation = translated_dict.get(prompt_line['display_index'])
                                 if translation is None:
                                     continue
-                                prefix = line_prefixes[i] if i < len(line_prefixes) else ''
+                                source_idx = max(0, int(prompt_line.get('source_line_no', 1)) - 1)
+                                prefix = line_prefixes[source_idx] if source_idx < len(line_prefixes) else ''
                                 final_lyrics.append(f"{prefix}{translation}" if prefix else translation)
                             if not final_lyrics:
                                 continue
@@ -7383,13 +7621,11 @@ def translate_lyrics():
                                     continue
                                 if current_id is None:
                                     continue
-                                line_match = line_pattern.match(line)
-                                if not line_match:
+                                parsed_line = parse_numbered_translation_line(line)
+                                if not parsed_line:
                                     continue
-                                idx = int(line_match.group(1)) - 1
-                                if idx < 0:
-                                    continue
-                                grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+                                display_index, translated_text = parsed_line
+                                grouped.setdefault(current_id, {})[display_index] = translated_text
                             yield from emit_updates(False)
 
                     if stream_buffer.strip():
@@ -7407,13 +7643,11 @@ def translate_lyrics():
                                 continue
                             if current_id is None:
                                 continue
-                            line_match = line_pattern.match(line)
-                            if not line_match:
+                            parsed_line = parse_numbered_translation_line(line)
+                            if not parsed_line:
                                 continue
-                            idx = int(line_match.group(1)) - 1
-                            if idx < 0:
-                                continue
-                            grouped.setdefault(current_id, {})[idx] = line_match.group(2).strip()
+                            display_index, translated_text = parsed_line
+                            grouped.setdefault(current_id, {})[display_index] = translated_text
                     yield from emit_updates(True)
 
                 except Exception as e:
@@ -7426,7 +7660,8 @@ def translate_lyrics():
             return jsonify({'status': 'error', 'message': '未提供歌词内容'})
 
         timestamps = extract_timestamps_from_content(content)
-        lyrics = extract_lyrics_from_content(content)
+        lyrics_entries = extract_lyrics_entries_from_content(content)
+        lyrics = [entry['text'] for entry in lyrics_entries]
 
         # 基于原始歌词判断是否存在时间戳模式
         candidate_lines = [
@@ -7451,20 +7686,28 @@ def translate_lyrics():
 
         app.logger.info(f"提取的时间戳数量: {len(timestamps)}")
         app.logger.info(f"检测到包含时间戳标记的行数: {timestamp_candidates}")
-        if strip_brackets:
-            bracket_modified = 0
-            processed_lyrics = []
-            for line in lyrics:
-                cleaned_line = strip_bracket_blocks(line)
-                if cleaned_line != line:
-                    bracket_modified += 1
-                processed_lyrics.append(cleaned_line)
-            lyrics = processed_lyrics
-            app.logger.info(f"去括号预处理: 开启，修改行数: {bracket_modified}")
-        else:
-            app.logger.info("去括号预处理: 关闭")
+        prompt_lines = build_translation_prompt_lines(
+            lyrics_entries,
+            strip_brackets=strip_brackets,
+            experimental_full_line_bracket_strip=experimental_full_line_bracket_strip,
+            experimental_bracket_line_as_subline=experimental_bracket_line_as_subline
+        )
+        if not prompt_lines:
+            app.logger.error("预处理后无可用歌词行")
+            return jsonify({'status': 'error', 'message': '预处理后无可翻译歌词，请检查括号清理设置或歌词内容'})
+        full_line_bracket_count = sum(1 for line in prompt_lines if line['is_full_line_bracket'])
+        subline_count = sum(1 for line in prompt_lines if line['is_subline'])
+        tag_line_count = sum(1 for line in prompt_lines if line.get('is_tag_subline_candidate'))
+        tag_subline_count = sum(1 for line in prompt_lines if line.get('is_tag_subline_candidate') and line.get('is_subline'))
+        app.logger.info(f"去括号预处理: {'开启' if strip_brackets else '关闭'}")
+        app.logger.info(f"实验性整句外层括号清理: {'开启' if experimental_full_line_bracket_strip else '关闭'}")
+        app.logger.info(f"实验性整句括号并入上一句从句: {'开启' if experimental_bracket_line_as_subline else '关闭'}")
+        app.logger.info(f"识别为整句括号行数量: {full_line_bracket_count}")
+        app.logger.info(f"归并为从句数量: {subline_count}")
+        app.logger.info(f"识别为标签行数量: {tag_line_count}")
+        app.logger.info(f"标签归并为从句数量: {tag_subline_count}")
         app.logger.info(f"提取的歌词行数: {len(lyrics)}")
-        processed_preview = '\n'.join(f"{i+1}. {line}" for i, line in enumerate(lyrics))
+        processed_preview = '\n'.join(f"{line['display_index']}. {line['normalized_text']}" for line in prompt_lines)
         app.logger.info("预处理后的歌词内容（带行号）:\n%s", processed_preview if processed_preview else "[无可用歌词]")
         app.logger.info(f"系统提示词: {system_prompt[:100]}..." if len(system_prompt) > 100 else f"系统提示词: {system_prompt}")
         app.logger.info(f"兼容模式: {'开启' if compat_mode else '关闭'}")
@@ -7522,17 +7765,24 @@ def translate_lyrics():
 
         # 检查歌词内容是否包含非法字符
         illegal_chars = ['content:', 'reasoning:']
-        for i, line in enumerate(lyrics):
+        for line in prompt_lines:
+            line_text = line['normalized_text']
+            source_line_no = int(line.get('source_line_no', 0) or 0)
+            display_line_no = source_line_no if source_line_no > 0 else '?'
             for char in illegal_chars:
-                if char in line:
-                    app.logger.error(f"第{i+1}行歌词包含非法字符: {char}")
-                    return jsonify({'status': 'error', 'message': f'歌词内容包含非法字符，请检查第{i+1}行'})
+                if char in line_text:
+                    app.logger.error(f"第{display_line_no}行歌词包含非法字符: {char}")
+                    return jsonify({'status': 'error', 'message': f'歌词内容包含非法字符，请检查第{display_line_no}行'})
 
         # 2. 调用AI服务进行翻译
         def generate():
             try:
                 # 构建提示词
-                numbered_lyrics = '\n'.join(f"{i+1}.{line}" for i, line in enumerate(lyrics))
+                numbered_lyrics = '\n'.join(
+                    f"{line['display_index']}.{line['normalized_text']}"
+                    for line in prompt_lines
+                )
+                has_sublines = any(line['is_subline'] for line in prompt_lines)
                 # 使用上面优先级逻辑的 system_prompt
                 app.logger.debug("发送给AI的提示词:")
                 app.logger.debug(f"系统提示词: {system_prompt}")
@@ -7607,6 +7857,8 @@ def translate_lyrics():
                         combined_prompt_parts.append(system_prompt.strip())
                     if thinking_summary:
                         combined_prompt_parts.append(f"歌曲理解：\n{thinking_summary}")
+                    if has_sublines:
+                        combined_prompt_parts.append(build_subline_prompt_notice())
                     combined_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
                     combined_prompt = '\n\n'.join(part for part in combined_prompt_parts if part)
                     messages = [
@@ -7617,6 +7869,8 @@ def translate_lyrics():
                     user_content_parts = []
                     if thinking_summary:
                         user_content_parts.append(f"歌曲理解：\n{thinking_summary}")
+                    if has_sublines:
+                        user_content_parts.append(build_subline_prompt_notice())
                     user_content_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
                     user_content = '\n\n'.join(part for part in user_content_parts if part)
                     messages = [
@@ -7692,25 +7946,23 @@ def translate_lyrics():
 
                         # 处理翻译内容：使用字典按行号稳定对齐（后到的覆盖先到的）
                         lines = full_translation.split('\n')
-                        translated_dict = {}  # 行号(0-based) -> 翻译内容
+                        translated_dict: Dict[str, str] = {}
                         for line in lines:
                             if line.strip() and not line.startswith('思考'):
-                                # 提取序号和翻译内容
-                                match = re.match(r'^(\d+)\.(.*)', line)
-                                if match:
-                                    line_num = int(match.group(1))  # 1-based
-                                    content = match.group(2).strip()
-                                    # 转为0-based索引并存储（后到的覆盖先到的）
-                                    translated_dict[line_num - 1] = content
+                                parsed_line = parse_numbered_translation_line(line)
+                                if parsed_line:
+                                    display_index, translated_text = parsed_line
+                                    translated_dict[display_index] = translated_text
 
                         # 使用字典按行号稳定对齐，即使行号乱序或缺失也能正确处理
                         if translated_dict:
                             # 按原始顺序合并翻译结果；若缺失时间戳则直接返回纯文本
                             final_lyrics = []
-                            for i in range(len(lyrics)):
-                                translation = translated_dict.get(i)
+                            for prompt_line in prompt_lines:
+                                translation = translated_dict.get(prompt_line['display_index'])
                                 if translation is not None:
-                                    prefix = line_prefixes[i] if i < len(line_prefixes) else ''
+                                    source_idx = max(0, int(prompt_line.get('source_line_no', 1)) - 1)
+                                    prefix = line_prefixes[source_idx] if source_idx < len(line_prefixes) else ''
                                     final_line = f"{prefix}{translation}" if prefix else translation
                                     final_lyrics.append(final_line)
 
