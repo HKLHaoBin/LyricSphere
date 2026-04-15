@@ -11,9 +11,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" data-i18n-content="meta.pageTitle" content="AMLL Web Player" />
-  <link rel="icon" href="{{ url_for('static', filename='assets/icon-96x96.png') }}" />
-  <link rel="manifest" href="{{ url_for('static', filename='assets/manifest-Ceb5k8_s.json') }}" />
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='assets/icon-192x192-CkgtECyV.png') }}" />
+  <link rel="icon" href="./assets/icon-96x96.png" />
+  <link rel="manifest" href="/amll-web/assets/manifest-BBKyCz1-.json" />
+  <link rel="apple-touch-icon" href="/amll-web/assets/icon-192x192-CkgtECyV.png" />
   <style>
     :root {
       --app-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -734,7 +734,7 @@
   <script defer src='https://static.cloudflareinsights.com/beacon.min.js'
     data-cf-beacon='{"token": "326e7d3b1c894490bc1167137b532b07"}'>
     </script>
-  <script src="{{ url_for('static', filename='public/jsmediatags.min.js') }}"></script>
+  <script src="./public/jsmediatags.min.js"></script>
   <script>
     // 检查jsmediatags库是否加载成功
     window.addEventListener("load", () => {
@@ -767,8 +767,8 @@
       document.documentElement.style.setProperty('--squircle-unavailable', 'true');
     }
   </script>
-  <script type="module" crossorigin src="{{ (amll_entry.js if amll_entry else '') or url_for('static', filename='assets/amll-player.js') }}"></script>
-  <link rel="stylesheet" crossorigin href="{{ (amll_entry.css if amll_entry else '') or url_for('static', filename='assets/amll-player.css') }}">
+  <script type="module" crossorigin src="/amll-web/assets/index-BRIwW9e3.js"></script>
+  <link rel="stylesheet" crossorigin href="/amll-web/assets/index-WwW9bHMj.css">
 </head>
 
 <body>
@@ -1282,7 +1282,7 @@
     <div id="albumSidePanel">
       <div class="song-info-container">
         <div id="albumCoverContainer">
-          <img id="albumCoverLarge" src="{{ url_for('static', filename='assets/icon-512x512.png') }}" alt="Cover" title="Album Cover" data-i18n-alt="label.albumCover" data-i18n-title="label.albumCover" />
+          <img id="albumCoverLarge" src="./assets/icon-512x512.png" alt="Cover" title="Album Cover" data-i18n-alt="label.albumCover" data-i18n-title="label.albumCover" />
         </div>
         <div id="albumInfo">
           <div id="songTitle" data-i18n="title" title="Song Title" data-i18n-title="label.songTitle">Title</div>

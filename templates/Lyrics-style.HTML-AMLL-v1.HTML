@@ -266,12 +266,24 @@
         const DEFAULT_AMLL_BACKGROUND_BRIGHTNESS = 1;
         const MIN_AMLL_BACKGROUND_BRIGHTNESS = 0.4;
         const MAX_AMLL_BACKGROUND_BRIGHTNESS = 1.6;
+        const DEFAULT_AMLL_BEAT_ENABLED = true;
         const AMLL_STATE_URL = '/amll/state';
         const AMLL_STREAM_URL = '/amll/stream';
         const PROGRESS_RESYNC_INTERVAL_MS = 3000;
         const LAST_SONG_STORAGE_KEY = 'amll_last_song_meta';
         const LYRICS_REFETCH_INTERVAL_MS = 1200;
         const LYRICS_REFETCH_MAX_ATTEMPTS = 4;
+        const BLOCKED_AMLL_MEDIA_KEYS = new Set([
+            'musicUrl',
+            'musicUrlInput',
+            'lyricUrl',
+            'lyricUrlInput',
+            'autoPlay',
+            'songTitle',
+            'songArtist',
+            'songTitleInput',
+            'songArtistInput'
+        ]);
 
         function normalizeAmllBackgroundBrightness(value) {
             const parsed = Number.parseFloat(value);
@@ -300,7 +312,7 @@
             try {
                 const storage = window.localStorage;
                 if (!storage) {
-                    return () => { };
+                    return { restore: () => { }, persist: () => false };
                 }
 
                 const originalObject = {
@@ -310,8 +322,26 @@
                     clear: storage.clear
                 };
 
+                const sanitizeAmllSettings = (value) => {
+                    try {
+                        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+                        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                            return null;
+                        }
+                        const cloned = { ...parsed };
+                        BLOCKED_AMLL_MEDIA_KEYS.forEach((key) => {
+                            if (Object.prototype.hasOwnProperty.call(cloned, key)) {
+                                delete cloned[key];
+                            }
+                        });
+                        return JSON.stringify(cloned);
+                    } catch (err) {
+                        return null;
+                    }
+                };
+
                 let mirror = originalObject.getItem
-                    ? originalObject.getItem.call(storage, AMLL_SETTINGS_STORAGE_KEY)
+                    ? sanitizeAmllSettings(originalObject.getItem.call(storage, AMLL_SETTINGS_STORAGE_KEY))
                     : null;
 
                 const normalizeKey = (key) => (typeof key === 'string' ? key : String(key));
@@ -327,7 +357,7 @@
 
                 const guardedSet = function (key, value) {
                     if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
-                        mirror = String(value);
+                        mirror = sanitizeAmllSettings(value);
                         return undefined;
                     }
                     return originalObject.setItem
@@ -363,15 +393,32 @@
                 storage.removeItem = guardedRemove;
                 storage.clear = guardedClear;
 
-                return () => {
+                const restore = () => {
                     storage.getItem = originalObject.getItem;
                     storage.setItem = originalObject.setItem;
                     storage.removeItem = originalObject.removeItem;
                     storage.clear = originalObject.clear;
                 };
+
+                const persistSanitizedSettings = (value) => {
+                    const sanitized = sanitizeAmllSettings(value);
+                    if (!sanitized || !originalObject.setItem) {
+                        return false;
+                    }
+                    try {
+                        originalObject.setItem.call(storage, AMLL_SETTINGS_STORAGE_KEY, sanitized);
+                        mirror = sanitized;
+                        return true;
+                    } catch (error) {
+                        console.warn('[AMLL] 持久化 AMLL 设置失败', error);
+                        return false;
+                    }
+                };
+
+                return { restore, persist: persistSanitizedSettings };
             } catch (error) {
                 console.warn('[AMLL] 设置缓存保护失败', error);
-                return () => { };
+                return { restore: () => { }, persist: () => false };
             }
         }
 
@@ -380,13 +427,14 @@
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
-            const restoreAmllStorage = guardAmllSettingsStorage();
+            const { restore: restoreAmllStorage, persist: persistAmllSettings } = guardAmllSettingsStorage();
             window.addEventListener('beforeunload', () => {
                 try {
                     restoreAmllStorage();
                 } catch (error) {
                     console.warn('[AMLL] 恢复 Storage 失败', error);
                 }
+                clearBeatAutoSequenceTimers();
                 if (progressResyncTimer) {
                     clearInterval(progressResyncTimer);
                 }
@@ -474,36 +522,12 @@
             });
 
             beatToggleButton.addEventListener('click', () => {
-                amllBeatEnabled = !amllBeatEnabled;
-                if (!amllBeatEnabled) {
-                    stopAmllPaletteLoop({ clearBackground: false });
-                    if (beatCurvePollTimer) {
-                        clearTimeout(beatCurvePollTimer);
-                        beatCurvePollTimer = null;
-                    }
-                } else {
-                    ensureBeatCurveAuto();
-                    if (amllColorState.background) {
-                        attachAmllPaletteDriver(amllColorState.background);
-                    }
-                }
+                applyAmllBeatTargetState(!amllBeatEnabled, 'context-menu');
                 hideContextMenu();
             });
 
             window.setAmllBeatEnabled = (enabled) => {
-                amllBeatEnabled = Boolean(enabled);
-                if (!amllBeatEnabled) {
-                    stopAmllPaletteLoop({ clearBackground: false });
-                    if (beatCurvePollTimer) {
-                        clearTimeout(beatCurvePollTimer);
-                        beatCurvePollTimer = null;
-                    }
-                } else {
-                    ensureBeatCurveAuto();
-                    if (amllColorState.background) {
-                        attachAmllPaletteDriver(amllColorState.background);
-                    }
-                }
+                applyAmllBeatTargetState(Boolean(enabled), 'external-call');
             };
 
             const backgroundBrightnessOverlay = document.getElementById('background-brightness-overlay');
@@ -542,10 +566,13 @@
                 const data = event && event.data;
                 if (!data || !data.type) return;
                 if (data.type === 'amll-beat-toggle') {
-                    window.setAmllBeatEnabled(data.enabled);
+                    applyAmllBeatTargetState(data.enabled, 'postMessage');
                 }
                 if (data.type === 'amll-background-brightness') {
                     window.setAmllBackgroundBrightness(data.value);
+                }
+                if (data.type === 'amll-ensure-beat-signal') {
+                    ensureAmllBeatSignalReady();
                 }
             });
 
@@ -558,6 +585,7 @@
             let translationData = [];
             let backgroundCleanup = null;
             let currentSong = {};
+            let currentSongInfo = null;
             const playbackClock = { baseMs: 0, lastUpdateAt: performance.now(), smoothing: null, synced: false, rawBaseMs: 0, rawUpdateAt: performance.now() };
             const lineClock = { progressMs: 0, updatedAt: performance.now() };
             let lyricsRefetchTimer = null;
@@ -567,13 +595,18 @@
             let streamSource = null;
             let beatCurvePollTimer = null;
             let beatCurveRequestInFlight = false;
+            let beatGuardTimer = null;
+            let beatReplayTimers = [];
+            let beatAutoSequenceTimers = [];
+            let beatRepairInFlight = false;
 
-            const AMLL_MODULE_URL = "{{ url_for('static', filename='assets/amll-player.js') }}";
+            const AMLL_MODULE_URL = "{{ (amll_entry.js if amll_entry else '') or url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
             const amllBackgroundState = { promise: null, host: null, element: null };
             const urlParams = new URLSearchParams(window.location.search);
             const queryBackground = urlParams.get('background') || null;
             const queryCover = urlParams.get('cover') || null;
+            const queryFile = urlParams.get('file') || null;
             const AMLL_SKELETON_IDS = new Set([
                 'player',
                 'lyricsPanel',
@@ -1053,6 +1086,10 @@
             }
 
             function removeExistingBackground() {
+                clearBeatReplayTimers();
+                clearBeatGuard();
+                clearBeatCurvePolling();
+                beatRepairInFlight = false;
                 if (backgroundCleanup) {
                     try {
                         backgroundCleanup();
@@ -1060,6 +1097,8 @@
                     backgroundCleanup = null;
                 }
                 stopAmllPaletteLoop({ clearBackground: true });
+                amllColorState.background = null;
+                updateWindowBeatStatus();
                 document.querySelectorAll('.background-container').forEach((el) => el.remove());
             }
 
@@ -1197,7 +1236,11 @@
                     const dpr = window.devicePixelRatio || 1;
                     background.setRenderScale(dpr);
                     background.resume();
-                    attachAmllPaletteDriver(background);
+                    amllColorState.background = background;
+                    await ensureAmllBeatSignalReady();
+                    updateWindowBeatStatus();
+                    applyAmllBeatTargetState(amllBeatEnabled, 'background-init');
+                    triggerInitialBeatToggleSequence();
 
                     if (oldCleanup && oldCleanup.__kind !== 'amll') {
                         try { oldCleanup(); } catch (e) { /* 忽略 */ }
@@ -1329,6 +1372,7 @@
                     Object.assign(mergedMeta, songPatch.meta);
                 }
                 currentSong = { ...currentSong, ...songPatch, meta: mergedMeta };
+                currentSongInfo = currentSong;
             }
 
             function saveLastSongMeta(song = {}) {
@@ -1476,7 +1520,7 @@
                 beatCurve: null,
                 levelSource: 'none'
             };
-            let amllBeatEnabled = false;
+            let amllBeatEnabled = Boolean((readCachedAmllSettings()?.backgroundBeatEnabled ?? DEFAULT_AMLL_BEAT_ENABLED));
             const AMLL_PALETTE_PIXELATE = 10;
             const AMLL_PALETTE_TARGET = 16;
             const AMLL_LIGHTNESS_MIN_DELTA = -15;
@@ -2049,10 +2093,18 @@
                 if (beatCurveRequestInFlight) return;
                 beatCurveRequestInFlight = true;
                 try {
+                    const beatRequestPayload = {};
+                    const jsonPath = currentSongInfo?.json_path
+                        || currentSongInfo?.jsonPath
+                        || currentSongInfo?.meta?.json_path
+                        || currentSongInfo?.meta?.jsonPath
+                        || queryFile;
+                    if (jsonPath) beatRequestPayload.json_path = jsonPath;
+
                     const beatRes = await fetch('/amll/generate_beat_curve', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                        body: JSON.stringify(beatRequestPayload)
                     });
                     const payload = await beatRes.json().catch(() => null);
                     if (!beatRes.ok && beatRes.status !== 202) {
@@ -2063,6 +2115,7 @@
                         currentSong = currentSong || {};
                         currentSong.meta = currentSong.meta || {};
                         currentSong.meta.background_beat_curve = payload.curve;
+                        currentSongInfo = currentSong;
                         await loadBeatCurve(payload.curve);
                         return;
                     }
@@ -2086,6 +2139,172 @@
                 }
                 requestBeatCurveFromServer();
             }
+
+            function persistAmllBeatEnabled(enabled) {
+                try {
+                    const next = readCachedAmllSettings() || {};
+                    next.backgroundBeatEnabled = Boolean(enabled);
+                    const persisted = typeof persistAmllSettings === 'function'
+                        ? persistAmllSettings(next)
+                        : false;
+                    if (!persisted && window?.localStorage?.setItem) {
+                        window.localStorage.setItem(AMLL_SETTINGS_STORAGE_KEY, JSON.stringify(next));
+                    }
+                } catch (error) {
+                    console.warn('[AMLL] 持久化律动开关失败', error);
+                }
+            }
+
+            function clearBeatReplayTimers() {
+                beatReplayTimers.forEach((timer) => clearTimeout(timer));
+                beatReplayTimers = [];
+            }
+
+            function clearBeatAutoSequenceTimers() {
+                beatAutoSequenceTimers.forEach((timer) => clearTimeout(timer));
+                beatAutoSequenceTimers = [];
+            }
+
+            function triggerInitialBeatToggleSequence() {
+                clearBeatAutoSequenceTimers();
+                beatAutoSequenceTimers.push(setTimeout(() => {
+                    applyAmllBeatTargetState(false, 'auto-sequence');
+                }, 420));
+                beatAutoSequenceTimers.push(setTimeout(() => {
+                    applyAmllBeatTargetState(true, 'auto-sequence');
+                }, 920));
+            }
+
+            function clearBeatGuard() {
+                if (beatGuardTimer) {
+                    clearInterval(beatGuardTimer);
+                    beatGuardTimer = null;
+                }
+            }
+
+            function stopBeatPlayback() {
+                clearBeatReplayTimers();
+                clearBeatGuard();
+                clearBeatCurvePolling();
+                beatRepairInFlight = false;
+                amllColorState.enabled = false;
+                amllColorState.rafId = null;
+                stopAmllPaletteLoop({ clearBackground: false });
+                updateWindowBeatStatus();
+            }
+
+            function runBeatReplaySequence() {
+                if (!amllBeatEnabled || !amllColorState.background || isBeatActive()) {
+                    beatRepairInFlight = false;
+                    updateWindowBeatStatus();
+                    return;
+                }
+                beatRepairInFlight = true;
+                clearBeatReplayTimers();
+                ensureBeatCurveAuto();
+                attachAmllPaletteDriver(amllColorState.background);
+                updateWindowBeatStatus();
+                beatReplayTimers.push(setTimeout(() => {
+                    stopAmllPaletteLoop({ clearBackground: false });
+                    updateWindowBeatStatus();
+                }, 60));
+                beatReplayTimers.push(setTimeout(() => {
+                    ensureBeatCurveAuto();
+                    attachAmllPaletteDriver(amllColorState.background);
+                    beatRepairInFlight = false;
+                    updateWindowBeatStatus();
+                }, 120));
+            }
+
+            function isBeatActive() {
+                return Boolean(amllBeatEnabled && amllColorState.background && amllColorState.enabled && amllColorState.rafId != null);
+            }
+
+            function isBeatSignalReady() {
+                const hasCurve = Boolean(amllColorState.beatCurve);
+                const ctx = amllColorState.audioContext;
+                const analyser = amllColorState.analyser;
+                const hasAnalyser = Boolean(analyser && ctx && ctx.state === 'running');
+                return hasCurve || hasAnalyser;
+            }
+
+            function getBeatSignalSource() {
+                if (amllColorState.beatCurve) return 'curve';
+                const ctx = amllColorState.audioContext;
+                const analyser = amllColorState.analyser;
+                if (analyser && ctx && ctx.state === 'running') return 'analyser';
+                return 'none';
+            }
+
+            function updateWindowBeatStatus() {
+                try {
+                    window.__AMLL_BEAT_TARGET__ = Boolean(amllBeatEnabled);
+                    window.__AMLL_BEAT_ACTIVE__ = isBeatActive();
+                    window.__AMLL_BEAT_READY__ = Boolean(amllColorState.background);
+                    window.__AMLL_BEAT_SIGNAL_READY__ = isBeatSignalReady();
+                    window.__AMLL_BEAT_SIGNAL_SOURCE__ = getBeatSignalSource();
+                    window.__AMLL_BACKGROUND_FLUID_READY__ = Boolean(amllColorState.background);
+                } catch (error) {
+                    console.warn('[AMLL] 更新窗口节奏状态失败', error);
+                }
+            }
+
+            async function ensureAmllBeatSignalReady() {
+                try {
+                    ensureBeatCurveAuto();
+                    ensureAudioAnalyser();
+                    const ctx = amllColorState.audioContext;
+                    if (ctx && ctx.state === 'suspended') {
+                        try {
+                            await ctx.resume();
+                        } catch (error) {
+                            console.warn('[AMLL] 恢复 AudioContext 失败', error);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[AMLL] 初始化节奏信号失败', error);
+                } finally {
+                    updateWindowBeatStatus();
+                }
+            }
+
+            window.ensureAmllBeatSignalReady = ensureAmllBeatSignalReady;
+
+            function startAmllBeatGuard() {
+                return;
+            }
+
+            function applyAmllBeatTargetState(nextEnabled, reason = 'manual') {
+                const desired = Boolean(nextEnabled);
+                const wasEnabled = amllBeatEnabled;
+                amllBeatEnabled = desired;
+                if (!wasEnabled && desired) {
+                    console.info('[AMLL] Beat enabled (AMLL-v1)');
+                }
+                persistAmllBeatEnabled(desired);
+                updateContextMenuLabel();
+                beatRepairInFlight = false;
+                clearBeatReplayTimers();
+                if (!desired) {
+                    stopBeatPlayback();
+                    updateWindowBeatStatus();
+                    return desired;
+                }
+                if (amllColorState.background) {
+                    ensureBeatCurveAuto();
+                    attachAmllPaletteDriver(amllColorState.background);
+                    amllColorState.enabled = true;
+                    amllColorState.rafId = amllColorState.rafId ?? null;
+                    ensureAmllBeatSignalReady();
+                    updateWindowBeatStatus();
+                    return desired;
+                } else {
+                    updateWindowBeatStatus();
+                    return desired;
+                }
+            }
+
+            applyAmllBeatTargetState(amllBeatEnabled, 'initial-sync');
 
             function sampleBeatCurve(targetBands) {
                 const curve = amllColorState.beatCurve;
@@ -2185,6 +2404,14 @@
             function applyCoverPalette() {
                 // 保持 AMLL 自身取色逻辑，仅做饱和度动态变化
             }
+
+            audioPlayer.addEventListener('loadedmetadata', () => {
+                ensureAmllBeatSignalReady();
+            });
+
+            audioPlayer.addEventListener('canplay', () => {
+                ensureAmllBeatSignalReady();
+            });
 
             audioPlayer.addEventListener('play', () => {
                 ensureAudioAnalyser();
@@ -2793,10 +3020,18 @@
             async function loadData() {
                 loadPersistedSong();
                 await loadInitialState();
+                if (audioPlayer && audioPlayer.src) {
+                    await ensureAmllBeatSignalReady();
+                }
+                ensureBeatCurveAuto();
+                await ensureAmllBeatSignalReady();
                 startAmllStream();
                 startProgressResync();
                 ensureAnimationLoop();
                 ensureLyricsRefetch();
+                if (!amllColorState.background) {
+                    triggerInitialBeatToggleSequence();
+                }
             }
 
             function groupSyllablesIntoWords(container, itemClass = 'syllable') {

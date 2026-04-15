@@ -587,6 +587,27 @@
     <script>
         const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
         const LINE_ENTRY_SETTINGS_STORAGE_KEY = 'lyrics_line_entry_motion_settings';
+        const BLOCKED_AMLL_MEDIA_KEYS = new Set([
+            'musicUrl',
+            'musicUrlInput',
+            'lyricUrl',
+            'lyricUrlInput',
+            'autoPlay',
+            'songTitle',
+            'songArtist',
+            'songTitleInput',
+            'songArtistInput'
+        ]);
+        function readCachedAmllSettings() {
+            try {
+                const raw = window.localStorage.getItem(AMLL_SETTINGS_STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' ? parsed : null;
+            } catch (error) {
+                return null;
+            }
+        }
         const fontLoadPromises = new Map();
         const fontClassCache = new Map();
         let fontTipTimer = null;
@@ -853,7 +874,7 @@
             try {
                 const storage = window.localStorage;
                 if (!storage) {
-                    return () => { };
+                    return { restore: () => { }, persist: () => { } };
                 }
 
                 const originalObject = {
@@ -863,11 +884,41 @@
                     clear: storage.clear
                 };
 
+                const sanitizeAmllSettings = (value) => {
+                    try {
+                        const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+                        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                            return null;
+                        }
+                        const cloned = { ...parsed };
+                        BLOCKED_AMLL_MEDIA_KEYS.forEach((key) => {
+                            if (Object.prototype.hasOwnProperty.call(cloned, key)) {
+                                delete cloned[key];
+                            }
+                        });
+                        return JSON.stringify(cloned);
+                    } catch (err) {
+                        return null;
+                    }
+                };
+
                 let mirror = originalObject.getItem
-                    ? originalObject.getItem.call(storage, AMLL_SETTINGS_STORAGE_KEY)
+                    ? sanitizeAmllSettings(originalObject.getItem.call(storage, AMLL_SETTINGS_STORAGE_KEY))
                     : null;
 
                 const normalizeKey = (key) => (typeof key === 'string' ? key : String(key));
+
+                const persistSanitizedSettings = (value) => {
+                    try {
+                        const sanitized = sanitizeAmllSettings(value);
+                        mirror = sanitized;
+                        if (sanitized != null && originalObject.setItem) {
+                            originalObject.setItem.call(storage, AMLL_SETTINGS_STORAGE_KEY, sanitized);
+                        }
+                    } catch (err) {
+                        console.warn('[AMLL] 持久化 AMLL 设置失败', err);
+                    }
+                };
 
                 const guardedGet = function (key) {
                     if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
@@ -880,7 +931,7 @@
 
                 const guardedSet = function (key, value) {
                     if (normalizeKey(key) === AMLL_SETTINGS_STORAGE_KEY) {
-                        mirror = String(value);
+                        mirror = sanitizeAmllSettings(value);
                         return undefined;
                     }
                     return originalObject.setItem
@@ -916,15 +967,17 @@
                 storage.removeItem = guardedRemove;
                 storage.clear = guardedClear;
 
-                return () => {
+                const restore = () => {
                     storage.getItem = originalObject.getItem;
                     storage.setItem = originalObject.setItem;
                     storage.removeItem = originalObject.removeItem;
                     storage.clear = originalObject.clear;
                 };
+
+                return { restore, persist: persistSanitizedSettings };
             } catch (error) {
                 console.warn('[AMLL] 设置缓存保护失败', error);
-                return () => { };
+                return { restore: () => { }, persist: () => { } };
             }
         }
 
@@ -933,8 +986,9 @@
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
-            const restoreAmllStorage = guardAmllSettingsStorage();
+            const { restore: restoreAmllStorage, persist: persistAmllSettings } = guardAmllSettingsStorage();
             window.addEventListener('beforeunload', () => {
+                clearBeatAutoSequenceTimers();
                 try {
                     restoreAmllStorage();
                 } catch (error) {
@@ -959,7 +1013,7 @@
             let beatCurveRequestInFlight = false;
             let currentSongInfo = null;
 
-            const AMLL_MODULE_URL = "{{ url_for('static', filename='assets/amll-player.js') }}";
+            const AMLL_MODULE_URL = "{{ (amll_entry.js if amll_entry else '') or url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
             const amllBackgroundState = { promise: null, host: null, element: null };
             const urlParams = new URLSearchParams(window.location.search);
@@ -1053,32 +1107,12 @@
             }
 
             beatToggleButton.addEventListener('click', () => {
-                amllBeatEnabled = !amllBeatEnabled;
-                if (!amllBeatEnabled) {
-                    stopAmllPaletteLoop({ clearBackground: false });
-                    if (beatCurvePollTimer) {
-                        clearTimeout(beatCurvePollTimer);
-                        beatCurvePollTimer = null;
-                    }
-                } else if (amllColorState.background) {
-                    attachAmllPaletteDriver(amllColorState.background);
-                    ensureBeatCurveAuto();
-                }
+                applyAmllBeatTargetState(!amllBeatEnabled, 'context-menu');
                 hideContextMenu();
             });
 
             window.setAmllBeatEnabled = (enabled) => {
-                amllBeatEnabled = Boolean(enabled);
-                if (!amllBeatEnabled) {
-                    stopAmllPaletteLoop({ clearBackground: false });
-                    if (beatCurvePollTimer) {
-                        clearTimeout(beatCurvePollTimer);
-                        beatCurvePollTimer = null;
-                    }
-                } else if (amllColorState.background) {
-                    attachAmllPaletteDriver(amllColorState.background);
-                    ensureBeatCurveAuto();
-                }
+                applyAmllBeatTargetState(Boolean(enabled), 'setAmllBeatEnabled');
             };
 
             window.setAlwaysShowNextLine = (enabled) => {
@@ -1123,13 +1157,16 @@
                 const data = event && event.data;
                 if (!data || !data.type) return;
                 if (data.type === 'amll-beat-toggle') {
-                    window.setAmllBeatEnabled(data.enabled);
+                    applyAmllBeatTargetState(Boolean(data.enabled), 'postMessage');
                 }
                 if (data.type === 'amll-next-line-toggle') {
                     window.setAlwaysShowNextLine(data.enabled);
                 }
                 if (data.type === 'amll-translation-toggle') {
                     window.setAcceptTranslation(data.enabled);
+                }
+                if (data.type === 'amll-ensure-beat-signal') {
+                    ensureAmllBeatSignalReady();
                 }
             });
 
@@ -1171,7 +1208,15 @@
                 globalEnergy: 0,
                 beatCurve: null
             };
-            let amllBeatEnabled = true;
+            const DEFAULT_AMLL_BEAT_ENABLED = true;
+            const cachedAmllSettings = readCachedAmllSettings();
+            let amllBeatEnabled = typeof cachedAmllSettings?.backgroundBeatEnabled === 'boolean'
+                ? Boolean(cachedAmllSettings.backgroundBeatEnabled)
+                : DEFAULT_AMLL_BEAT_ENABLED;
+            let beatGuardTimer = null;
+            let beatReplayTimers = [];
+            let beatAutoSequenceTimers = [];
+            let beatRepairInFlight = false;
             const AMLL_PALETTE_PIXELATE = 10;
             const AMLL_PALETTE_TARGET = 16;
             const AMLL_LIGHTNESS_MIN_DELTA = -25;
@@ -1182,6 +1227,172 @@
             const AMLL_BEAT_CURVE_MAGIC_LEVELS = 'AMBC';
             const AMLL_GAIN_MIN = 0.6;
             const AMLL_GAIN_MAX = 3.0;
+
+            function persistAmllBeatEnabled(enabled) {
+                try {
+                    const settings = readCachedAmllSettings() || {};
+                    settings.backgroundBeatEnabled = Boolean(enabled);
+                    const persistFn = typeof persistAmllSettings === 'function' ? persistAmllSettings : null;
+                    if (persistFn) {
+                        persistFn(settings);
+                    } else {
+                        window.localStorage.setItem(AMLL_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+                    }
+                } catch (error) {
+                    console.warn('[AMLL] 持久化背景节奏开关失败', error);
+                }
+            }
+
+            function clearBeatReplayTimers() {
+                if (Array.isArray(beatReplayTimers)) {
+                    beatReplayTimers.forEach((timerId) => clearTimeout(timerId));
+                }
+                beatReplayTimers = [];
+            }
+
+            function clearBeatAutoSequenceTimers() {
+                if (Array.isArray(beatAutoSequenceTimers)) {
+                    beatAutoSequenceTimers.forEach((timerId) => clearTimeout(timerId));
+                }
+                beatAutoSequenceTimers = [];
+            }
+
+            function triggerInitialBeatToggleSequence() {
+                clearBeatAutoSequenceTimers();
+                beatAutoSequenceTimers.push(setTimeout(() => {
+                    applyAmllBeatTargetState(false, 'auto-sequence');
+                }, 420));
+                beatAutoSequenceTimers.push(setTimeout(() => {
+                    applyAmllBeatTargetState(true, 'auto-sequence');
+                }, 920));
+            }
+
+            function stopBeatPlayback() {
+                clearBeatReplayTimers();
+                clearBeatCurvePolling();
+                beatRepairInFlight = false;
+                stopAmllPaletteLoop({ clearBackground: false });
+                amllColorState.enabled = false;
+                amllColorState.rafId = null;
+                updateWindowBeatStatus();
+            }
+
+            function runBeatReplaySequence() {
+                if (!amllColorState.background || isBeatActive()) {
+                    beatRepairInFlight = false;
+                    updateWindowBeatStatus();
+                    return;
+                }
+                beatRepairInFlight = true;
+                clearBeatReplayTimers();
+                const stepOn = () => {
+                    if (!amllColorState.background) return;
+                    attachAmllPaletteDriver(amllColorState.background);
+                    ensureBeatCurveAuto();
+                    updateWindowBeatStatus();
+                };
+                const stepOff = () => {
+                    stopBeatPlayback();
+                    updateWindowBeatStatus();
+                };
+                stepOn();
+                beatReplayTimers.push(setTimeout(() => {
+                    stepOff();
+                    beatReplayTimers.push(setTimeout(() => {
+                        stepOn();
+                        beatRepairInFlight = false;
+                        updateWindowBeatStatus();
+                    }, 60));
+                }, 60));
+            }
+
+            function isBeatActive() {
+                return Boolean(amllColorState.enabled && amllColorState.rafId != null && amllColorState.background);
+            }
+
+            function isBeatSignalReady() {
+                const hasCurve = Boolean(amllColorState.beatCurve);
+                const ctx = amllColorState.audioContext;
+                const analyser = amllColorState.analyser;
+                const hasAnalyser = Boolean(analyser && ctx && ctx.state === 'running');
+                return hasCurve || hasAnalyser;
+            }
+
+            function getBeatSignalSource() {
+                if (amllColorState.beatCurve) return 'curve';
+                const ctx = amllColorState.audioContext;
+                const analyser = amllColorState.analyser;
+                if (analyser && ctx && ctx.state === 'running') return 'analyser';
+                return 'none';
+            }
+
+            function updateWindowBeatStatus() {
+                try {
+                    window.__AMLL_BEAT_TARGET__ = Boolean(amllBeatEnabled);
+                    window.__AMLL_BEAT_ACTIVE__ = Boolean(isBeatActive());
+                    window.__AMLL_BEAT_READY__ = Boolean(amllColorState.background);
+                    window.__AMLL_BEAT_SIGNAL_READY__ = isBeatSignalReady();
+                    window.__AMLL_BEAT_SIGNAL_SOURCE__ = getBeatSignalSource();
+                    window.__AMLL_BACKGROUND_FLUID_READY__ = Boolean(amllColorState.background);
+                } catch (error) {
+                    console.warn('[AMLL] 更新窗口节奏状态失败', error);
+                }
+            }
+
+            async function ensureAmllBeatSignalReady() {
+                try {
+                    ensureBeatCurveAuto();
+                    ensureAudioAnalyser();
+                    const ctx = amllColorState.audioContext;
+                    if (ctx && ctx.state === 'suspended') {
+                        try {
+                            await ctx.resume();
+                        } catch (error) {
+                            console.warn('[AMLL] 恢复 AudioContext 失败', error);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[AMLL] 初始化节奏信号失败', error);
+                } finally {
+                    updateWindowBeatStatus();
+                }
+            }
+
+            window.ensureAmllBeatSignalReady = ensureAmllBeatSignalReady;
+
+            function startAmllBeatGuard() {
+                return;
+            }
+
+            function clearBeatGuard() {
+                if (beatGuardTimer) {
+                    clearInterval(beatGuardTimer);
+                    beatGuardTimer = null;
+                }
+            }
+
+            function applyAmllBeatTargetState(target, reason = '') {
+                const next = Boolean(target);
+                const wasEnabled = amllBeatEnabled;
+                amllBeatEnabled = next;
+                if (!wasEnabled && next) console.info('[AMLL] Beat enabled (JUNP)');
+                beatRepairInFlight = false;
+                persistAmllBeatEnabled(next);
+                updateContextMenuLabel();
+                clearBeatReplayTimers();
+                if (!next) {
+                    stopBeatPlayback();
+                } else if (amllColorState.background) {
+                    attachAmllPaletteDriver(amllColorState.background);
+                    ensureBeatCurveAuto();
+                    amllColorState.enabled = true;
+                    amllColorState.rafId = amllColorState.rafId ?? null;
+                    ensureAmllBeatSignalReady();
+                }
+                updateWindowBeatStatus();
+            }
+
+            applyAmllBeatTargetState(amllBeatEnabled, 'init');
 
             function hexToHsl(hex) {
                 if (!hex || typeof hex !== 'string') return null;
@@ -1673,10 +1884,18 @@
                 if (beatCurveRequestInFlight) return;
                 beatCurveRequestInFlight = true;
                 try {
+                    const beatRequestPayload = {};
+                    const jsonPath = currentSongInfo?.json_path
+                        || currentSongInfo?.jsonPath
+                        || currentSongInfo?.meta?.json_path
+                        || currentSongInfo?.meta?.jsonPath
+                        || queryFile;
+                    if (jsonPath) beatRequestPayload.json_path = jsonPath;
+
                     const beatRes = await fetch('/amll/generate_beat_curve', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                        body: JSON.stringify(beatRequestPayload)
                     });
                     const payload = await beatRes.json().catch(() => null);
                     if (!beatRes.ok && beatRes.status !== 202) {
@@ -1812,6 +2031,15 @@
 
             function applyCoverPalette() {
                 // 保持 AMLL 自身取色逻辑，仅做饱和度动态变化
+            }
+
+            if (audioPlayer) {
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    ensureAmllBeatSignalReady();
+                });
+                audioPlayer.addEventListener('canplay', () => {
+                    ensureAmllBeatSignalReady();
+                });
             }
 
             audioPlayer.addEventListener('play', () => {
@@ -2010,6 +2238,10 @@
             }
 
             function removeExistingBackground() {
+                clearBeatReplayTimers();
+                clearBeatGuard();
+                clearBeatCurvePolling();
+                beatRepairInFlight = false;
                 if (backgroundCleanup) {
                     try {
                         backgroundCleanup();
@@ -2017,6 +2249,8 @@
                     backgroundCleanup = null;
                 }
                 stopAmllPaletteLoop({ clearBackground: true });
+                amllColorState.background = null;
+                updateWindowBeatStatus();
                 clearBackgroundVideo();
                 document.querySelectorAll('.background-container').forEach((el) => el.remove());
             }
@@ -2189,10 +2423,11 @@
                     const dpr = window.devicePixelRatio || 1;
                     background.setRenderScale(dpr);
                     background.resume();
-                    attachAmllPaletteDriver(background);
-                    if (amllBeatEnabled) {
-                        ensureBeatCurveAuto();
-                    }
+                    amllColorState.background = background;
+                    await ensureAmllBeatSignalReady();
+                    updateWindowBeatStatus();
+                    applyAmllBeatTargetState(amllBeatEnabled, 'background-init');
+                    triggerInitialBeatToggleSequence();
                     return true;
                 } catch (error) {
                     console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
@@ -3851,6 +4086,7 @@
                     const songInfo = await songInfoRes.json();
                     currentSongInfo = songInfo;
                     audioPlayer.src = songInfo.song;
+                    await ensureAmllBeatSignalReady();
 
                     if (!songInfo.meta || typeof songInfo.meta !== 'object') {
                         songInfo.meta = {};
@@ -3867,6 +4103,7 @@
                     amllColorState.beatCurve = null;
                     clearBeatCurvePolling();
                     ensureBeatCurveAuto();
+                    await ensureAmllBeatSignalReady();
 
                     removeExistingBackground();
 
@@ -3955,6 +4192,9 @@
                     applyTranslationAcceptance();
 
                     initLyrics();
+                    if (!amllColorState.background) {
+                        triggerInitialBeatToggleSequence();
+                    }
                 } catch (error) {
                     lyricsContainer.textContent = '无法加载歌词。';
                     console.error('Error loading data:', error);

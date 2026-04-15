@@ -3064,34 +3064,237 @@ def service_worker():
 
 @app.route('/amll-web/service-worker.js')
 def amll_web_service_worker():
-    """Compatibility route for AMLL pages that register the worker relative to /amll-web/."""
-    return send_from_directory(STATIC_DIR / 'public', 'service-worker.js', mimetype='application/javascript')
+    """Serve the AMLL service worker directly from the Vite dist output."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    primary_worker = dist_dir / 'service-worker.js'
+    fallback_worker = dist_dir / 'public' / 'service-worker.js'
+
+    if primary_worker.exists():
+        return send_from_directory(dist_dir, 'service-worker.js', mimetype='application/javascript')
+
+    if fallback_worker.exists():
+        return send_from_directory(fallback_worker.parent, fallback_worker.name, mimetype='application/javascript')
+
+    return jsonify({
+        'status': 'error',
+        'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+    }), 404
 
 
 @app.route('/amll-web')
 @app.route('/amll-web/')
 @app.route('/amll-web/index.html')
 def amll_web_player():
-    """Serve the AMLL web player template migrated from the standalone Vite build."""
-    return render_template('amll_web_player.html')
+    """Serve the AMLL web player entry from the Vite dist build."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    index_file = dist_dir / 'index.html'
+    if not index_file.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    return send_from_directory(dist_dir, 'index.html')
 
 
 @app.route('/amll-web/assets/<path:filename>')
 def amll_web_assets(filename):
-    """Provide asset files under the /amll-web namespace for compatibility with relative requests."""
-    return send_from_directory(STATIC_DIR / 'assets', filename)
+    """Serve AMLL asset files directly from the dist output with path safety checks."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    assets_dir = (dist_dir / 'assets').resolve()
+    safe_path = (assets_dir / filename).resolve()
+    try:
+        safe_path.relative_to(assets_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(assets_dir, filename)
+
+
+@app.route('/amll-web/icons/<path:filename>')
+def amll_web_icons(filename):
+    """Serve AMLL icon files directly from the dist output with path safety checks."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    icons_dir = (dist_dir / 'icons').resolve()
+    safe_path = (icons_dir / filename).resolve()
+    try:
+        safe_path.relative_to(icons_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(icons_dir, filename)
 
 
 @app.route('/amll-web/public/<path:filename>')
 def amll_web_public(filename):
-    """Provide public files (service worker, media tags) under the /amll-web namespace."""
-    return send_from_directory(STATIC_DIR / 'public', filename)
+    """Serve AMLL public files directly from the dist output with path safety checks."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    public_dir = (dist_dir / 'public').resolve()
+    safe_path = (public_dir / filename).resolve()
+    try:
+        safe_path.relative_to(public_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(public_dir, filename)
+
+
+@app.route('/assets/<path:filename>')
+def amll_web_assets_legacy(filename):
+    """Backward-compatible route to serve AMLL dist assets from the legacy /assets path."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    assets_dir = (dist_dir / 'assets').resolve()
+    safe_path = (assets_dir / filename).resolve()
+    try:
+        safe_path.relative_to(assets_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(assets_dir, filename)
+
+
+@app.route('/icons/<path:filename>')
+def amll_web_icons_legacy(filename):
+    """Backward-compatible route to serve AMLL dist icons from the legacy /icons path."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    icons_dir = (dist_dir / 'icons').resolve()
+    safe_path = (icons_dir / filename).resolve()
+    try:
+        safe_path.relative_to(icons_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(icons_dir, filename)
+
+
+@app.route('/public/<path:filename>')
+def amll_web_public_legacy(filename):
+    """Backward-compatible route to serve AMLL dist public files from the legacy /public path."""
+    dist_dir = get_amll_web_dist_dir()
+    if not dist_dir.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'AMLL web dist not found. Please run pnpm build in templates/amll-web.'
+        }), 404
+
+    public_dir = (dist_dir / 'public').resolve()
+    safe_path = (public_dir / filename).resolve()
+    try:
+        safe_path.relative_to(public_dir)
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'Invalid path.'}), 400
+
+    if not safe_path.exists() or not safe_path.is_file():
+        return jsonify({'status': 'error', 'message': 'File not found.'}), 404
+
+    return send_from_directory(public_dir, filename)
 
 
 @app.route('/index.html')
 def index_html_alias():
     """Backward compatibility for clients requesting the original index.html entry."""
     return amll_web_player()
+
+
+def get_amll_web_dist_dir() -> Path:
+    """Return the dist directory for the AMLL web Vite build."""
+    return BASE_PATH / 'templates' / 'amll-web' / 'dist'
+
+
+def _get_latest_file_by_pattern(dir_path: Path, pattern: str) -> Optional[Path]:
+    """Return the newest file matching pattern inside dir_path, or None."""
+    if not dir_path.exists() or not dir_path.is_dir():
+        return None
+
+    matched = sorted(dir_path.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not matched:
+        return None
+    return matched[0]
+
+
+def get_amll_entry_assets() -> Dict[str, str]:
+    """Resolve AMLL entry JS/CSS URLs with dist-first, static fallback strategy."""
+    js_url = url_for('static', filename='assets/amll-player.js')
+    css_url = url_for('static', filename='assets/amll-player.css')
+
+    dist_dir = get_amll_web_dist_dir()
+    assets_dir = dist_dir / 'assets'
+    if assets_dir.exists() and assets_dir.is_dir():
+        base_url = get_amll_web_player_base_url()
+        latest_js = _get_latest_file_by_pattern(assets_dir, 'index-*.js')
+        latest_css = _get_latest_file_by_pattern(assets_dir, 'index-*.css')
+        if latest_js:
+            js_url = f"{base_url}assets/{latest_js.name}"
+        if latest_css:
+            css_url = f"{base_url}assets/{latest_css.name}"
+
+    return {'js': js_url, 'css': css_url}
+
+
+def get_amll_static_entry_assets() -> Dict[str, str]:
+    """Resolve AMLL entry assets from the stable static bundle."""
+    return {
+        'js': url_for('static', filename='assets/amll-player.js'),
+        'css': url_for('static', filename='assets/amll-player.css')
+    }
+
 
 def get_lyric_sphere_v2_dist_dir() -> Path:
     """Return the dist directory for the LyricSphere v2 frontend build."""
@@ -8079,12 +8282,13 @@ def lyrics_animate():
     session['lyrics_json_file'] = file
     normalized_style = (style or '').strip().lower()
     session['lyrics_style'] = normalized_style
+    amll_entry = get_amll_entry_assets()
     if style == '亮起':
-        return render_template('Lyrics-style.HTML')
+        return render_template('Lyrics-style.HTML', amll_entry=amll_entry)
     if normalized_style == 'junp':
-        return render_template('Lyrics-style.HTML-JUNP.HTML')
+        return render_template('Lyrics-style.HTML-JUNP.HTML', amll_entry=amll_entry)
     else:  # 默认为 'Kok' 或其他值
-        return render_template('Lyrics-style.HTML-COK-up.HTML')
+        return render_template('Lyrics-style.HTML-COK-up.HTML', amll_entry=amll_entry)
 
 @app.route('/lyrics')
 def get_lyrics():
@@ -9749,7 +9953,8 @@ def amll_stream_api():
 @app.route('/lyrics-amll')
 def lyrics_amll_page():
     """AMLL 歌词展示页面"""
-    return render_template("Lyrics-style.HTML-AMLL-v1.HTML")
+    amll_entry = get_amll_entry_assets()
+    return render_template("Lyrics-style.HTML-AMLL-v1.HTML", amll_entry=amll_entry)
 
 @app.route('/amll/create_song', methods=['POST'])
 def amll_create_song():
