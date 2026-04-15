@@ -176,15 +176,27 @@
         }
 
         .json-list {
-            display: flex;
-            /* margin: 12px; */
-            flex-wrap: wrap;
-            /* gap: 0px; */
-            /* margin: 2px -8px; */
-            /* width: calc(100% + 20px); */
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 24px;
             list-style: none;
-            padding: 0 10px;
-            justify-content: center;
+            padding: 0 14px;
+            max-width: 1280px;
+            margin: 0 auto;
+            align-items: stretch;
+        }
+
+        @media (min-width: 1680px) {
+            .json-list {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 980px) {
+            .json-list {
+                grid-template-columns: minmax(0, 1fr);
+                gap: 18px;
+            }
         }
 
         .list-status {
@@ -438,27 +450,42 @@
         .json-item {
             background: var(--card-bg);
             border-radius: 30px;
+            border: 1px solid var(--border-color);
             box-shadow: var(--card-shadow);
-            transition: transform 0.2s, box-shadow 0.2s;
-            /* flex: 0 0 calc(33.33% - 20px); */
-            margin: 12px;
-            padding: 18px;
-            /* box-sizing: border-box; */
-            max-width: 570px;
-            min-width: 420px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            margin: 0;
+            padding: 17px;
+            box-sizing: border-box;
+            width: 100%;
+            min-width: 0;
+            max-width: none;
             display: flex;
             flex-direction: column;
+            contain: content;
+            content-visibility: auto;
+            contain-intrinsic-size: 520px;
+        }
+
+        body.is-resizing .json-item,
+        body.is-resizing .search-container {
+            box-shadow: none !important;
+            transition: none !important;
+        }
+
+        body.is-resizing .json-item:hover {
+            transform: none;
         }
 
         .json-item:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1);
+            transform: translateY(-1px);
+            border-color: rgba(77, 171, 247, 0.35);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
         }
 
         .json-item-header {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 10px;
         }
 
         .file-name {
@@ -466,7 +493,8 @@
             color: var(--text-color);
             font-size: 1.4rem;
             font-weight: 600;
-            margin-bottom: 15px;
+            line-height: 1.28;
+            margin: 0;
             display: flex;
             align-items: center;
             gap: 10px;
@@ -494,12 +522,17 @@
             width: var(--song-cover-size);
             height: var(--song-cover-size);
             min-width: var(--song-cover-size);
-            border-radius: 10px;
+            border-radius: 14px;
             overflow: hidden;
-            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border-color);
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.06));
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+
+        .dark-mode .album-cover-slot {
+            background: linear-gradient(150deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
         }
 
         .album-cover {
@@ -526,24 +559,51 @@
             margin-top: auto;
             display: flex;
             flex-direction: column;
-            gap: 12px;
-            padding-top: 12px;
+            gap: 14px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border-color);
         }
 
         .style-buttons {
-            display: flex;
-            flex-direction: row;
-            gap: 12px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
             margin: 0;
         }
 
+        .style-buttons > * {
+            width: 100%;
+            min-width: 0;
+        }
+
         .style-button {
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-weight: 500;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 600;
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
+            min-height: 40px;
+            line-height: 1.25;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+        }
+
+        .style-buttons .am-style {
+            grid-column: 1 / -1;
+            min-height: 44px;
+        }
+
+        .style-buttons .action-button {
+            min-height: 38px;
+            padding: 8px 12px;
+            border-radius: 9px;
+            border: 1px solid var(--border-color);
+            background: var(--tag-bg);
+            color: var(--text-color);
+            font-size: 0.88rem;
+            font-weight: 500;
+            justify-content: center;
         }
 
         .am-style {
@@ -594,7 +654,8 @@
             padding: 15px 0;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
             z-index: 1000;
-            backdrop-filter: blur(8px);
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
             border-bottom: 1px solid var(--border-color);
             transition: background-color 0.3s ease,
                 box-shadow 0.3s ease,
@@ -627,10 +688,41 @@
         }
 
         .file-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 5px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
             margin-top: 0;
+        }
+
+        .file-actions .action-button {
+            width: 100%;
+            min-height: 38px;
+            padding: 9px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--tag-bg);
+            color: var(--text-color);
+            justify-content: center;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .file-actions .action-button.action-button-danger {
+            background: #c92a2a;
+            color: #fff;
+            border-color: #b41f1f;
+        }
+
+        .file-actions .action-button:hover,
+        .style-buttons .action-button:hover {
+            background: var(--card-bg);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .file-actions .action-button.action-button-danger:hover {
+            background: #a51111;
+            color: #fff;
+            border-color: #921010;
         }
 
         .file-preview {
@@ -1053,15 +1145,26 @@
 
         .song-tags {
             display: flex;
-            gap: 5px;
-            margin-top: 5px;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 2px;
         }
 
         .song-tag {
-            font-size: 0.9rem;
-            padding: 4px 10px;
-            border-radius: 20px;
+            font-size: 0.82rem;
+            line-height: 1.2;
+            padding: 5px 11px;
+            border-radius: 999px;
+            border: 1px solid var(--border-color);
             background: var(--tag-bg);
+            color: var(--text-color);
+        }
+
+        .duet-tag,
+        .background-vocals-tag,
+        .no-audio-tag,
+        .instrumental-tag {
+            border-color: transparent;
         }
 
         .duet-tag {
@@ -1400,7 +1503,8 @@
             .json-list {
                 margin: 0;
                 padding: 16px;
-                display: flex;
+                display: grid;
+                grid-template-columns: minmax(0, 1fr);
                 gap: 16px;
             }
 
@@ -1409,7 +1513,7 @@
                 min-width: unset;
                 width: 100%;
                 padding: 18px;
-                border-radius: 20px;
+                border-radius: 18px;
             }
 
             .file-name {
@@ -1424,14 +1528,18 @@
             }
 
             .style-buttons {
-                flex-direction: row;
-                flex-wrap: wrap;
+                grid-template-columns: minmax(0, 1fr);
                 gap: 10px;
             }
 
-            .style-button {
-                flex: 1 1 calc(50% - 10px);
-                justify-content: center;
+            .style-buttons .am-style {
+                grid-column: auto;
+            }
+
+            .style-button,
+            .style-buttons .action-button {
+                min-height: 44px;
+                font-size: 0.95rem;
             }
 
             .file-actions {
@@ -1442,6 +1550,8 @@
 
             .file-actions .action-button {
                 width: 100%;
+                min-height: 42px;
+                font-size: 0.92rem;
             }
 
             .modal {
@@ -1481,10 +1591,16 @@
             }
         }
 
-        /* 增强对比度 */
         .style-button:hover {
-            opacity: 0.9;
-            filter: brightness(1.05);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.14);
+        }
+
+        body.is-resizing .style-button:hover,
+        body.is-resizing .file-actions .action-button:hover,
+        body.is-resizing .style-buttons .action-button:hover {
+            transform: none;
+            box-shadow: none;
         }
 
         .search-box {
@@ -3495,17 +3611,37 @@
                 .then(data => {
                     if (data.status === 'success') {
                         const tagsContainer = document.getElementById(`tags-${filename}`)
-                        if (data.hasDuet) {
+                        if (data.hasDuet && tagsContainer && !tagsContainer.querySelector('.duet-tag')) {
                             const duetTag = document.createElement('span')
                             duetTag.className = 'song-tag duet-tag'
                             duetTag.textContent = '包含对唱歌词'
                             tagsContainer.appendChild(duetTag)
                         }
-                        if (data.hasBackgroundVocals) {
+                        if (data.hasBackgroundVocals && tagsContainer && !tagsContainer.querySelector('.background-vocals-tag')) {
                             const bgTag = document.createElement('span')
                             bgTag.className = 'song-tag background-vocals-tag'
                             bgTag.textContent = '包含背景歌词'
                             tagsContainer.appendChild(bgTag)
+                        }
+                        const summary = songSummaryCache.get(filename)
+                        let summaryChanged = false
+                        if (summary) {
+                            if (data.hasDuet && !summary.hasDuet) {
+                                summary.hasDuet = true
+                                summaryChanged = true
+                            }
+                            if (data.hasBackgroundVocals && !summary.hasBackgroundVocals) {
+                                summary.hasBackgroundVocals = true
+                                summaryChanged = true
+                            }
+                            if (summaryChanged) {
+                                songSummaryCache.set(filename, summary)
+                                refreshSongSummarySearchCacheByFilename(filename)
+                            }
+                        }
+                        const targetItem = songItemByFilename.get(filename)
+                        if (targetItem) {
+                            refreshSongItemSearchCache(targetItem)
                         }
                         if (typeof applySearch === 'function') {
                             applySearch()
@@ -3768,8 +3904,24 @@
         const batchTranslateStatus = document.getElementById('batchTranslateStatus')
         const batchSelectionCount = document.getElementById('batchSelectionCount')
         const songSummaryCache = new Map()
+        const songItemByFilename = new Map()
+        const songSearchPoolCache = new Map()
+        const songSortNameCache = new Map()
         const selectedSongs = new Set()
-        let allJsonItems = []
+        let allSongFilenames = []
+        let mainListVisibleFilenames = []
+        let mainListRenderCursor = 0
+        let mainListRenderRaf = 0
+        let searchInputDebounceTimer = 0
+        const MAIN_LIST_BATCH_SIZE = 48
+        const SEARCH_INPUT_DEBOUNCE_MS = 120
+        const RESIZE_SETTLE_MS = 180
+        const WRITE_LOCK_TEXT_PATTERN = /修改|保存|重命名|删除|上传|创建|关闭|合并|提取|AI|转换|恢复|导出|更新|路径|下载|翻译/
+        let currentPortMode = 'fixed'
+        let currentWriteLockEnabled = false
+        let resizeSettleTimer = 0
+        let viewportResizing = false
+        let resizePausedCoverVideos = []
 
         const BATCH_FILTERS = [
             { key: 'all', label: '全部' },
@@ -5360,16 +5512,23 @@
         }
 
         function getSortComparator() {
-            return (a, b) => {
+            return (filenameA, filenameB) => {
                 if (currentSort.type === 'name') {
-                    const textA = a.querySelector('.file-name').textContent.toLowerCase()
-                    const textB = b.querySelector('.file-name').textContent.toLowerCase()
+                    const textA = String(songSortNameCache.get(filenameA) || '')
+                    const textB = String(songSortNameCache.get(filenameB) || '')
                     return currentSort.asc ? textA.localeCompare(textB, 'zh-Hans-CN')
                         : textB.localeCompare(textA, 'zh-Hans-CN')
                 }
-                const timeA = parseFloat(a.dataset.mtime)
-                const timeB = parseFloat(b.dataset.mtime)
-                return currentSort.asc ? timeA - timeB : timeB - timeA
+                const summaryA = songSummaryCache.get(filenameA)
+                const summaryB = songSummaryCache.get(filenameB)
+                const timeA = Number(summaryA && summaryA.mtime ? summaryA.mtime : 0)
+                const timeB = Number(summaryB && summaryB.mtime ? summaryB.mtime : 0)
+                if (timeA !== timeB) {
+                    return currentSort.asc ? timeA - timeB : timeB - timeA
+                }
+                const textA = String(songSortNameCache.get(filenameA) || '')
+                const textB = String(songSortNameCache.get(filenameB) || '')
+                return textA.localeCompare(textB, 'zh-Hans-CN')
             }
         }
 
@@ -5617,6 +5776,74 @@
             return Boolean(fromMeta && fromMeta !== '!')
         }
 
+        function getSummaryDisplayNameForList(summary) {
+            const filename = String(summary && summary.filename ? summary.filename : '')
+            return filename.replace(/\.json$/i, '')
+        }
+
+        function getSummaryTagSearchText(summary) {
+            const tags = []
+            if (!hasLyricsSummary(summary)) {
+                tags.push('纯音乐')
+            }
+            if (!summary.hasAudio) {
+                tags.push('无音源')
+            }
+            if (summary.hasDuet) {
+                tags.push('包含对唱歌词')
+            }
+            if (summary.hasBackgroundVocals) {
+                tags.push('包含背景歌词')
+            }
+            return tags.join(' ')
+        }
+
+        function buildSongSummarySearchPool(summary) {
+            const filename = String(summary && summary.filename ? summary.filename : '')
+            const displayName = getSummaryDisplayNameForList(summary)
+            const tagsText = getSummaryTagSearchText(summary)
+            return `${displayName} ${filename} ${tagsText}`.toLowerCase()
+        }
+
+        function refreshSongSummarySearchCacheByFilename(filename) {
+            if (!filename) return
+            const summary = songSummaryCache.get(filename)
+            if (!summary) return
+            const sortName = getSummaryDisplayNameForList(summary).toLowerCase()
+            const searchPool = buildSongSummarySearchPool(summary)
+            songSortNameCache.set(filename, sortName)
+            songSearchPoolCache.set(filename, searchPool)
+
+            const cachedItem = songItemByFilename.get(filename)
+            if (cachedItem) {
+                cachedItem.dataset.sortName = sortName
+                cachedItem.dataset.searchPool = searchPool
+            }
+        }
+
+        function ensureSongItemForFilename(filename) {
+            if (!filename) return null
+            const cachedItem = songItemByFilename.get(filename)
+            if (cachedItem) {
+                return cachedItem
+            }
+            const summary = songSummaryCache.get(filename)
+            if (!summary) {
+                return null
+            }
+            const createdItem = createSongItem(summary)
+            songItemByFilename.set(filename, createdItem)
+            const sortName = String(songSortNameCache.get(filename) || '')
+            const searchPool = String(songSearchPoolCache.get(filename) || '')
+            if (sortName) {
+                createdItem.dataset.sortName = sortName
+            }
+            if (searchPool) {
+                createdItem.dataset.searchPool = searchPool
+            }
+            return createdItem
+        }
+
         function buildSongTags(summary) {
             const container = document.createElement('div')
             container.className = 'song-tags'
@@ -5642,10 +5869,10 @@
 
         function refreshAlbumCoverObserverTargets() {
             if (!albumCoverObserver || albumCoverObserverSuspended) return
-            const covers = document.querySelectorAll('#jsonList .album-cover[data-src], #jsonList .album-cover[data-video-src], #jsonList .album-cover[data-dynamic-video-src]')
+            const covers = document.querySelectorAll('#jsonList .album-cover[data-src], #jsonList .album-cover[data-video-src]')
             covers.forEach(cover => {
                 if (!(cover instanceof HTMLElement)) return
-                if (!cover.getAttribute('data-dynamic-video-src') && cover.getAttribute('src')) return
+                if (cover.getAttribute('src')) return
                 albumCoverObserver.observe(cover)
             })
         }
@@ -5777,12 +6004,7 @@
                     const cover = entry.target
                     const dataSrc = cover.getAttribute('data-src')
                     const dataVideo = cover.getAttribute('data-video-src')
-                    const dataDynamicVideo = cover.getAttribute('data-dynamic-video-src')
-                    const dataPoster = cover.getAttribute('data-poster-src')
-
-                    if (dataDynamicVideo) {
-                        replaceCoverWithVideo(cover, dataDynamicVideo, dataPoster)
-                    } else if (dataVideo && !cover.src) {
+                    if (dataVideo && !cover.src) {
                         captureVideoMiddleFrame(dataVideo).then(dataUrl => {
                             if (!dataUrl) {
                                 removeSongItemCover(cover)
@@ -5822,7 +6044,8 @@
             }
         }
 
-        function replaceCoverWithVideo(coverEl, videoSrc, posterSrc = '') {
+        function replaceCoverWithVideo(coverEl, videoSrc, posterSrc = '', options = {}) {
+            const playImmediately = Boolean(options && options.playImmediately)
             if (!coverEl || !videoSrc) return
             const coverSlot = coverEl.closest('.album-cover-slot')
             const container = coverEl.closest('.file-name')
@@ -5835,13 +6058,33 @@
             videoEl.className = 'album-cover album-cover-video'
             videoEl.muted = true
             videoEl.loop = true
-            videoEl.autoplay = true
+            videoEl.autoplay = false
             videoEl.playsInline = true
             videoEl.preload = 'metadata'
             if (posterSrc) {
                 videoEl.poster = posterSrc
             }
             videoEl.src = videoSrc
+
+            const playCoverVideo = () => {
+                if (viewportResizing) {
+                    return
+                }
+                videoEl.play().catch(() => {
+                    // Ignore autoplay/gesture restrictions
+                })
+            }
+
+            const pauseCoverVideo = () => {
+                videoEl.pause()
+            }
+
+            const hoverHost = container.closest('.json-item') || coverSlot
+            if (hoverHost) {
+                hoverHost.addEventListener('mouseenter', playCoverVideo)
+                hoverHost.addEventListener('mouseleave', pauseCoverVideo)
+            }
+
             videoEl.addEventListener('error', () => {
                 container.classList.remove('has-dynamic-video-cover')
                 if (posterSrc) {
@@ -5854,9 +6097,9 @@
             })
 
             coverSlot.replaceChildren(videoEl)
-            videoEl.play().catch(() => {
-                // 自动播放被阻止时，video poster 会继续作为占位图显示
-            })
+            if (playImmediately) {
+                playCoverVideo()
+            }
         }
 
         function getPathFromUrl(url) {
@@ -5885,6 +6128,7 @@
             const li = document.createElement('li')
             li.className = 'json-item'
             li.dataset.mtime = summary.mtime || 0
+            li.dataset.filename = summary.filename || ''
 
             const header = document.createElement('div')
             header.className = 'json-item-header'
@@ -5892,6 +6136,7 @@
             const fileNameDiv = document.createElement('div')
             fileNameDiv.className = 'file-name'
             const displayName = summary.filename.replace(/\.json$/i, '')
+            const normalizedDisplayName = displayName.toLowerCase()
             const fileNameText = document.createElement('span')
             fileNameText.className = 'file-name-text'
             fileNameText.textContent = displayName
@@ -5934,21 +6179,32 @@
                 const coverImg = createAlbumCoverImage()
 
                 if (dynamicVideoUrl) {
-                    // 动态封面视频：使用 data 属性标记，由 IntersectionObserver 处理
+                    // 动态封面视频：默认仅显示静态封面，交互后再切换为视频
                     coverImg.setAttribute('data-dynamic-video-src', dynamicVideoUrl)
+                    const posterCandidate = posterUrl || (summary.albumImgSrc ? resolveCoverUrl(summary.albumImgSrc) : '')
                     if (posterUrl) {
                         coverImg.setAttribute('data-poster-src', posterUrl)
-                        // 先显示 poster 作为占位符
-                        coverImg.src = posterUrl
-                    } else if (summary.albumImgSrc) {
-                        // 没有 poster，使用专辑图作为占位符
-                        const albumUrl = resolveCoverUrl(summary.albumImgSrc)
-                        coverImg.setAttribute('data-poster-src', albumUrl)
-                        coverImg.src = albumUrl
+                    } else if (posterCandidate) {
+                        coverImg.setAttribute('data-poster-src', posterCandidate)
+                    }
+                    if (posterCandidate) {
+                        coverImg.src = posterCandidate
+                    } else {
+                        coverImg.setAttribute('data-video-src', dynamicVideoUrl)
                     }
                     coverImg.addEventListener('error', () => {
                         coverImg.removeAttribute('src')
                     })
+                    const activateDynamicCover = () => {
+                        replaceCoverWithVideo(
+                            coverImg,
+                            dynamicVideoUrl,
+                            coverImg.getAttribute('data-poster-src') || '',
+                            { playImmediately: true }
+                        )
+                    }
+                    coverImg.addEventListener('pointerenter', activateDynamicCover, { once: true })
+                    coverImg.addEventListener('click', activateDynamicCover, { once: true })
                 } else if (finalCoverUrl) {
                     coverImg.setAttribute('data-src', finalCoverUrl)
                     coverImg.addEventListener('error', () => removeSongItemCover(coverImg), { once: true })
@@ -5960,10 +6216,9 @@
                 coverSlot.appendChild(coverImg)
                 fileNameDiv.appendChild(coverSlot)
                 ensureAlbumCoverObserver()
-                if (albumCoverObserver && !albumCoverObserverSuspended) {
+                const shouldObserveCover = Boolean(coverImg.getAttribute('data-src') || coverImg.getAttribute('data-video-src'))
+                if (shouldObserveCover && albumCoverObserver && !albumCoverObserverSuspended) {
                     albumCoverObserver.observe(coverImg)
-                } else if (dynamicVideoUrl) {
-                    replaceCoverWithVideo(coverImg, dynamicVideoUrl, coverImg.getAttribute('data-poster-src') || '')
                 } else if (finalCoverUrl) {
                     coverImg.src = finalCoverUrl
                 } else if (backgroundVideoUrl) {
@@ -5985,7 +6240,8 @@
             })
 
             header.appendChild(fileNameDiv)
-            header.appendChild(buildSongTags(summary))
+            const songTags = buildSongTags(summary)
+            header.appendChild(songTags)
             li.appendChild(header)
 
             const actionsWrapper = document.createElement('div')
@@ -6063,7 +6319,7 @@
             renameBtn.addEventListener('click', () => showRenameModal(summary.filename, summary.title || '', artistsString))
 
             const deleteBtn = document.createElement('button')
-            deleteBtn.className = 'action-button'
+            deleteBtn.className = 'action-button action-button-danger'
             deleteBtn.textContent = '删除歌曲'
             deleteBtn.addEventListener('click', () => {
                 if (confirm('确定要删除此歌曲条目吗？（关联的歌词、音乐等文件将被保留）')) {
@@ -6090,19 +6346,30 @@
 
             li.appendChild(actionsWrapper)
             li.appendChild(preview)
+            li.dataset.sortName = normalizedDisplayName
+            refreshSongItemSearchCache(li)
             return li
         }
 
         function renderSongList(summaries) {
-            const list = document.getElementById('jsonList')
             songSummaryCache.clear()
-            list.innerHTML = ''
-            allJsonItems = []
+            songItemByFilename.clear()
+            songSearchPoolCache.clear()
+            songSortNameCache.clear()
+            allSongFilenames = []
+            mainListVisibleFilenames = []
+            mainListRenderCursor = 0
+            resizePausedCoverVideos = []
+            if (jsonList) {
+                jsonList.innerHTML = ''
+            }
 
             summaries.forEach(summary => {
-                songSummaryCache.set(summary.filename, summary)
-                const item = createSongItem(summary)
-                allJsonItems.push(item)
+                const filename = String(summary && summary.filename ? summary.filename : '')
+                if (!filename) return
+                songSummaryCache.set(filename, summary)
+                allSongFilenames.push(filename)
+                refreshSongSummarySearchCacheByFilename(filename)
             })
 
             applySearch()
@@ -6129,10 +6396,8 @@
         }
 
         function selectVisibleSongsForBatch() {
-            const visibleItems = (allJsonItems || []).filter(item => item.style.display !== 'none')
-            visibleItems.forEach(item => {
-                const preview = item.querySelector('.file-preview')
-                const filename = preview ? preview.id.replace('preview-', '') : ''
+            const visibleFilenames = Array.isArray(mainListVisibleFilenames) ? mainListVisibleFilenames : []
+            visibleFilenames.forEach(filename => {
                 if (filename) selectedSongs.add(filename)
             })
             
@@ -6733,48 +6998,255 @@
                     const finishedEntries = successCount + failedCount + skippedCount
                     setBatchWorkbenchProgress(finishedEntries, totalEntries)
                     scheduleBatchWorkbenchResultRender({ detail: true, full: true })
-                    setAlbumCoverObserverSuspended(false)
+                    setAlbumCoverObserverSuspended(viewportResizing)
                 }
         }
 
-        function buildSearchPool(item) {
-            const fileName = item.querySelector('.file-name')?.textContent || ''
-            const tagsText = item.querySelector('.song-tags')?.textContent || ''
-            return `${fileName} ${tagsText}`.toLowerCase()
+        function refreshSongItemSearchCache(item) {
+            if (!item) return
+            const filename = String(item.dataset && item.dataset.filename ? item.dataset.filename : '')
+            const fileNameText = item.querySelector('.file-name-text')
+            const tagsEl = item.querySelector('.song-tags')
+            const visibleTitle = fileNameText ? String(fileNameText.textContent || '') : filename.replace(/\.json$/i, '')
+            const tagsText = tagsEl ? String(tagsEl.textContent || '') : ''
+            const sortName = item.dataset.sortName
+                ? String(item.dataset.sortName)
+                : visibleTitle.toLowerCase()
+            const searchPool = `${visibleTitle} ${filename} ${tagsText}`.toLowerCase()
+            item.dataset.sortName = sortName
+            item.dataset.searchPool = searchPool
+            if (filename) {
+                songSortNameCache.set(filename, sortName)
+                songSearchPoolCache.set(filename, searchPool)
+            }
+        }
+
+        function buildSearchPoolByFilename(filename) {
+            if (!filename) return ''
+            if (!songSearchPoolCache.has(filename)) {
+                refreshSongSummarySearchCacheByFilename(filename)
+            }
+            const cachedItem = songItemByFilename.get(filename)
+            if (cachedItem && !cachedItem.dataset.searchPool) {
+                refreshSongItemSearchCache(cachedItem)
+            }
+            return String(songSearchPoolCache.get(filename) || '')
+        }
+
+        function applyPortModeToSongItem(item) {
+            if (!item) return
+            const styleButtons = item.querySelectorAll('.am-style, .fs-style, .fslr-style')
+            styleButtons.forEach(btn => {
+                if (currentPortMode === 'random') {
+                    btn.disabled = true
+                    btn.classList.add('disabled-style')
+                    btn.title = '随机端口下不可用'
+                } else {
+                    btn.disabled = false
+                    btn.classList.remove('disabled-style')
+                    btn.title = ''
+                    btn.textContent = btn.classList.contains('am-style')
+                        ? 'AM歌词样式'
+                        : (btn.classList.contains('fs-style') ? '全屏歌词样式' : '全屏对唱歌词样式')
+                }
+            })
+        }
+
+        function applyPortModeToAllSongItems() {
+            songItemByFilename.forEach(item => applyPortModeToSongItem(item))
+        }
+
+        function applyWriteLockToSongItem(item, locked = currentWriteLockEnabled) {
+            if (!item) return
+            const controls = item.querySelectorAll('.file-actions .action-button, .style-buttons .style-button')
+            controls.forEach(btn => {
+                if (!WRITE_LOCK_TEXT_PATTERN.test(btn.textContent || '')) return
+                btn.disabled = Boolean(locked)
+                btn.style.pointerEvents = locked ? 'none' : ''
+                btn.style.opacity = locked ? '0.5' : ''
+            })
+        }
+
+        function applyWriteLockToAllSongItems() {
+            songItemByFilename.forEach(item => applyWriteLockToSongItem(item))
+        }
+
+        function appendSongListBatch() {
+            if (!jsonList) return
+            if (mainListRenderCursor >= mainListVisibleFilenames.length) return
+            const fragment = document.createDocumentFragment()
+            const nextCursor = Math.min(mainListVisibleFilenames.length, mainListRenderCursor + MAIN_LIST_BATCH_SIZE)
+            for (let i = mainListRenderCursor; i < nextCursor; i += 1) {
+                const filename = String(mainListVisibleFilenames[i] || '')
+                const item = ensureSongItemForFilename(filename)
+                if (!item) continue
+                applyPortModeToSongItem(item)
+                applyWriteLockToSongItem(item)
+                item.style.display = ''
+                fragment.appendChild(item)
+            }
+            mainListRenderCursor = nextCursor
+            jsonList.appendChild(fragment)
+            refreshAlbumCoverObserverTargets()
+        }
+
+        function ensureMainListViewportFilled() {
+            let safety = 0
+            while (mainListRenderCursor < mainListVisibleFilenames.length && safety < 8) {
+                const distanceToBottom = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)
+                if (distanceToBottom > 260) {
+                    break
+                }
+                appendSongListBatch()
+                safety += 1
+            }
+        }
+
+        function resetAndRenderMainSongList(visibleFilenames) {
+            mainListVisibleFilenames = Array.isArray(visibleFilenames) ? visibleFilenames : []
+            mainListRenderCursor = 0
+            if (jsonList) {
+                jsonList.innerHTML = ''
+            }
+            appendSongListBatch()
+            ensureMainListViewportFilled()
+        }
+
+        function handleMainListScroll() {
+            if (viewportResizing) return
+            if (mainListRenderRaf) return
+            mainListRenderRaf = window.requestAnimationFrame(() => {
+                mainListRenderRaf = 0
+                const distanceToBottom = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)
+                if (distanceToBottom < 420) {
+                    appendSongListBatch()
+                    ensureMainListViewportFilled()
+                }
+            })
+        }
+
+        function isElementInsideViewport(element, margin = 0) {
+            if (!element || typeof element.getBoundingClientRect !== 'function') {
+                return false
+            }
+            const rect = element.getBoundingClientRect()
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0
+            return rect.bottom >= -margin
+                && rect.top <= viewportHeight + margin
+                && rect.right >= -margin
+                && rect.left <= viewportWidth + margin
+        }
+
+        function pauseActiveAlbumCoverVideosForResize() {
+            const activeVideos = []
+            const videos = document.querySelectorAll('#jsonList .album-cover-video')
+            videos.forEach(videoEl => {
+                if (!(videoEl instanceof HTMLVideoElement)) return
+                if (!videoEl.isConnected) return
+                if (!videoEl.paused && !videoEl.ended) {
+                    activeVideos.push(videoEl)
+                }
+                videoEl.pause()
+            })
+            resizePausedCoverVideos = activeVideos
+        }
+
+        function resumeAlbumCoverVideosAfterResize() {
+            if (!Array.isArray(resizePausedCoverVideos) || resizePausedCoverVideos.length === 0) {
+                resizePausedCoverVideos = []
+                return
+            }
+            const videosToResume = resizePausedCoverVideos
+            resizePausedCoverVideos = []
+            videosToResume.forEach(videoEl => {
+                if (!(videoEl instanceof HTMLVideoElement)) return
+                if (!videoEl.isConnected) return
+                if (!isElementInsideViewport(videoEl, 140)) return
+                videoEl.play().catch(() => {
+                    // Ignore autoplay/gesture restrictions
+                })
+            })
+        }
+
+        function finishViewportResize() {
+            if (resizeSettleTimer) {
+                window.clearTimeout(resizeSettleTimer)
+                resizeSettleTimer = 0
+            }
+            if (!viewportResizing) return
+            viewportResizing = false
+            document.body.classList.remove('is-resizing')
+            if (!batchWorkbenchState.running) {
+                setAlbumCoverObserverSuspended(false)
+            }
+            ensureMainListViewportFilled()
+            resumeAlbumCoverVideosAfterResize()
+        }
+
+        function beginViewportResize() {
+            if (!viewportResizing) {
+                viewportResizing = true
+                document.body.classList.add('is-resizing')
+                if (!batchWorkbenchState.running) {
+                    setAlbumCoverObserverSuspended(true)
+                }
+                pauseActiveAlbumCoverVideosForResize()
+            }
+            if (resizeSettleTimer) {
+                window.clearTimeout(resizeSettleTimer)
+            }
+            resizeSettleTimer = window.setTimeout(finishViewportResize, RESIZE_SETTLE_MS)
+        }
+
+        function handleViewportResize() {
+            beginViewportResize()
+            if (typeof scheduleUpdateSearchHeaderOffset === 'function') {
+                scheduleUpdateSearchHeaderOffset()
+            }
+        }
+
+        function scheduleApplySearch() {
+            if (searchInputDebounceTimer) {
+                window.clearTimeout(searchInputDebounceTimer)
+            }
+            searchInputDebounceTimer = window.setTimeout(() => {
+                searchInputDebounceTimer = 0
+                applySearch()
+            }, SEARCH_INPUT_DEBOUNCE_MS)
         }
 
         function applySearch() {
-            const rawText = searchBox.value.toLowerCase()
+            if (searchInputDebounceTimer) {
+                window.clearTimeout(searchInputDebounceTimer)
+                searchInputDebounceTimer = 0
+            }
+            const rawText = String(searchBox && searchBox.value ? searchBox.value : '').toLowerCase()
             const isFuzzy = fuzzySearchToggle && fuzzySearchToggle.checked
             const keywords = isFuzzy ? parseFuzzyKeywords(rawText) : parseKeywords(rawText)
-            const list = document.getElementById('jsonList')
-            const listItems = Array.from(allJsonItems || [])
+            const listFilenames = Array.from(allSongFilenames || [])
 
-            if (listItems.length === 0) {
-                while (list.firstChild) {
-                    list.removeChild(list.firstChild)
+            if (listFilenames.length === 0) {
+                if (jsonList) {
+                    jsonList.innerHTML = ''
                 }
+                mainListVisibleFilenames = []
+                mainListRenderCursor = 0
                 return
             }
 
             if (keywords.length === 0) {
-                listItems.sort(getSortComparator())
-                while (list.firstChild) {
-                    list.removeChild(list.firstChild)
-                }
-                listItems.forEach(item => {
-                    item.style.display = ''
-                    list.appendChild(item)
-                })
+                listFilenames.sort(getSortComparator())
+                resetAndRenderMainSongList(listFilenames)
                 return
             }
 
             const comparator = getSortComparator()
 
-            const rankedItems = listItems.map(item => {
-                const searchPool = buildSearchPool(item)
+            const rankedItems = listFilenames.map(filename => {
+                const searchPool = buildSearchPoolByFilename(filename)
                 const matchCount = keywords.reduce((count, keyword) => searchPool.includes(keyword) ? count + 1 : count, 0)
-                return { item, matchCount }
+                return { filename, matchCount }
             })
 
             const visibleItems = rankedItems.filter(entry => entry.matchCount > 0)
@@ -6784,26 +7256,28 @@
                 if (b.matchCount !== a.matchCount) {
                     return b.matchCount - a.matchCount
                 }
-                return comparator(a.item, b.item)
+                return comparator(a.filename, b.filename)
             })
 
-            hiddenItems.sort((a, b) => comparator(a.item, b.item))
+            hiddenItems.sort((a, b) => comparator(a.filename, b.filename))
 
-            while (list.firstChild) {
-                list.removeChild(list.firstChild)
-            }
-
-            visibleItems.forEach(({ item }) => {
-                item.style.display = ''
-                list.appendChild(item)
+            hiddenItems.forEach(({ filename }) => {
+                const item = songItemByFilename.get(filename)
+                if (item) {
+                    item.style.display = 'none'
+                }
             })
 
-            hiddenItems.forEach(({ item }) => {
-                item.style.display = 'none'
-            })
+            const nextVisibleFilenames = visibleItems.map(({ filename }) => filename)
+            resetAndRenderMainSongList(nextVisibleFilenames)
         }
 
-        searchBox.addEventListener('input', applySearch)
+        window.addEventListener('scroll', handleMainListScroll, { passive: true })
+        window.addEventListener('resize', handleViewportResize)
+
+        if (searchBox) {
+            searchBox.addEventListener('input', scheduleApplySearch)
+        }
         if (fuzzySearchToggle) {
             fuzzySearchToggle.addEventListener('change', applySearch)
         }
@@ -6841,21 +7315,7 @@
         }
 
         function sortList() {
-            const list = document.getElementById('jsonList')
-            const items = Array.from(allJsonItems || [])
-            const comparator = getSortComparator()
-
-            items.sort(comparator)
-
-            while (list.firstChild) {
-                list.removeChild(list.firstChild)
-            }
-            if (items.length > 0) {
-                items.forEach(item => {
-                    item.style.display = ''
-                    list.appendChild(item)
-                })
-            }
+            applySearch()
         }
 
         // 初始化时更新按钮状态
@@ -11378,6 +11838,7 @@
                 const res = await fetch('/get_port_status');
                 const data = await res.json();
                 console.log('[updatePortUI] 端口状态', data);
+                currentPortMode = data.mode === 'random' ? 'random' : 'fixed'
                 const backendPort = String(data.port);
                 const isLocal = (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && location.port === backendPort;
                 const portBtn = document.getElementById('portSwitchBtn');
@@ -11447,6 +11908,7 @@
                 } else {
                     portBtn.textContent = '随机端口';
                 }
+                applyPortModeToAllSongItems()
             } catch (e) {console.error('[updatePortUI] error', e);}
         }
         async function switchPortMode() {
@@ -11709,9 +12171,11 @@
                 const authRes = await fetch('/auth/status');
                 const authData = await authRes.json();
                 const isTrusted = authData.status === 'success' && authData.trusted;
+                const shouldLockWriteButtons = Boolean(securityEnabled && !isLocal && !isTrusted)
+                currentWriteLockEnabled = shouldLockWriteButtons
                 
                 // 如果安全保护启用且不是本地访问且设备不受信任，则禁用修改功能
-                if (securityEnabled && !isLocal && !isTrusted) {
+                if (shouldLockWriteButtons) {
                     var selectors = [
                         '.file-actions .action-button',
                         '.style-buttons .style-button',
@@ -11728,7 +12192,7 @@
                     ];
                     selectors.forEach(function(sel){
                         document.querySelectorAll(sel).forEach(function(btn){
-                            if(btn.textContent.match(/修改|保存|重命名|删除|上传|创建|关闭|合并|提取|AI|转换|恢复|导出|更新|路径|下载|翻译/)){
+                            if(btn.textContent.match(WRITE_LOCK_TEXT_PATTERN)){
                                 btn.disabled = true;
                                 btn.style.pointerEvents = 'none';
                                 btn.style.opacity = 0.5;
@@ -11759,6 +12223,7 @@
                         });
                     });
                 }
+                applyWriteLockToAllSongItems()
             } catch (e) {}
         }
         
@@ -11992,6 +12457,9 @@
             });
         }
 
+        let searchHeaderOffsetRaf = 0
+        let lastSearchHeaderOffset = -1
+
         function updateSearchHeaderOffset() {
             const header = document.querySelector('.search-container');
             if (!header) {
@@ -11999,11 +12467,28 @@
             }
             const isMobileLayout = window.matchMedia('(max-width: 768px), (orientation: portrait)').matches;
             if (isMobileLayout) {
-                document.body.style.removeProperty('--search-header-offset');
+                if (lastSearchHeaderOffset !== -1) {
+                    document.body.style.removeProperty('--search-header-offset');
+                    lastSearchHeaderOffset = -1;
+                }
                 return;
             }
-            const height = Math.ceil(header.getBoundingClientRect().height);
+            const height = Math.ceil(header.offsetHeight || header.getBoundingClientRect().height);
+            if (height === lastSearchHeaderOffset) {
+                return;
+            }
+            lastSearchHeaderOffset = height;
             document.body.style.setProperty('--search-header-offset', `${height}px`);
+        }
+
+        function scheduleUpdateSearchHeaderOffset() {
+            if (searchHeaderOffsetRaf) {
+                return;
+            }
+            searchHeaderOffsetRaf = window.requestAnimationFrame(() => {
+                searchHeaderOffsetRaf = 0;
+                updateSearchHeaderOffset();
+            });
         }
 
         // 添加设备管理下拉菜单的显示/隐藏逻辑
@@ -12031,13 +12516,12 @@
         });
 
         document.addEventListener('DOMContentLoaded', function() {
-            updateSearchHeaderOffset();
+            scheduleUpdateSearchHeaderOffset();
             const header = document.querySelector('.search-container');
             if (header && typeof ResizeObserver !== 'undefined') {
-                const observer = new ResizeObserver(updateSearchHeaderOffset);
+                const observer = new ResizeObserver(scheduleUpdateSearchHeaderOffset);
                 observer.observe(header);
             }
-            window.addEventListener('resize', updateSearchHeaderOffset);
         });
         
         window.addEventListener('DOMContentLoaded', updateWriteButtons);
