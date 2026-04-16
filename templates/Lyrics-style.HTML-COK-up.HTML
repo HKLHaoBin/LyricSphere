@@ -2489,6 +2489,7 @@
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
             let alwaysShowNextLine = false; // 是否始终显示下一行预览
             let nextLinePreviews = new Map();
+            let nextLinePreviewSignature = '';
             let lineResizeObserver = null;
             let previewHostRects = new Map();
             let rafId = null; // requestAnimationFrame ID
@@ -2497,6 +2498,54 @@
             const firstBreathState = { element: null };
             const breathDotsKey = 'breath-dots-gap';
             const firstBreathKey = 'breath-dots-first';
+
+            const lyricsPerfDebugPersistent = (() => {
+                try {
+                    const params = new URLSearchParams(window.location.search || '');
+                    if (params.get('lyricsPerf') === '1') return true;
+                    return localStorage.getItem('lyricsPerfDebug') === '1';
+                } catch (e) {
+                    return false;
+                }
+            })();
+
+            function isLyricsPerfDebugEnabled() {
+                try {
+                    if (window.__LYRICS_PERF_DEBUG__ === true) return true;
+                    if (window.LYRICS_PERF_DEBUG === true) return true;
+                } catch (e) {
+                    // ignore cross-context access errors
+                }
+                return lyricsPerfDebugPersistent;
+            }
+
+            const lyricsPerfMetrics = {
+                updateLyricsDisplay: { count: 0, total: 0, lastReport: performance.now() },
+                updateNextLinePreview: { count: 0, total: 0, lastReport: performance.now() }
+            };
+
+            function beginPerfMetric(name) {
+                if (!isLyricsPerfDebugEnabled()) return Number.NaN;
+                return performance.now();
+            }
+
+            function endPerfMetric(name, startedAt) {
+                if (!isLyricsPerfDebugEnabled() || !Number.isFinite(startedAt)) return;
+                const metric = lyricsPerfMetrics[name];
+                if (!metric) return;
+                const cost = Math.max(0, performance.now() - startedAt);
+                metric.count += 1;
+                metric.total += cost;
+
+                const now = performance.now();
+                if (now - metric.lastReport < 1000) return;
+
+                const avg = metric.count > 0 ? metric.total / metric.count : 0;
+                console.info(`[lyrics-perf] ${name} count=${metric.count}/s avg=${avg.toFixed(2)}ms`);
+                metric.count = 0;
+                metric.total = 0;
+                metric.lastReport = now;
+            }
 
             function refreshDisplayedLineAnimations() {
                 requestAnimationFrame(() => {
@@ -3917,6 +3966,7 @@
             }
 
             function removeBreathDotsLine() {
+                const hadBreathDots = Boolean(breathDotsState.element) || displayedLines.has(breathDotsKey);
                 if (breathDotsState.element) {
                     unobserveLineHeight(breathDotsState.element);
                     breathDotsState.element.remove();
@@ -3924,6 +3974,7 @@
                 breathDotsState.element = null;
                 breathDotsState.between = null;
                 displayedLines.delete(breathDotsKey);
+                return hadBreathDots;
             }
 
             function insertBreathDotsLine(el, beforeIndex) {
@@ -3975,7 +4026,7 @@
                     && breathDotsState.between.next === nextIndex) {
                     applyBreathLineAlignment(breathDotsState.element, alignClass);
                     applyBreathDotSequence(breathDotsState.element, startTime, endTime);
-                    return;
+                    return false;
                 }
                 removeBreathDotsLine();
                 const el = createBreathDotsLine('gap', alignClass);
@@ -3987,15 +4038,18 @@
                 displayedLines.set(breathDotsKey, { element: el });
                 observeLineHeight(el);
                 applyBreathDotSequence(el, startTime, endTime);
+                return true;
             }
 
             function removeFirstBreathLine() {
+                const hadFirstBreath = Boolean(firstBreathState.element) || displayedLines.has(firstBreathKey);
                 if (firstBreathState.element) {
                     unobserveLineHeight(firstBreathState.element);
                     firstBreathState.element.remove();
                 }
                 firstBreathState.element = null;
                 displayedLines.delete(firstBreathKey);
+                return hadFirstBreath;
             }
 
             function ensureFirstBreathLine(endTime) {
@@ -4004,7 +4058,7 @@
                     firstBreathState.element.dataset.endTime = endTime;
                     applyBreathLineAlignment(firstBreathState.element, alignClass);
                     applyBreathDotSequence(firstBreathState.element, 0, endTime);
-                    return;
+                    return false;
                 }
                 const el = createBreathDotsLine('first', alignClass);
                 el.dataset.startTime = 0;
@@ -4014,6 +4068,7 @@
                 displayedLines.set(firstBreathKey, { element: el });
                 observeLineHeight(el);
                 applyBreathDotSequence(el, 0, endTime);
+                return true;
             }
             
             function createLineElement(lineIndex, options = {}) {
@@ -4208,7 +4263,7 @@
             }
 
             function addLine(lineIndex) {
-                if (displayedLines.has(lineIndex)) return;
+                if (displayedLines.has(lineIndex)) return false;
 
                 // 如果存在该行的占位符，立即移除，为新行让路
                 if (placeholderLines.has(lineIndex)) {
@@ -4234,10 +4289,10 @@
                 if (!incomingLine) {
                     incomingLine = createLineElement(lineIndex);
                 }
-                if (!incomingLine) return;
+                if (!incomingLine) return false;
 
                 // 并发锁：防止重复添加
-                if (incomingLine.animationLock) return;
+                if (incomingLine.animationLock) return false;
                 incomingLine.animationLock = true;
 
                 // 插入歌词行到正确位置
@@ -4260,11 +4315,12 @@
                     });
                 }
                 scheduleAutoScale();
+                return true;
             }
 
             function removeLine(lineIndex) {
                 const lineInfo = displayedLines.get(lineIndex);
-                if (!lineInfo) return;
+                if (!lineInfo) return false;
 
                 const outgoingLine = lineInfo.element;
                 unobserveLineHeight(outgoingLine);
@@ -4280,14 +4336,14 @@
                         outgoingLine.remove();
                     }
                     displayedLines.delete(lineIndex);
-                    return;
+                    return true;
                 }
 
                 // 记录当前位置用于保持淡出起点
                 const originalRect = outgoingLine.getBoundingClientRect();
 
                 // 并发锁：动画未完成时禁止移除
-                if (outgoingLine.animationLock) return;
+                if (outgoingLine.animationLock) return false;
                 outgoingLine.animationLock = true;
 
                 // 1. 创建并插入占位符
@@ -4387,9 +4443,11 @@
                 placeholderLines.set(lineIndex, { element: placeholderEl, removalTimer: removalTimer });
                 displayedLines.delete(lineIndex);
                 scheduleAutoScale();
+                return true;
             }
 
             function clearNextLinePreview() {
+                const hadPreview = nextLinePreviews.size > 0;
                 nextLinePreviews.forEach((previewEl) => {
                     if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
                         previewEl.__previewEnterAnimation.cancel();
@@ -4400,6 +4458,8 @@
                     }
                 });
                 nextLinePreviews.clear();
+                nextLinePreviewSignature = '';
+                return hadPreview;
             }
 
             function ensureLineResizeObserver() {
@@ -4471,6 +4531,7 @@
 
                 // 从预览集合中移除
                 nextLinePreviews.delete(lineIndex);
+                nextLinePreviewSignature = '';
 
                 // 清理预览样式和类
                 previewEl.classList.remove('next-line-preview');
@@ -4482,7 +4543,7 @@
             }
             
             function startPreviewExitAnimation(lineIndex, previewEl) {
-                if (!previewEl || previewEl.__previewExitAnimation) return;
+                if (!previewEl || previewEl.__previewExitAnimation) return false;
 
                 // 取消进入动画
                 if (previewEl.__previewEnterAnimation?.cancel) {
@@ -4504,11 +4565,13 @@
                     delete previewEl.__previewExitAnimation;
                     delete previewEl.dataset.previewExiting;
                     nextLinePreviews.delete(lineIndex);
+                    nextLinePreviewSignature = '';
                 };
+                return true;
             }
 
             function cancelPreviewExitAnimation(previewEl) {
-                if (!previewEl?.__previewExitAnimation) return;
+                if (!previewEl?.__previewExitAnimation) return false;
 
                 try {
                     previewEl.__previewExitAnimation.cancel();
@@ -4517,6 +4580,7 @@
                 delete previewEl.__previewExitAnimation;
                 delete previewEl.dataset.previewExiting;
                 setPreviewStyle(previewEl, 'active');
+                return true;
             }
 
             /**
@@ -4746,71 +4810,10 @@
                 return anchorIndex;
             }
 
-            function getScaleFromTransform(transformValue) {
-                if (!transformValue || transformValue === 'none') return 1;
-                const match = transformValue.match(/matrix\(([^)]+)\)/);
-                if (!match) return 1;
-                const parts = match[1].split(',').map((v) => parseFloat(v.trim()));
-                if (parts.length < 4 || parts.some((v) => !Number.isFinite(v))) return 1;
-                const [a, b, c, d] = parts;
-                const scaleX = Math.sqrt(a * a + b * b);
-                const scaleY = Math.sqrt(c * c + d * d);
-                return Number.isFinite(scaleX) && Number.isFinite(scaleY) ? (scaleX + scaleY) / 2 : 1;
-            }
-
-            function updateBreathDots(currentTime) {
-                if (showAllLinesWhenPaused) {
-                    removeBreathDotsLine();
-                    return;
-                }
-                const breathOffsetSeconds = breathDisappearOffsetMs / 1000;
-                const exitHoldSeconds = breathExitDurationMs / 1000;
-                if (breathDotsState.element) {
-                    const existingEndTime = parseFloat(breathDotsState.element.dataset.endTime);
-                    if (Number.isFinite(existingEndTime)) {
-                        const removeAt = existingEndTime + breathOffsetSeconds + exitHoldSeconds;
-                        if (currentTime < removeAt) {
-                            return;
-                        }
-                    }
-                }
-                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
-                const prevIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
-                if (prevIndex == null || nextIndex == null || nextIndex <= prevIndex) {
-                    removeBreathDotsLine();
-                    return;
-                }
-                const prevTiming = getLineTiming(lyricsData[prevIndex]);
-                const nextTiming = getLineTiming(lyricsData[nextIndex]);
-                if (!prevTiming || !nextTiming) {
-                    removeBreathDotsLine();
-                    return;
-                }
-                const gapStart = prevTiming.disappearTime;
-                const gapEnd = Math.max(gapStart, nextTiming.startTime - lineDisplayOffset + 0.1);
-                const gap = gapEnd - gapStart;
-                const displayEndTime = gapEnd + breathOffsetSeconds;
-                const inGap = currentTime >= gapStart && currentTime < displayEndTime;
-                if (gap >= breathGapSeconds && inGap) {
-                    ensureBreathDotsLine(prevIndex, nextIndex, gapStart, gapEnd);
-                } else {
-                    removeBreathDotsLine();
-                }
-            }
-
-            function updateNextLinePreview() {
-                if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
-                    clearNextLinePreview();
-                    return;
-                }
-                const currentTime = audioPlayer.currentTime;
+            function buildNextLinePreviewState(currentTime) {
                 const { activeIndex } = findNextLineIndices(currentTime);
                 const anchorIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
                 const upcoming = getTimeSortedUpcomingIndices(currentTime);
-                if (upcoming.length === 0) {
-                    clearNextLinePreview();
-                    return;
-                }
 
                 const previewIndices = [];
                 let cursor = 0;
@@ -4826,213 +4829,438 @@
                     break;
                 }
 
-                const desired = new Set(previewIndices);
-                nextLinePreviews.forEach((previewEl, index) => {
-                    if (!desired.has(index)) {
-                        startPreviewExitAnimation(index, previewEl);
-                    } else if (previewEl.dataset.previewExiting) {
-                        cancelPreviewExitAnimation(previewEl);
-                    }
-                });
+                return { anchorIndex, previewIndices };
+            }
 
-                const sortedIndices = previewIndices.slice().sort((a, b) => a - b);
-                const previewOldRects = new Map();
-                if (!suppressAnimations) {
-                    nextLinePreviews.forEach((previewEl) => {
-                        previewOldRects.set(previewEl, previewEl.getBoundingClientRect());
-                    });
+            function makeNextLinePreviewSignature(anchorIndex, previewIndices) {
+                const anchorPart = anchorIndex == null ? 'na' : String(anchorIndex);
+                return `${anchorPart}|${previewIndices.join(',')}`;
+            }
+
+            function hasPreviewDomMismatch(previewIndices) {
+                if (nextLinePreviews.size !== previewIndices.length) {
+                    return true;
                 }
-                sortedIndices.forEach((index) => {
-                    if (nextLinePreviews.has(index)) return;
-
-                    const previewEl = createLineElement(index, { isPreview: true });
-                    if (!previewEl) return;
-
-                    nextLinePreviews.set(index, previewEl);
-
-                    // 确定预览宿主容器
-                    const host = (anchorIndex != null && index < anchorIndex && nextLinePreviewHostTop)
-                        ? nextLinePreviewHostTop
-                        : nextLinePreviewHost;
-                    host.appendChild(previewEl);
-
-                    // 应用进入动画或直接设置最终状态
-                    if (!suppressAnimations) {
-                        setPreviewStyle(previewEl, 'initial');
-                        previewEl.__previewEnterAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.enter, {
-                            duration: enterDuration,
-                            easing: customEasing,
-                            fill: 'forwards'
-                        });
-                    } else {
-                        setPreviewStyle(previewEl, 'active');
-                    }
-                });
-
-                if (nextLinePreviewHostTop) {
-                    const topOrder = sortedIndices.filter((index) => anchorIndex != null && index < anchorIndex);
-                    topOrder.forEach((index) => {
-                        const previewEl = nextLinePreviews.get(index);
-                        if (previewEl) nextLinePreviewHostTop.appendChild(previewEl);
-                    });
-                }
-                const bottomOrder = sortedIndices.filter((index) => !(anchorIndex != null && index < anchorIndex));
-                bottomOrder.forEach((index) => {
+                for (const index of previewIndices) {
                     const previewEl = nextLinePreviews.get(index);
-                    if (previewEl) nextLinePreviewHost.appendChild(previewEl);
-                });
+                    if (!previewEl || previewEl.dataset.previewExiting) {
+                        return true;
+                    }
+                }
+                return false;
+            }
 
-                if (!suppressAnimations) {
-                    nextLinePreviews.forEach((previewEl) => {
-                        const oldRect = previewOldRects.get(previewEl);
-                        if (!oldRect) return;
-                        const newRect = previewEl.getBoundingClientRect();
-                        const deltaX = oldRect.left - newRect.left;
-                        const deltaY = oldRect.top - newRect.top;
-                        runFlipTransition(previewEl, deltaX, deltaY);
-                    });
+            function willNextLinePreviewChange(currentTime, previewState = null) {
+                if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
+                    return nextLinePreviews.size > 0;
+                }
+
+                const state = previewState || buildNextLinePreviewState(currentTime);
+                if (state.previewIndices.length === 0) {
+                    return nextLinePreviews.size > 0;
+                }
+
+                const signature = makeNextLinePreviewSignature(state.anchorIndex, state.previewIndices);
+                if (signature !== nextLinePreviewSignature) {
+                    return true;
+                }
+
+                return hasPreviewDomMismatch(state.previewIndices);
+            }
+
+            function getScaleFromTransform(transformValue) {
+                if (!transformValue || transformValue === 'none') return 1;
+                const match = transformValue.match(/matrix\(([^)]+)\)/);
+                if (!match) return 1;
+                const parts = match[1].split(',').map((v) => parseFloat(v.trim()));
+                if (parts.length < 4 || parts.some((v) => !Number.isFinite(v))) return 1;
+                const [a, b, c, d] = parts;
+                const scaleX = Math.sqrt(a * a + b * b);
+                const scaleY = Math.sqrt(c * c + d * d);
+                return Number.isFinite(scaleX) && Number.isFinite(scaleY) ? (scaleX + scaleY) / 2 : 1;
+            }
+
+            function willFirstBreathLineChange(firstBreathEnd, currentTime) {
+                const shouldShowFirstBreath = typeof firstBreathEnd === 'number' && currentTime < firstBreathEnd;
+                if (shouldShowFirstBreath) {
+                    return !firstBreathState.element;
+                }
+                return Boolean(firstBreathState.element);
+            }
+
+            function willBreathDotsLineChange(currentTime) {
+                if (showAllLinesWhenPaused) {
+                    return Boolean(breathDotsState.element);
+                }
+
+                const breathOffsetSeconds = breathDisappearOffsetMs / 1000;
+                const exitHoldSeconds = breathExitDurationMs / 1000;
+                if (breathDotsState.element) {
+                    const existingEndTime = parseFloat(breathDotsState.element.dataset.endTime);
+                    if (Number.isFinite(existingEndTime)) {
+                        const removeAt = existingEndTime + breathOffsetSeconds + exitHoldSeconds;
+                        if (currentTime < removeAt) {
+                            return false;
+                        }
+                    }
+                }
+
+                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                const prevIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
+                if (prevIndex == null || nextIndex == null || nextIndex <= prevIndex) {
+                    return Boolean(breathDotsState.element);
+                }
+
+                const prevTiming = getLineTiming(lyricsData[prevIndex]);
+                const nextTiming = getLineTiming(lyricsData[nextIndex]);
+                if (!prevTiming || !nextTiming) {
+                    return Boolean(breathDotsState.element);
+                }
+
+                const gapStart = prevTiming.disappearTime;
+                const gapEnd = Math.max(gapStart, nextTiming.startTime - lineDisplayOffset + 0.1);
+                const gap = gapEnd - gapStart;
+                const displayEndTime = gapEnd + breathOffsetSeconds;
+                const inGap = currentTime >= gapStart && currentTime < displayEndTime;
+                const shouldShow = gap >= breathGapSeconds && inGap;
+
+                if (!shouldShow) {
+                    return Boolean(breathDotsState.element);
+                }
+
+                const between = breathDotsState.between;
+                if (!breathDotsState.element || !between) {
+                    return true;
+                }
+
+                return between.prev !== prevIndex || between.next !== nextIndex;
+            }
+
+            function updateBreathDots(currentTime) {
+                if (showAllLinesWhenPaused) {
+                    return removeBreathDotsLine();
+                }
+                const breathOffsetSeconds = breathDisappearOffsetMs / 1000;
+                const exitHoldSeconds = breathExitDurationMs / 1000;
+                if (breathDotsState.element) {
+                    const existingEndTime = parseFloat(breathDotsState.element.dataset.endTime);
+                    if (Number.isFinite(existingEndTime)) {
+                        const removeAt = existingEndTime + breathOffsetSeconds + exitHoldSeconds;
+                        if (currentTime < removeAt) {
+                            return false;
+                        }
+                    }
+                }
+                const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                const prevIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
+                if (prevIndex == null || nextIndex == null || nextIndex <= prevIndex) {
+                    return removeBreathDotsLine();
+                }
+                const prevTiming = getLineTiming(lyricsData[prevIndex]);
+                const nextTiming = getLineTiming(lyricsData[nextIndex]);
+                if (!prevTiming || !nextTiming) {
+                    return removeBreathDotsLine();
+                }
+                const gapStart = prevTiming.disappearTime;
+                const gapEnd = Math.max(gapStart, nextTiming.startTime - lineDisplayOffset + 0.1);
+                const gap = gapEnd - gapStart;
+                const displayEndTime = gapEnd + breathOffsetSeconds;
+                const inGap = currentTime >= gapStart && currentTime < displayEndTime;
+                if (gap >= breathGapSeconds && inGap) {
+                    return ensureBreathDotsLine(prevIndex, nextIndex, gapStart, gapEnd);
+                } else {
+                    return removeBreathDotsLine();
                 }
             }
 
-            function updateLyricsDisplay() {
+            function updateNextLinePreview(previewState = null) {
+                const perfStartedAt = beginPerfMetric('updateNextLinePreview');
+                let didChange = false;
 
-                            const currentTime = audioPlayer.currentTime;
+                try {
+                    if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
+                        didChange = clearNextLinePreview();
+                        return didChange;
+                    }
 
-                            const oldPositions = suppressAnimations ? new Map() : new Map();
+                    const currentTime = audioPlayer.currentTime;
+                    const state = previewState || buildNextLinePreviewState(currentTime);
+                    const { anchorIndex, previewIndices } = state;
 
-                            const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                    if (previewIndices.length === 0) {
+                        didChange = clearNextLinePreview();
+                        return didChange;
+                    }
 
-            
+                    const signature = makeNextLinePreviewSignature(anchorIndex, previewIndices);
+                    const signatureChanged = signature !== nextLinePreviewSignature;
+                    const hasAnyExiting = Array.from(nextLinePreviews.values()).some((previewEl) => Boolean(previewEl.dataset.previewExiting));
+                    const domMismatch = hasPreviewDomMismatch(previewIndices);
 
-                            // 计算预览交接索引
+                    if (!signatureChanged && !domMismatch && !hasAnyExiting) {
+                        return false;
+                    }
 
-                            const takeoverIndex = calculateTakeoverIndex(currentTime, activeIndex, nextIndex);
-                if (!suppressAnimations) {
-                    // FIRST: 记录所有当前显示行和占位符的位置
-                    displayedLines.forEach((lineInfo, lineIndex) => {
-                        oldPositions.set(`line-${lineIndex}`, lineInfo.element.getBoundingClientRect());
-                    });
-                    placeholderLines.forEach((lineInfo, lineIndex) => {
-                        oldPositions.set(`placeholder-${lineIndex}`, lineInfo.element.getBoundingClientRect());
-                    });
-                }
+                    const desired = new Set(previewIndices);
+                    const sortedIndices = previewIndices.slice().sort((a, b) => a - b);
+                    const previewOldRects = new Map();
 
-                // 歌词行显示逻辑
-                if (showAllLinesWhenPaused) {
-                    // 暂停时，全部歌词行都显示
-                    lyricsData.forEach((line, index) => {
-                        if (!displayedLines.has(index)) {
-                            addLine(index);
+                    if (!suppressAnimations) {
+                        nextLinePreviews.forEach((previewEl) => {
+                            previewOldRects.set(previewEl, previewEl.getBoundingClientRect());
+                        });
+                    }
+
+                    nextLinePreviews.forEach((previewEl, index) => {
+                        if (!desired.has(index)) {
+                            didChange = startPreviewExitAnimation(index, previewEl) || didChange;
+                        } else if (previewEl.dataset.previewExiting) {
+                            didChange = cancelPreviewExitAnimation(previewEl) || didChange;
                         }
                     });
-                    // 多余的行要移除
-                    Array.from(displayedLines.keys()).forEach(index => {
-                        if (index >= lyricsData.length) {
-                            removeLine(index);
-                        }
-                    });
-                } else {
-                    // 正常模式，使用后端计算好的消失时机
-                    lyricsData.forEach((line, index) => {
-                        const timing = getLineTiming(line);
-                        if (!timing || isLineTextEmpty(line)) {
-                            if (displayedLines.has(index)) removeLine(index);
-                            return;
-                        }
 
-                        const isLineDisplayed = displayedLines.has(index);
-                        const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
-                            && (currentTime < timing.disappearTime);
+                    sortedIndices.forEach((index) => {
+                        if (nextLinePreviews.has(index)) return;
 
-                        // 预览交接：提前显示下一行，避免主歌词行消失时出现空白
-                        const isTakeoverLine = takeoverIndex === index
-                            && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
+                        const previewEl = createLineElement(index, { isPreview: true });
+                        if (!previewEl) return;
 
-                        const shouldDisplay = isLineActive || isTakeoverLine;
+                        nextLinePreviews.set(index, previewEl);
+                        didChange = true;
 
-                        if (shouldDisplay && !isLineDisplayed) {
-                            addLine(index);
-                        } else if (!shouldDisplay && isLineDisplayed) {
-                            removeLine(index);
-                        }
-                    });
-                }
+                        const host = (anchorIndex != null && index < anchorIndex && nextLinePreviewHostTop)
+                            ? nextLinePreviewHostTop
+                            : nextLinePreviewHost;
+                        host.appendChild(previewEl);
 
-                const firstLineStart = getLineStartTime(lyricsData[0]);
-                const firstBreathEnd = typeof firstLineStart === 'number'
-                    ? Math.max(0, firstLineStart - lineDisplayOffset + 0.1)
-                    : null;
-                if (typeof firstBreathEnd === 'number' && currentTime < firstBreathEnd) {
-                    ensureFirstBreathLine(firstBreathEnd);
-                } else {
-                    removeFirstBreathLine();
-                }
-                updateBreathDots(currentTime);
-
-                if (!suppressAnimations) {
-                    // LAST: 读取新位置
-                    const newPositions = [];
-                    displayedLines.forEach((lineInfo, lineIndex) => {
-                        const key = `line-${lineIndex}`;
-                        if (oldPositions.has(key)) {
-                            newPositions.push({
-                                key,
-                                element: lineInfo.element,
-                                rect: lineInfo.element.getBoundingClientRect()
+                        if (!suppressAnimations) {
+                            setPreviewStyle(previewEl, 'initial');
+                            previewEl.__previewEnterAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.enter, {
+                                duration: enterDuration,
+                                easing: customEasing,
+                                fill: 'forwards'
                             });
-                        }
-                    });
-                    placeholderLines.forEach((lineInfo, lineIndex) => {
-                        const key = `placeholder-${lineIndex}`;
-                        if (oldPositions.has(key)) {
-                            newPositions.push({
-                                key,
-                                element: lineInfo.element,
-                                rect: lineInfo.element.getBoundingClientRect()
-                            });
-                        }
-                    });
-
-                    // INVERT & PLAY: 为移动的元素应用动画
-                    newPositions.forEach(({ key, element, rect }) => {
-                        const oldRect = oldPositions.get(key);
-                        if (!oldRect) return;
-                        const deltaX = oldRect.left - rect.left;
-                        const deltaY = oldRect.top - rect.top;
-                        runFlipTransition(element, deltaX, deltaY);
-                    });
-                }
-                
-                // 音节高亮逻辑 - 只处理active状态，卡拉OK进度由rafLoop处理
-                if (displayedLines.size > 0) {
-                    displayedLines.forEach((lineInfo, lineIndex) => {
-                        const lineEl = lineInfo.element;
-                        const startTime = parseFloat(lineEl.dataset.startTime);
-                        const endTime = parseFloat(lineEl.dataset.endTime);
-                        // 当前播放歌词行加 active
-                        if (currentTime >= startTime - lineDisplayOffset && currentTime < endTime) {
-                            lineEl.classList.add('active');
                         } else {
-                            lineEl.classList.remove('active');
+                            setPreviewStyle(previewEl, 'active');
                         }
-                        if (lineEl.dataset.breathDots === '1' && Number.isFinite(endTime)) {
-                            const remainingMs = (endTime - currentTime) * 1000;
-                            const exitStartMs = 1000 - breathDisappearOffsetMs;
-                            if (remainingMs <= exitStartMs) {
-                                if (!lineEl.dataset.breathExitActive) {
-                                    const dotsEl = lineEl.querySelector('.breath-dots');
-                                    if (dotsEl) {
-                                        const computed = getComputedStyle(dotsEl);
-                                        const scale = getScaleFromTransform(computed.transform);
-                                        const opacity = parseFloat(computed.opacity);
-                                        dotsEl.style.setProperty('--breath-exit-start', `${Math.max(0.1, scale)}`);
-                                        dotsEl.style.setProperty('--breath-exit-opacity', '1');
-                                    }
-                                    lineEl.dataset.breathExitActive = '1';
-                                    lineEl.classList.add('breath-dots-exit');
+                    });
+
+                    if (nextLinePreviewHostTop) {
+                        const topOrder = sortedIndices.filter((index) => anchorIndex != null && index < anchorIndex);
+                        topOrder.forEach((index) => {
+                            const previewEl = nextLinePreviews.get(index);
+                            if (!previewEl || previewEl.parentElement === nextLinePreviewHostTop) return;
+                            nextLinePreviewHostTop.appendChild(previewEl);
+                            didChange = true;
+                        });
+                    }
+
+                    const bottomOrder = sortedIndices.filter((index) => !(anchorIndex != null && index < anchorIndex));
+                    bottomOrder.forEach((index) => {
+                        const previewEl = nextLinePreviews.get(index);
+                        if (!previewEl || previewEl.parentElement === nextLinePreviewHost) return;
+                        nextLinePreviewHost.appendChild(previewEl);
+                        didChange = true;
+                    });
+
+                    if (!suppressAnimations) {
+                        nextLinePreviews.forEach((previewEl) => {
+                            const oldRect = previewOldRects.get(previewEl);
+                            if (!oldRect) return;
+                            const newRect = previewEl.getBoundingClientRect();
+                            const deltaX = oldRect.left - newRect.left;
+                            const deltaY = oldRect.top - newRect.top;
+                            runFlipTransition(previewEl, deltaX, deltaY);
+                        });
+                    }
+
+                    nextLinePreviewSignature = signature;
+                    return didChange || signatureChanged || domMismatch || hasAnyExiting;
+                } finally {
+                    endPerfMetric('updateNextLinePreview', perfStartedAt);
+                }
+            }
+
+            function willDisplayedLinesChange(currentTime, takeoverIndex) {
+                if (showAllLinesWhenPaused) {
+                    if (displayedLines.size !== lyricsData.length) {
+                        return true;
+                    }
+                    for (let index = 0; index < lyricsData.length; index++) {
+                        if (!displayedLines.has(index)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+
+                for (let index = 0; index < lyricsData.length; index++) {
+                    const line = lyricsData[index];
+                    const timing = getLineTiming(line);
+                    const isLineDisplayed = displayedLines.has(index);
+
+                    if (!timing || isLineTextEmpty(line)) {
+                        if (isLineDisplayed) {
+                            return true;
+                        }
+                        continue;
+                    }
+
+                    const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
+                        && (currentTime < timing.disappearTime);
+                    const isTakeoverLine = takeoverIndex === index
+                        && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
+                    const shouldDisplay = isLineActive || isTakeoverLine;
+
+                    if (shouldDisplay !== isLineDisplayed) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            function captureDisplayFlipPositions() {
+                const oldPositions = new Map();
+                displayedLines.forEach((lineInfo, lineIndex) => {
+                    oldPositions.set(`line-${lineIndex}`, lineInfo.element.getBoundingClientRect());
+                });
+                placeholderLines.forEach((lineInfo, lineIndex) => {
+                    oldPositions.set(`placeholder-${lineIndex}`, lineInfo.element.getBoundingClientRect());
+                });
+                return oldPositions;
+            }
+
+            function updateLyricsDisplay() {
+                const perfStartedAt = beginPerfMetric('updateLyricsDisplay');
+
+                try {
+                    const currentTime = audioPlayer.currentTime;
+                    const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
+                    const takeoverIndex = calculateTakeoverIndex(currentTime, activeIndex, nextIndex);
+                    const firstLineStart = getLineStartTime(lyricsData[0]);
+                    const firstBreathEnd = typeof firstLineStart === 'number'
+                        ? Math.max(0, firstLineStart - lineDisplayOffset + 0.1)
+                        : null;
+                    const previewState = (alwaysShowNextLine && !showAllLinesWhenPaused && nextLinePreviewHost)
+                        ? buildNextLinePreviewState(currentTime)
+                        : null;
+
+                    const shouldTrackFlip = !suppressAnimations && (
+                        willDisplayedLinesChange(currentTime, takeoverIndex)
+                        || willNextLinePreviewChange(currentTime, previewState)
+                        || willFirstBreathLineChange(firstBreathEnd, currentTime)
+                        || willBreathDotsLineChange(currentTime)
+                    );
+                    const oldPositions = shouldTrackFlip ? captureDisplayFlipPositions() : null;
+
+                    let structureChanged = false;
+
+                    if (showAllLinesWhenPaused) {
+                        lyricsData.forEach((line, index) => {
+                            if (!displayedLines.has(index)) {
+                                structureChanged = addLine(index) || structureChanged;
+                            }
+                        });
+                        Array.from(displayedLines.keys()).forEach((index) => {
+                            if (index >= lyricsData.length) {
+                                structureChanged = removeLine(index) || structureChanged;
+                            }
+                        });
+                    } else {
+                        lyricsData.forEach((line, index) => {
+                            const timing = getLineTiming(line);
+                            if (!timing || isLineTextEmpty(line)) {
+                                if (displayedLines.has(index)) {
+                                    structureChanged = removeLine(index) || structureChanged;
                                 }
+                                return;
+                            }
+
+                            const isLineDisplayed = displayedLines.has(index);
+                            const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
+                                && (currentTime < timing.disappearTime);
+                            const isTakeoverLine = takeoverIndex === index
+                                && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
+                            const shouldDisplay = isLineActive || isTakeoverLine;
+
+                            if (shouldDisplay && !isLineDisplayed) {
+                                structureChanged = addLine(index) || structureChanged;
+                            } else if (!shouldDisplay && isLineDisplayed) {
+                                structureChanged = removeLine(index) || structureChanged;
+                            }
+                        });
+                    }
+
+                    if (typeof firstBreathEnd === 'number' && currentTime < firstBreathEnd) {
+                        structureChanged = ensureFirstBreathLine(firstBreathEnd) || structureChanged;
+                    } else {
+                        structureChanged = removeFirstBreathLine() || structureChanged;
+                    }
+                    structureChanged = updateBreathDots(currentTime) || structureChanged;
+
+                    structureChanged = updateNextLinePreview(previewState) || structureChanged;
+
+                    if (!suppressAnimations && oldPositions && structureChanged) {
+                        const newPositions = [];
+                        displayedLines.forEach((lineInfo, lineIndex) => {
+                            const key = `line-${lineIndex}`;
+                            if (oldPositions.has(key)) {
+                                newPositions.push({
+                                    key,
+                                    element: lineInfo.element,
+                                    rect: lineInfo.element.getBoundingClientRect()
+                                });
+                            }
+                        });
+                        placeholderLines.forEach((lineInfo, lineIndex) => {
+                            const key = `placeholder-${lineIndex}`;
+                            if (oldPositions.has(key)) {
+                                newPositions.push({
+                                    key,
+                                    element: lineInfo.element,
+                                    rect: lineInfo.element.getBoundingClientRect()
+                                });
+                            }
+                        });
+
+                        newPositions.forEach(({ key, element, rect }) => {
+                            const oldRect = oldPositions.get(key);
+                            if (!oldRect) return;
+                            const deltaX = oldRect.left - rect.left;
+                            const deltaY = oldRect.top - rect.top;
+                            runFlipTransition(element, deltaX, deltaY);
+                        });
+                    }
+
+                    const shouldSyncAnimationsNow = audioPlayer.paused || showAllLinesWhenPaused || suppressAnimations;
+
+                    if (displayedLines.size > 0) {
+                        displayedLines.forEach((lineInfo) => {
+                            const lineEl = lineInfo.element;
+                            const startTime = parseFloat(lineEl.dataset.startTime);
+                            const endTime = parseFloat(lineEl.dataset.endTime);
+                            if (currentTime >= startTime - lineDisplayOffset && currentTime < endTime) {
+                                lineEl.classList.add('active');
                             } else {
-                                if (lineEl.dataset.breathExitActive) {
+                                lineEl.classList.remove('active');
+                            }
+                            if (lineEl.dataset.breathDots === '1' && Number.isFinite(endTime)) {
+                                const remainingMs = (endTime - currentTime) * 1000;
+                                const exitStartMs = 1000 - breathDisappearOffsetMs;
+                                if (remainingMs <= exitStartMs) {
+                                    if (!lineEl.dataset.breathExitActive) {
+                                        const dotsEl = lineEl.querySelector('.breath-dots');
+                                        if (dotsEl) {
+                                            const computed = getComputedStyle(dotsEl);
+                                            const scale = getScaleFromTransform(computed.transform);
+                                            dotsEl.style.setProperty('--breath-exit-start', `${Math.max(0.1, scale)}`);
+                                            dotsEl.style.setProperty('--breath-exit-opacity', '1');
+                                        }
+                                        lineEl.dataset.breathExitActive = '1';
+                                        lineEl.classList.add('breath-dots-exit');
+                                    }
+                                } else if (lineEl.dataset.breathExitActive) {
                                     lineEl.dataset.breathExitActive = '';
                                     lineEl.classList.remove('breath-dots-exit');
                                     const dotsEl = lineEl.querySelector('.breath-dots');
@@ -5042,11 +5270,15 @@
                                     }
                                 }
                             }
-                        }
-                        syncLineAnimations(lineInfo);
-                    });
+
+                            if (shouldSyncAnimationsNow) {
+                                syncLineAnimations(lineInfo);
+                            }
+                        });
+                    }
+                } finally {
+                    endPerfMetric('updateLyricsDisplay', perfStartedAt);
                 }
-                updateNextLinePreview();
             }
 
             audioPlayer.addEventListener('timeupdate', () => {
