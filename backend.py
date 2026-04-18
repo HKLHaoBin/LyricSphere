@@ -1142,6 +1142,9 @@ SONGS_DIR = STATIC_DIR / 'songs'
 BACKUP_DIR = STATIC_DIR / 'backups'
 LOG_DIR = BASE_PATH / 'logs'
 
+BACKUP_WRITE_LOCKS: Dict[str, threading.Lock] = {}
+BACKUP_WRITE_LOCKS_GUARD = threading.Lock()
+
 # 自动创建目录（首次运行时）
 for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR]:
     path.mkdir(parents=True, exist_ok=True)
@@ -1944,6 +1947,45 @@ def _normalize_backup_payload_data(data):
     data['playlists'] = normalized_playlists
     data['artistShortcuts'] = normalized_artist_shortcuts
     return data
+
+
+def _get_backup_write_lock(backup_path: Path) -> threading.Lock:
+    """Return a stable write lock for the given backup path."""
+    lock_key = str(backup_path)
+    with BACKUP_WRITE_LOCKS_GUARD:
+        lock = BACKUP_WRITE_LOCKS.get(lock_key)
+        if lock is None:
+            lock = threading.Lock()
+            BACKUP_WRITE_LOCKS[lock_key] = lock
+        return lock
+
+
+def _write_json_atomically(target_path: Path, payload: Any) -> None:
+    """Write JSON data to disk via temp file replacement."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=str(target_path.parent),
+            prefix=f'.{target_path.stem}.',
+            suffix='.tmp',
+            delete=False
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            json.dump(payload, temp_file, ensure_ascii=False, indent=2)
+            temp_file.write('\n')
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, target_path)
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 # 配置日志
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -3957,8 +3999,17 @@ def backup_client_state():
         'source': 'lyric-sphere-v2',
         'payload': payload
     }
-    with open(backup_path, 'w', encoding='utf-8') as f:
-        json.dump(envelope, f, ensure_ascii=False, indent=2)
+    try:
+        with _get_backup_write_lock(backup_path):
+            _write_json_atomically(backup_path, envelope)
+    except Exception as exc:
+        app.logger.exception(
+            "保存备份失败: anchor_id=%s client_id=%s path=%s",
+            anchor_id or '',
+            client_id or '',
+            backup_path
+        )
+        return jsonify({'status': 'error', 'message': f'备份保存失败: {exc}'}), 500
 
     try:
         if anchor_id:
@@ -4051,7 +4102,22 @@ def get_anchor_backup():
     try:
         with open(backup_path, 'r', encoding='utf-8') as f:
             content = json.load(f)
+    except json.JSONDecodeError as exc:
+        app.logger.error(
+            "锚点备份文件损坏: anchor_id=%s path=%s error=%s line=%s col=%s",
+            anchor_id,
+            backup_path,
+            exc.msg,
+            exc.lineno,
+            exc.colno
+        )
+        return jsonify({'status': 'error', 'message': '备份文件损坏：不是合法的 JSON'}), 500
     except Exception as exc:
+        app.logger.exception(
+            "读取锚点备份失败: anchor_id=%s path=%s",
+            anchor_id,
+            backup_path
+        )
         return jsonify({'status': 'error', 'message': f'备份文件读取失败: {exc}'}), 500
 
     payload = content.get('payload', {}) if isinstance(content, dict) else {}
