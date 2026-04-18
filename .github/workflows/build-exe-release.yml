@@ -62,8 +62,12 @@ jobs:
               $latest = $versionTags |
                 Sort-Object -Property @{Expression = 'Major'; Descending = $true}, @{Expression = 'Minor'; Descending = $true}, @{Expression = 'Patch'; Descending = $true} |
                 Select-Object -First 1
-              $nextMinor = $latest.Minor + 1
-              $tag = "v$($latest.Major).$nextMinor.0"
+              if ($latest.Minor -ge 9) {
+                $tag = "v$($latest.Major + 1).0.0"
+              } else {
+                $nextMinor = $latest.Minor + 1
+                $tag = "v$($latest.Major).$nextMinor.0"
+              }
             }
 
             Write-Host "Create and push new tag: $tag"

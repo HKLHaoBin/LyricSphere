@@ -2784,10 +2784,8 @@
 
                 if (Math.abs(adjustedDeltaX) <= 0.5 && Math.abs(adjustedDeltaY) <= 0.5) return;
 
-                // 若上一段动画未完成，则缩短时长并使用线性缓动以平滑衔接
-                const durationFactor = progress > 0 ? Math.max(0.35, 1 - progress * 0.6) : 1;
-                const animationDuration = Math.max(180, moveDuration * durationFactor);
-                const easing = progress > 0.2 ? 'linear' : customEasing;
+                const animationDuration = moveDuration;
+                const easing = customEasing;
 
                 element.style.willChange = 'transform';
                 const animation = element.animate(
