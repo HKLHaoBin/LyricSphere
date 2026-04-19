@@ -2840,11 +2840,11 @@
                                 📋 提取歌词
                             </button>
 
-                            <label class="lyrics-action-btn path-update-btn" style="cursor:pointer;" data-i18n="lyrics.uploadLyrics">
+                            <button type="button" class="lyrics-action-btn path-update-btn" style="cursor:pointer;" data-i18n="lyrics.uploadLyrics" onclick="triggerLyricsUpload()">
                                 📤 上传歌词
-                                <input type="file" id="lyricsUpload" accept=".lrc,.lys,.ttml" style="display:none;"
-                                    onchange="handleLyricsUpload()">
-                            </label>
+                            </button>
+                            <input type="file" id="lyricsUpload" accept=".lrc,.lys,.ttml" style="display:none;"
+                                onchange="handleLyricsUpload()">
                         </div>
                     </div>
                     <div id="lyricsEditor" class="lyrics-editor"></div>
@@ -2888,11 +2888,11 @@
                             <button class="lyrics-action-btn path-update-btn" onclick="showAISettings()" data-i18n="lyrics.aiSettings">
                                 ⚙️ AI设置
                             </button>
-                            <label class="lyrics-action-btn path-update-btn" style="cursor:pointer;" data-i18n="lyrics.uploadTranslation">
+                            <button type="button" class="lyrics-action-btn path-update-btn" style="cursor:pointer;" data-i18n="lyrics.uploadTranslation" onclick="triggerTranslationUpload()">
                                 📤 上传翻译
-                                <input type="file" id="translationUpload" accept=".lrc,.lys,.ttml" style="display:none;"
-                                    onchange="handleTranslationUpload()">
-                            </label>
+                            </button>
+                            <input type="file" id="translationUpload" accept=".lrc,.lys,.ttml" style="display:none;"
+                                onchange="handleTranslationUpload()">
                         </div>
                         <div id="extraPromptContainer" style="display: none; margin-top: 10px; padding: 10px; border: 1px dashed var(--border-color); border-radius: 8px; background: var(--input-bg); max-height: 400px; overflow-y: auto;">
                             <div style="margin-bottom: 12px;">
@@ -2989,11 +2989,11 @@
                 <label data-i18n="musicPath.newPath">新路径：</label>
                 <div style="display: flex; gap: 8px; align-items: center;">
                     <input type="text" id="newMusicPath" class="file-path-input" style="flex:1">
-                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="musicPath.uploadBtn">
+                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="musicPath.uploadBtn" onclick="triggerMusicUpload()">
                         📤 上传文件
-                        <input type="file" id="musicUpload" accept="audio/*,video/*" style="display:none;"
-                            onchange="handleMusicUpload()">
-                    </label>
+                    </button>
+                    <input type="file" id="musicUpload" accept="audio/*,video/*" style="display:none;"
+                        onchange="handleMusicUpload()">
                 </div>
                 <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="musicPath.hint">
                     提示：可直接输入文件名或上传音频视频文件（支持所有格式）
@@ -3016,11 +3016,11 @@
                 <label data-i18n="imagePath.newPathLabel">新路径：</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="newImagePath" class="file-path-input" style="flex:1">
-                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadAlbum">
+                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadAlbum" onclick="triggerImageUpload('album')">
                         📤 上传专辑图
-                        <input type="file" id="imageUpload" accept="image/*" style="display: none;"
-                            onchange="handleImageUpload(this.files[0], 'album')">
-                    </label>
+                    </button>
+                    <input type="file" id="imageUpload" accept="image/*" style="display: none;"
+                        onchange="handleImageUpload(this.files[0], 'album')">
                 </div>
                 <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintAlbum">
                     提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
@@ -3034,11 +3034,11 @@
                 <label data-i18n="imagePath.newPathLabel">新路径：</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="newBackgroundPath" class="file-path-input" style="flex:1">
-                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadBackground">
+                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadBackground" onclick="triggerImageUpload('background')">
                         📤 上传背景图/视频
-                        <input type="file" id="backgroundUpload" accept="image/*,video/*" style="display: none;"
-                            onchange="handleImageUpload(this.files[0], 'background')">
-                    </label>
+                    </button>
+                    <input type="file" id="backgroundUpload" accept="image/*,video/*" style="display: none;"
+                        onchange="handleImageUpload(this.files[0], 'background')">
                 </div>
                 <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintBackground">
                     提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名
@@ -3050,11 +3050,11 @@
                 <label data-i18n="imagePath.dynamicCoverPathLabel">动态封面路径（GIF/视频）：</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="dynamicCoverPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
-                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadDynamic">
+                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadDynamic" onclick="triggerImageUpload('dynamicCover')">
                         📤 上传动态封面
-                        <input type="file" id="dynamicCoverUpload" accept="image/*,video/*" style="display: none;"
-                            onchange="handleImageUpload(this.files[0], 'dynamicCover')">
-                    </label>
+                    </button>
+                    <input type="file" id="dynamicCoverUpload" accept="image/*,video/*" style="display: none;"
+                        onchange="handleImageUpload(this.files[0], 'dynamicCover')">
                 </div>
                 <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintDynamic">
                     提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放
@@ -3063,11 +3063,11 @@
                 <label style="margin-top: 10px;" data-i18n="imagePath.posterLabel">海报/静态封面（可选）：</label>
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="dynamicCoverPosterPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
-                    <label class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadPoster">
+                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadPoster" onclick="triggerImageUpload('dynamicCoverPoster')">
                         📤 上传海报
-                        <input type="file" id="dynamicCoverPosterUpload" accept="image/*" style="display: none;"
-                            onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
-                    </label>
+                    </button>
+                    <input type="file" id="dynamicCoverPosterUpload" accept="image/*" style="display: none;"
+                        onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
                 </div>
                 <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintPoster">
                     提示：视频加载前显示的静态图片，建议用专辑图
@@ -3146,11 +3146,11 @@
                         <div class="pill" data-i18n="create.batchPill">批量</div>
                     </div>
                     <div>
-                        <label class="lyrics-action-btn path-update-btn" style="cursor:pointer; display:inline-block;" data-i18n="create.selectAudio">
+                        <button type="button" class="lyrics-action-btn path-update-btn" style="cursor:pointer; display:inline-block;" data-i18n="create.selectAudio" onclick="triggerCreateAudioImport()">
                             📤 选择音频文件
-                            <input type="file" id="audioImportInput" accept="audio/*,video/*" multiple style="display:none;"
-                                onchange="handleCreateAudioImport(this.files)">
-                        </label>
+                        </button>
+                        <input type="file" id="audioImportInput" accept="audio/*,video/*" multiple style="display:none;"
+                            onchange="handleCreateAudioImport(this.files, this)">
                     </div>
                     <div id="createAudioStatus" class="lyrics-search-status" data-i18n="create.audioHintText">支持单个/多个音频文件，JSON 名称会使用音频文件名。</div>
                 </div>
@@ -10856,13 +10856,15 @@
             return { title: baseName, artists: [] }
         }
 
-        async function handleCreateAudioImport(files) {
+        async function handleCreateAudioImport(files, inputEl) {
+            const fileInput = inputEl || document.getElementById('audioImportInput')
             if (!files || files.length === 0) {
                 return
             }
             selectCreateMode('audio')
             const statusEl = document.getElementById('createAudioStatus')
             const results = []
+            console.debug('DEBUG: create audio import selected', files.length)
             for (const file of files) {
                 if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
                     results.push(`${file.name}: 跳过（不是音频/视频）`)
@@ -10871,6 +10873,7 @@
                 if (statusEl) {
                     statusEl.textContent = t('create.uploading') + file.name
                 }
+                console.debug('DEBUG: create audio import uploading', file.name)
                 const formData = new FormData()
                 formData.append('file', file)
                 try {
@@ -10914,6 +10917,9 @@
                 alert(results.join('\n'))
                 location.reload()
             }
+            if (fileInput) {
+                fileInput.value = ''
+            }
         }
 
         function triggerStaticImport() {
@@ -10924,6 +10930,59 @@
             }
             input.value = ''
             input.click()
+        }
+
+        function debugUploadAction(action, target, detail) {
+            if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+                console.debug(`DEBUG: ${target} ${action}`, detail)
+            }
+        }
+
+        function triggerUploadInput(inputId, target) {
+            const input = document.getElementById(inputId)
+            if (!input) {
+                alert(t('alert.noImportControl'))
+                return
+            }
+            debugUploadAction('picker opened', target)
+            input.value = ''
+            input.click()
+        }
+
+        function getImageUploadInput(type) {
+            const inputMap = {
+                album: 'imageUpload',
+                background: 'backgroundUpload',
+                dynamicCover: 'dynamicCoverUpload',
+                dynamicCoverPoster: 'dynamicCoverPosterUpload'
+            }
+            const inputId = inputMap[type]
+            return inputId ? document.getElementById(inputId) : null
+        }
+
+        function triggerLyricsUpload() {
+            triggerUploadInput('lyricsUpload', 'lyrics')
+        }
+
+        function triggerTranslationUpload() {
+            triggerUploadInput('translationUpload', 'translation')
+        }
+
+        function triggerMusicUpload() {
+            triggerUploadInput('musicUpload', 'music')
+        }
+
+        function triggerImageUpload(type) {
+            const input = getImageUploadInput(type)
+            if (!input) {
+                alert(t('alert.noImportControl'))
+                return
+            }
+            triggerUploadInput(input.id, type)
+        }
+
+        function triggerCreateAudioImport() {
+            triggerUploadInput('audioImportInput', 'create audio import')
         }
 
         async function handleStaticImport(event) {
@@ -11113,47 +11172,54 @@
             if (btn) btn.textContent = _currentLang === 'zh-CN' ? 'EN' : '中文';
         })();
 
-        function handleMusicUpload() {
+        async function handleMusicUpload() {
             const fileInput = document.getElementById('musicUpload')
             const file = fileInput.files[0]
 
             if (!file) return
 
-            // 允许所有音频视频格式
-            if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
-                alert(t('file.uploadAudio'))
-                return
+            debugUploadAction('selected', 'music', file.name)
+
+            try {
+                // 允许所有音频视频格式
+                if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+                    alert(t('file.uploadAudio'))
+                    return
+                }
+
+                const formData = new FormData()
+                formData.append('file', file)
+
+                const response = await fetch('/upload_music', {
+                    method: 'POST',
+                    body: formData
+                })
+                const data = await response.json()
+
+                if (data.status === 'success') {
+                    document.getElementById('newMusicPath').value = data.filename
+                    updateMusicPath() // 自动触发保存
+                } else {
+                    alert(t('alert.uploadFailedPrefix') + data.message)
+                }
+            } catch (error) {
+                console.error('Error:', error)
+                alert(t('alert.uploadFailed'))
+            } finally {
+                fileInput.value = ''
             }
-
-            const formData = new FormData()
-            formData.append('file', file)
-
-            fetch('/upload_music', {
-                method: 'POST',
-                body: formData
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        document.getElementById('newMusicPath').value = data.filename
-                        updateMusicPath() // 自动触发保存
-                    } else {
-                        alert(t('alert.uploadFailedPrefix') + data.message)
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error)
-                    alert(t('alert.uploadFailed'))
-                })
         }
 
         async function handleImageUpload(file, type) {
+            const fileInput = getImageUploadInput(type)
             if (!file) return
 
-            const formData = new FormData()
-            formData.append('file', file)
+            debugUploadAction('selected', type, file.name)
 
             try {
+                const formData = new FormData()
+                formData.append('file', file)
+
                 const response = await fetch('/upload_image', {
                     method: 'POST',
                     body: formData
@@ -11177,6 +11243,10 @@
                 }
             } catch (error) {
                 alert(t('alert.uploadErrorPrefix') + error.message)
+            } finally {
+                if (fileInput) {
+                    fileInput.value = ''
+                }
             }
         }
 
@@ -11204,6 +11274,8 @@
             const file = fileInput.files[0]
             if (!file) return
 
+            debugUploadAction('selected', 'lyrics', file.name)
+
             const formData = new FormData()
             formData.append('file', file)
 
@@ -11228,12 +11300,17 @@
                     console.error('Error:', error)
                     alert(t('alert.uploadFailed'))
                 })
+                .finally(() => {
+                    fileInput.value = ''
+                })
         }
 
         function handleTranslationUpload() {
             const fileInput = document.getElementById('translationUpload')
             const file = fileInput.files[0]
             if (!file) return
+
+            debugUploadAction('selected', 'translation', file.name)
 
             const formData = new FormData()
             formData.append('file', file)
@@ -11258,6 +11335,9 @@
                 .catch(error => {
                     console.error('Error:', error)
                     alert(t('alert.uploadFailed'))
+                })
+                .finally(() => {
+                    fileInput.value = ''
                 })
         }
 
