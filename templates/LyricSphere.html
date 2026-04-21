@@ -228,6 +228,54 @@
             border: 1px solid var(--border-color);
         }
 
+        #staticExportModal .static-export-progress-row {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #staticExportModal .static-export-progress-bar {
+            width: 100%;
+            height: 10px;
+            border-radius: 999px;
+            background: rgba(127, 127, 127, 0.24);
+            overflow: hidden;
+        }
+
+        #staticExportModal .static-export-progress-bar > span {
+            display: block;
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #4f7cff 0%, #64a7ff 100%);
+            transition: width .2s ease;
+        }
+
+        #staticExportModal .static-export-progress-text {
+            font-size: 12px;
+            color: var(--field-help-text);
+            text-align: right;
+        }
+
+        #staticExportModal .static-export-counts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--field-help-text);
+        }
+
+        #staticExportModal .static-export-current-file {
+            min-height: 42px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--input-bg);
+            color: var(--field-text);
+            font-family: 'Fira Code', monospace;
+            word-break: break-all;
+        }
+
         @keyframes spin {
             from {
                 transform: rotate(0deg);
@@ -2501,6 +2549,7 @@
                 <button class="action-button search-row--main" id="portSwitchBtn" onclick="switchPortMode()" data-i18n="btn.randomPort">随机端口</button>
                 <button class="action-button search-row--system" id="securityToggleBtn" onclick="toggleSecurityMode()" data-i18n="btn.security" data-i18n-title="btn.security.title.on">🔒 安全保护</button>
                 <button class="action-button search-row--system" id="authToggleBtn" onclick="toggleAuthModal()" data-i18n="btn.auth" data-i18n-title="btn.auth.title.locked">🔑 解锁本设备</button>
+                <button class="action-button search-row--system" id="staticExportFullBtn" onclick="triggerFullStaticExport()" data-i18n="btn.staticExportFull" data-i18n-title="btn.staticExportFull.title">📦 打包下载全部资源</button>
                 <button class="action-button search-row--system" onclick="openAMLL()" data-i18n="btn.amll">AMLL源</button>
                 <div class="action-button device-manage-button search-row--system">
                     <span data-i18n="btn.deviceManage">⚙️ 设备管理</span>
@@ -3259,6 +3308,32 @@
         </div>
     </div>
 
+    <!-- 全量 static 导出对话框 -->
+    <div id="staticExportModal" class="modal">
+        <div class="modal-content" style="max-width: 640px;">
+            <h2 data-i18n="staticExport.title">📦 打包下载全部资源</h2>
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div id="staticExportStatus" class="auth-status" data-i18n="staticExport.preparing">正在准备打包任务...</div>
+                <div class="static-export-progress-row">
+                    <div class="static-export-progress-bar"><span id="staticExportProgressBar"></span></div>
+                    <div class="static-export-progress-text" id="staticExportProgressText">0%</div>
+                </div>
+                <div class="static-export-counts" id="staticExportCounts">
+                    <span id="staticExportFilesText">0 / 0 files</span>
+                    <span id="staticExportBytesText">0 B / 0 B</span>
+                </div>
+                <div>
+                    <div class="form-help-text" data-i18n="staticExport.currentFileLabel">当前文件：</div>
+                    <div class="static-export-current-file" id="staticExportCurrentFile">—</div>
+                </div>
+                <div class="editor-buttons">
+                    <button id="staticExportDownloadBtn" onclick="downloadFullStaticExport()" disabled data-i18n="staticExport.download">下载压缩包</button>
+                    <button onclick="closeStaticExportModal()" data-i18n="staticExport.close">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 添加密码设置对话框 -->
     <div id="setPasswordModal" class="modal">
         <div class="modal-content" style="max-width: 450px;">
@@ -3709,6 +3784,29 @@
                 'auth.enterPassword': '请输入密码解锁本设备',
                 'auth.noPasswordSet': '系统未设置密码，请联系管理员',
                 'auth.close': '关闭',
+
+                // === 全量 static 导出 ===
+                'btn.staticExportFull': '📦 打包下载全部资源',
+                'btn.staticExportFull.title': '打包 static/ 目录并下载 zip',
+                'staticExport.title': '打包下载全部资源',
+                'staticExport.preparing': '正在准备打包任务...',
+                'staticExport.running': '正在打包全部资源...',
+                'staticExport.done': '打包完成，可以下载',
+                'staticExport.error': '打包失败',
+                'staticExport.currentFileLabel': '当前文件：',
+                'staticExport.filesSummary': '已处理文件：{processed}/{total}',
+                'staticExport.bytesSummary': '已处理容量：{processed}/{total}',
+                'staticExport.download': '下载压缩包',
+                'staticExport.close': '关闭',
+                'staticExport.needAuth': '请先解锁本设备后再打包下载全部资源',
+                'staticExport.noTask': '未找到可下载的任务',
+                'staticExport.notReady': '打包任务尚未完成',
+                'staticExport.permissionCheckFailed': '无法校验下载权限',
+                'staticExport.createFailed': '打包任务创建失败',
+                'staticExport.missingTaskId': '任务创建成功但缺少任务ID',
+                'staticExport.statusFetchFailed': '任务状态获取失败',
+                'staticExport.statusResponseInvalid': '任务状态响应格式不正确',
+                'staticExport.expired': '文件已失效，请重新打包',
 
                 // === 密码设置模态框 ===
                 'setPassword.title': '设置系统密码',
@@ -4629,6 +4727,29 @@
                 'auth.enterPassword': 'Please enter password to unlock this device',
                 'auth.noPasswordSet': 'No password set. Please contact administrator',
                 'auth.close': 'Close',
+
+                // === Full static export ===
+                'btn.staticExportFull': '📦 Download All Assets',
+                'btn.staticExportFull.title': 'Package the static/ directory into a zip',
+                'staticExport.title': 'Download All Assets',
+                'staticExport.preparing': 'Preparing export task...',
+                'staticExport.running': 'Packaging all assets...',
+                'staticExport.done': 'Packaging complete, ready to download',
+                'staticExport.error': 'Packaging failed',
+                'staticExport.currentFileLabel': 'Current file:',
+                'staticExport.filesSummary': 'Processed files: {processed}/{total}',
+                'staticExport.bytesSummary': 'Processed size: {processed}/{total}',
+                'staticExport.download': 'Download zip',
+                'staticExport.close': 'Close',
+                'staticExport.needAuth': 'Please unlock this device before exporting all assets',
+                'staticExport.noTask': 'No downloadable task found',
+                'staticExport.notReady': 'The export task is not finished yet',
+                'staticExport.permissionCheckFailed': 'Unable to verify download permissions',
+                'staticExport.createFailed': 'Failed to create export task',
+                'staticExport.missingTaskId': 'Task created but missing task ID',
+                'staticExport.statusFetchFailed': 'Failed to fetch task status',
+                'staticExport.statusResponseInvalid': 'Invalid task status response',
+                'staticExport.expired': 'The file expired; please package again',
 
                 // === 密码设置模态框 ===
                 'setPassword.title': 'Set System Password',
@@ -5958,6 +6079,12 @@
         const WRITE_LOCK_TEXT_PATTERN = /_WRITE_LOCK_|write-lock-action/; // i18n-safe: matched via data-write-lock attribute
         let currentPortMode = 'fixed'
         let currentWriteLockEnabled = false
+        let pendingFullStaticExportStart = false
+        let pendingFullStaticExportDownloadTaskId = ''
+        let activeFullStaticExportTaskId = ''
+        let fullStaticExportPollTimer = 0
+        let fullStaticExportRequestInFlight = false
+        let fullStaticExportLastState = null
         let resizeSettleTimer = 0
         let viewportResizing = false
         let resizePausedCoverVideos = []
@@ -11149,6 +11276,316 @@
             }
         }
 
+        function formatStaticExportBytes(bytes) {
+            const value = Number(bytes) || 0
+            if (value < 1024) return `${value} B`
+            const units = ['KB', 'MB', 'GB', 'TB']
+            let current = value / 1024
+            let unitIndex = 0
+            while (current >= 1024 && unitIndex < units.length - 1) {
+                current /= 1024
+                unitIndex += 1
+            }
+            return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[unitIndex]}`
+        }
+
+        async function isStaticExportLocalAccess() {
+            try {
+                const res = await fetch('/get_port_status')
+                const data = await res.json()
+                const backendPort = String(data.port || '')
+                return (location.hostname === '127.0.0.1' || location.hostname === 'localhost') && String(location.port || '') === backendPort
+            } catch (error) {
+                console.warn('Failed to detect local access for static export:', error)
+                return false
+            }
+        }
+
+        async function getStaticExportUnlockState() {
+            const [authRes, localAccess] = await Promise.all([
+                fetch('/auth/status'),
+                isStaticExportLocalAccess(),
+            ])
+            const authData = await authRes.json()
+            const isUnlocked = Boolean(localAccess || !authData.security_enabled || authData.trusted)
+            return { authData, isUnlocked, localAccess }
+        }
+
+        function openStaticExportModal() {
+            const modal = document.getElementById('staticExportModal')
+            if (modal) {
+                modal.style.display = 'block'
+            }
+        }
+
+        function closeStaticExportModal() {
+            const modal = document.getElementById('staticExportModal')
+            if (modal) {
+                modal.style.display = 'none'
+            }
+        }
+
+        function renderStaticExportState(state) {
+            const statusEl = document.getElementById('staticExportStatus')
+            const progressBar = document.getElementById('staticExportProgressBar')
+            const progressText = document.getElementById('staticExportProgressText')
+            const filesText = document.getElementById('staticExportFilesText')
+            const bytesText = document.getElementById('staticExportBytesText')
+            const currentFileEl = document.getElementById('staticExportCurrentFile')
+            const downloadBtn = document.getElementById('staticExportDownloadBtn')
+
+            if (!statusEl || !progressBar || !progressText || !filesText || !bytesText || !currentFileEl || !downloadBtn) {
+                return
+            }
+
+            const nextState = state || {}
+            const status = nextState.status || 'pending'
+            const totalFiles = Number(nextState.total_files) || 0
+            const processedFiles = Number(nextState.processed_files) || 0
+            const totalBytes = Number(nextState.total_bytes) || 0
+            const processedBytes = Number(nextState.processed_bytes) || 0
+            const percent = Number.isFinite(Number(nextState.progress_percent)) ? Number(nextState.progress_percent) : 0
+            const downloadReady = nextState.download_ready !== false
+
+            const statusTextMap = {
+                pending: t('staticExport.preparing'),
+                running: t('staticExport.running'),
+                done: t('staticExport.done'),
+                error: t('staticExport.error')
+            }
+
+            const errorMessage = nextState.error ? `：${nextState.error}` : ''
+            const expiredSuffix = status === 'done' && !downloadReady ? `（${t('staticExport.expired')}）` : ''
+            statusEl.textContent = status === 'error'
+                ? `${statusTextMap.error}${errorMessage}`
+                : `${statusTextMap[status] || statusTextMap.pending}${expiredSuffix}`
+            progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`
+            progressText.textContent = `${Math.max(0, Math.min(100, percent)).toFixed(2)}%`
+            filesText.textContent = t('staticExport.filesSummary', { processed: processedFiles, total: totalFiles })
+            bytesText.textContent = t('staticExport.bytesSummary', {
+                processed: formatStaticExportBytes(processedBytes),
+                total: formatStaticExportBytes(totalBytes)
+            })
+            currentFileEl.textContent = nextState.current_file || '—'
+            downloadBtn.disabled = status !== 'done' || !downloadReady
+            downloadBtn.textContent = t('staticExport.download')
+
+            fullStaticExportLastState = nextState
+            if (nextState.task_id) {
+                activeFullStaticExportTaskId = nextState.task_id
+            }
+        }
+
+        function stopStaticExportPolling() {
+            if (fullStaticExportPollTimer) {
+                clearTimeout(fullStaticExportPollTimer)
+                fullStaticExportPollTimer = 0
+            }
+            fullStaticExportRequestInFlight = false
+        }
+
+        async function refreshStaticExportStatus(taskId) {
+            const currentTaskId = taskId || activeFullStaticExportTaskId
+            if (!currentTaskId || fullStaticExportRequestInFlight) {
+                return
+            }
+
+            fullStaticExportRequestInFlight = true
+            try {
+                const response = await fetch(`/export_static_full/status?task_id=${encodeURIComponent(currentTaskId)}`)
+                const contentType = response.headers.get('content-type') || ''
+                if (!response.ok) {
+                    let message = t('staticExport.statusFetchFailed')
+                    if (contentType.includes('application/json')) {
+                        const errorPayload = await response.json()
+                        message = errorPayload.message || message
+                    }
+                    throw new Error(message)
+                }
+
+                if (!contentType.includes('application/json')) {
+                    throw new Error(t('staticExport.statusResponseInvalid'))
+                }
+
+                const payload = await response.json()
+                const task = payload.task || {}
+                renderStaticExportState(task)
+
+                const taskStatus = task.status || 'pending'
+                if (taskStatus === 'pending' || taskStatus === 'running') {
+                    fullStaticExportPollTimer = window.setTimeout(() => {
+                        refreshStaticExportStatus(currentTaskId).catch(error => {
+                            console.error('刷新整包导出进度失败:', error)
+                            renderStaticExportState({
+                                ...(fullStaticExportLastState || {}),
+                                status: 'error',
+                                error: error.message || t('common.failed')
+                            })
+                            stopStaticExportPolling()
+                        })
+                    }, 1200)
+                } else {
+                    stopStaticExportPolling()
+                }
+            } catch (error) {
+                renderStaticExportState({
+                    ...(fullStaticExportLastState || {}),
+                    status: 'error',
+                    error: error.message || t('common.failed')
+                })
+                stopStaticExportPolling()
+                throw error
+            } finally {
+                fullStaticExportRequestInFlight = false
+            }
+        }
+
+        async function beginStaticExportTask() {
+            stopStaticExportPolling()
+            openStaticExportModal()
+            const pendingState = {
+                status: 'pending',
+                total_files: 0,
+                processed_files: 0,
+                total_bytes: 0,
+                processed_bytes: 0,
+                current_file: '',
+                progress_percent: 0,
+                error: ''
+            }
+            renderStaticExportState(pendingState)
+
+            try {
+                const response = await fetch('/export_static_full/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                const contentType = response.headers.get('content-type') || ''
+                const payload = contentType.includes('application/json') ? await response.json() : null
+
+                if (!response.ok) {
+                    const errorMessage = payload && payload.message ? payload.message : t('staticExport.createFailed')
+                    if (response.status === 403 || /未解锁/.test(errorMessage)) {
+                        pendingFullStaticExportStart = true
+                        await toggleAuthModal()
+                        return false
+                    }
+                    throw new Error(errorMessage)
+                }
+
+                if (!payload || payload.status !== 'success') {
+                    throw new Error((payload && payload.message) || t('staticExport.createFailed'))
+                }
+
+                const task = payload.task || {}
+                const taskId = task.task_id || payload.task_id
+                if (!taskId) {
+                    throw new Error(t('staticExport.missingTaskId'))
+                }
+
+                activeFullStaticExportTaskId = taskId
+                renderStaticExportState({ ...task, task_id: taskId })
+                await refreshStaticExportStatus(taskId)
+                return true
+            } catch (error) {
+                const errorMessage = error && error.message ? error.message : t('staticExport.createFailed')
+                renderStaticExportState({
+                    ...(fullStaticExportLastState || pendingState),
+                    status: 'error',
+                    error: errorMessage
+                })
+                stopStaticExportPolling()
+                throw error
+            }
+        }
+
+        async function triggerFullStaticExport() {
+            if (activeFullStaticExportTaskId && fullStaticExportLastState) {
+                if (['pending', 'running'].includes(fullStaticExportLastState.status)) {
+                    openStaticExportModal()
+                    await refreshStaticExportStatus(activeFullStaticExportTaskId).catch(() => {})
+                    return
+                }
+
+                if (fullStaticExportLastState.status === 'done' && fullStaticExportLastState.download_ready !== false) {
+                    openStaticExportModal()
+                    try {
+                        await refreshStaticExportStatus(activeFullStaticExportTaskId)
+                    } catch (error) {
+                        console.warn('刷新已完成导出任务失败:', error)
+                    }
+
+                    if (fullStaticExportLastState && fullStaticExportLastState.status === 'done' && fullStaticExportLastState.download_ready === false) {
+                        const started = await beginStaticExportTask()
+                        if (started === false) {
+                            return
+                        }
+                    }
+                    return
+                }
+            }
+
+            try {
+                const unlockState = await getStaticExportUnlockState()
+                if (!unlockState.isUnlocked) {
+                    pendingFullStaticExportStart = true
+                    await toggleAuthModal()
+                    const statusEl = document.getElementById('staticExportStatus')
+                    if (statusEl) {
+                        statusEl.textContent = t('staticExport.needAuth')
+                    }
+                    return
+                }
+
+                pendingFullStaticExportStart = false
+                const started = await beginStaticExportTask()
+                if (started === false) {
+                    return
+                }
+            } catch (error) {
+                if (error && error.message) {
+                    alert(error.message)
+                }
+            }
+        }
+
+        async function downloadFullStaticExport(taskId) {
+            const currentTaskId = taskId || activeFullStaticExportTaskId
+            if (!currentTaskId) {
+                alert(t('staticExport.noTask'))
+                return
+            }
+
+            try {
+                const unlockState = await getStaticExportUnlockState()
+                if (!unlockState.isUnlocked) {
+                    pendingFullStaticExportDownloadTaskId = currentTaskId
+                    await toggleAuthModal()
+                    return
+                }
+            } catch (error) {
+                alert(error && error.message ? error.message : t('staticExport.permissionCheckFailed'))
+                return
+            }
+
+            if (fullStaticExportLastState && fullStaticExportLastState.status === 'done' && fullStaticExportLastState.download_ready === false) {
+                await triggerFullStaticExport()
+                return
+            }
+
+            if (!fullStaticExportLastState || fullStaticExportLastState.status !== 'done') {
+                alert(t('staticExport.notReady'))
+                return
+            }
+
+            const link = document.createElement('a')
+            link.href = `/export_static_full/download?task_id=${encodeURIComponent(currentTaskId)}`
+            link.download = ''
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+        }
+
         function showRenameModal(filename, title, artists) {
             currentRenameFile = filename
             const modal = document.getElementById('renameModal')
@@ -14224,6 +14661,8 @@
 
         // 关闭认证模态框
         function closeAuthModal() {
+            pendingFullStaticExportStart = false
+            pendingFullStaticExportDownloadTaskId = ''
             document.getElementById('authModal').style.display = 'none';
         }
 
@@ -14257,6 +14696,26 @@
                     // 更新UI状态
                     await updateAuthUI();
                     await updateWriteButtons();
+
+                    if (pendingFullStaticExportStart) {
+                        pendingFullStaticExportStart = false
+                        closeAuthModal()
+                        try {
+                            await beginStaticExportTask()
+                        } catch (exportError) {
+                            const exportMessage = exportError && exportError.message ? exportError.message : t('staticExport.createFailed')
+                            alert(exportMessage)
+                        }
+                        return
+                    }
+
+                    if (pendingFullStaticExportDownloadTaskId) {
+                        const pendingDownloadTaskId = pendingFullStaticExportDownloadTaskId
+                        pendingFullStaticExportDownloadTaskId = ''
+                        closeAuthModal()
+                        await downloadFullStaticExport(pendingDownloadTaskId)
+                        return
+                    }
                 } else {
                     authStatus.textContent = t('status.wrongPassword');
                     authStatus.style.color = '#f03e3e';
@@ -14282,6 +14741,8 @@
                 
                 if (data.status === 'success') {
                     // 登出成功
+                    pendingFullStaticExportStart = false
+                    pendingFullStaticExportDownloadTaskId = ''
                     document.getElementById('authModal').style.display = 'none';
                     
                     // 更新UI状态

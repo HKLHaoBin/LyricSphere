@@ -1076,6 +1076,8 @@ THREADPOOL_MAX_WORKERS = int(os.getenv("APP_THREADPOOL_WORKERS", "16"))
 THREADPOOL_EXECUTOR = ThreadPoolExecutor(max_workers=THREADPOOL_MAX_WORKERS)
 BEAT_CURVE_TASKS: Dict[str, Dict[str, Any]] = {}
 BEAT_CURVE_LOCK = threading.Lock()
+STATIC_EXPORT_TASKS: Dict[str, Dict[str, Any]] = {}
+STATIC_EXPORT_LOCK = threading.Lock()
 
 def cleanup_missing_ssl_cert_env() -> List[str]:
     """
@@ -1220,6 +1222,216 @@ def cleanup_exports_dir(max_keep: int = 20) -> int:
 
 
 cleanup_exports_dir(max_keep=20)
+
+
+def _collect_static_export_files() -> List[Path]:
+    """Collect all files under static/ for the full bundle export."""
+    if not STATIC_DIR.exists():
+        return []
+
+    files = [path for path in STATIC_DIR.rglob('*') if path.is_file()]
+    files.sort(key=lambda path: path.relative_to(STATIC_DIR).as_posix().lower())
+    return files
+
+
+def _build_static_export_task_snapshot(task_id: str, task: Dict[str, Any]) -> Dict[str, Any]:
+    total_files = int(task.get('total_files') or 0)
+    processed_files = int(task.get('processed_files') or 0)
+    total_bytes = int(task.get('total_bytes') or 0)
+    processed_bytes = int(task.get('processed_bytes') or 0)
+    status = task.get('status', 'pending')
+
+    if status == 'done':
+        progress_percent = 100.0
+    elif total_bytes > 0:
+        progress_percent = round(min(100.0, (processed_bytes * 100.0) / total_bytes), 2)
+    elif total_files > 0:
+        progress_percent = round(min(100.0, (processed_files * 100.0) / total_files), 2)
+    else:
+        progress_percent = 0.0
+
+    download_path = task.get('download_path') or ''
+    download_ready = status == 'done' and bool(download_path) and Path(download_path).exists()
+    return {
+        'task_id': task_id,
+        'status': status,
+        'archive_name': task.get('archive_name', ''),
+        'total_files': total_files,
+        'processed_files': processed_files,
+        'total_bytes': total_bytes,
+        'processed_bytes': processed_bytes,
+        'current_file': task.get('current_file', ''),
+        'error': task.get('error', ''),
+        'created_at': task.get('created_at', ''),
+        'completed_at': task.get('completed_at', ''),
+        'progress_percent': progress_percent,
+        'download_ready': download_ready,
+    }
+
+
+def _static_export_task_sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, datetime, str]:
+    task_id, task = item
+    status = task.get('status', 'pending')
+    timestamp_text = task.get('completed_at') or task.get('created_at') or ''
+    try:
+        timestamp = datetime.fromisoformat(timestamp_text)
+    except Exception:
+        timestamp = datetime.min
+
+    if status in {'pending', 'running'}:
+        priority = 2
+    elif status == 'done':
+        priority = 1
+    else:
+        priority = 0
+
+    return priority, timestamp, task_id
+
+
+def _find_reusable_static_export_task(device_id: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    if not device_id:
+        return None
+
+    with STATIC_EXPORT_LOCK:
+        matching_tasks = [
+            (task_id, task)
+            for task_id, task in STATIC_EXPORT_TASKS.items()
+            if task.get('owner_device_id') == device_id
+        ]
+
+        active_tasks = [
+            item for item in matching_tasks
+            if item[1].get('status') in {'pending', 'running'}
+        ]
+        if active_tasks:
+            return max(active_tasks, key=_static_export_task_sort_key)
+
+        done_tasks = []
+        for item in matching_tasks:
+            task = item[1]
+            if task.get('status') != 'done':
+                continue
+            download_path = (task.get('download_path') or '').strip()
+            if download_path and Path(download_path).exists():
+                done_tasks.append(item)
+
+        if done_tasks:
+            return max(done_tasks, key=_static_export_task_sort_key)
+    return None
+
+
+def _run_static_export_task(task_id: str) -> None:
+    archive_path = None
+    try:
+        with STATIC_EXPORT_LOCK:
+            task = STATIC_EXPORT_TASKS.get(task_id)
+        if task is None:
+            return
+
+        archive_path = Path(task['download_path'])
+        static_files = _collect_static_export_files()
+        total_files = len(static_files)
+        total_bytes = 0
+        for file_path in static_files:
+            try:
+                total_bytes += file_path.stat().st_size
+            except Exception as exc:
+                raise RuntimeError(f'统计文件大小失败: {file_path.relative_to(STATIC_DIR).as_posix()} ({exc})') from exc
+
+        with STATIC_EXPORT_LOCK:
+            task = STATIC_EXPORT_TASKS.get(task_id)
+            if task is None:
+                return
+            task['status'] = 'running'
+            task['total_files'] = total_files
+            task['processed_files'] = 0
+            task['total_bytes'] = total_bytes
+            task['processed_bytes'] = 0
+            task['current_file'] = ''
+            task['error'] = ''
+
+        with zipfile.ZipFile(archive_path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            processed_files = 0
+            processed_bytes = 0
+            for file_path in static_files:
+                relative_name = file_path.relative_to(BASE_PATH).as_posix()
+                try:
+                    file_size = file_path.stat().st_size
+                except Exception:
+                    file_size = 0
+
+                with STATIC_EXPORT_LOCK:
+                    task = STATIC_EXPORT_TASKS.get(task_id)
+                    if task is None:
+                        return
+                    task['current_file'] = relative_name
+
+                archive.write(file_path, arcname=relative_name)
+
+                processed_files += 1
+                processed_bytes += file_size
+                with STATIC_EXPORT_LOCK:
+                    task = STATIC_EXPORT_TASKS.get(task_id)
+                    if task is None:
+                        return
+                    task['processed_files'] = processed_files
+                    task['processed_bytes'] = processed_bytes
+
+        with STATIC_EXPORT_LOCK:
+            task = STATIC_EXPORT_TASKS.get(task_id)
+            if task is None:
+                return
+            task['status'] = 'done'
+            task['completed_at'] = datetime.now().isoformat()
+            task['current_file'] = ''
+            task['processed_files'] = total_files
+            task['processed_bytes'] = total_bytes
+
+    except Exception as exc:
+        if archive_path and archive_path.exists():
+            try:
+                archive_path.unlink()
+            except Exception:
+                pass
+        with STATIC_EXPORT_LOCK:
+            task = STATIC_EXPORT_TASKS.get(task_id)
+            if task is None:
+                return
+            task['status'] = 'error'
+            task['error'] = str(exc)
+            task['completed_at'] = datetime.now().isoformat()
+
+    finally:
+        cleanup_exports_dir(max_keep=20)
+
+
+def _start_static_export_task(device_id: str) -> Tuple[str, Dict[str, Any]]:
+    cleanup_exports_dir(max_keep=20)
+    task_id = uuid.uuid4().hex
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    archive_name = f'static-full-{timestamp}-{task_id[:8]}.zip'
+    archive_path = EXPORTS_DIR / archive_name
+
+    task = {
+        'status': 'pending',
+        'owner_device_id': device_id,
+        'archive_name': archive_name,
+        'download_path': str(archive_path),
+        'total_files': 0,
+        'processed_files': 0,
+        'total_bytes': 0,
+        'processed_bytes': 0,
+        'current_file': '',
+        'error': '',
+        'created_at': datetime.now().isoformat(),
+        'completed_at': '',
+    }
+
+    with STATIC_EXPORT_LOCK:
+        STATIC_EXPORT_TASKS[task_id] = task
+
+    THREADPOOL_EXECUTOR.submit(_run_static_export_task, task_id)
+    return task_id, task
 
 RESOURCE_DIRECTORIES = {
     'static': STATIC_DIR,
@@ -4248,6 +4460,117 @@ def export_static_bundle():
     if missing_assets:
         response.headers['X-Missing-Assets-Count'] = str(len(missing_assets))
     return response
+
+
+@app.route('/export_static_full/start', methods=['POST'])
+def export_static_full_start():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('打包下载全部资源')
+    if locked_response:
+        return locked_response
+
+    device_id = request.cookies.get('FEW_DEVICE_ID')
+    if not device_id:
+        device_id = str(uuid.uuid4())
+
+    reusable_task = _find_reusable_static_export_task(device_id)
+    if reusable_task:
+        task_id, task = reusable_task
+        response = jsonify({
+            'status': 'success',
+            'reused': True,
+            'task': _build_static_export_task_snapshot(task_id, task)
+        })
+        response.set_cookie(
+            'FEW_DEVICE_ID',
+            device_id,
+            httponly=True,
+            samesite='Lax',
+            max_age=365 * 24 * 3600
+        )
+        return response
+
+    task_id, task = _start_static_export_task(device_id)
+    response = jsonify({
+        'status': 'success',
+        'reused': False,
+        'task_id': task_id,
+        'task': _build_static_export_task_snapshot(task_id, task)
+    })
+    response.set_cookie(
+        'FEW_DEVICE_ID',
+        device_id,
+        httponly=True,
+        samesite='Lax',
+        max_age=365 * 24 * 3600
+    )
+    return response
+
+
+@app.route('/export_static_full/status', methods=['GET'])
+def export_static_full_status():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('查看整包导出进度')
+    if locked_response:
+        return locked_response
+
+    task_id = (request.args.get('task_id') or '').strip()
+    if not task_id:
+        return jsonify({'status': 'error', 'message': '请提供任务ID'}), 400
+
+    device_id = request.cookies.get('FEW_DEVICE_ID')
+    if not device_id:
+        return jsonify({'status': 'error', 'message': '设备未解锁'}), 403
+
+    with STATIC_EXPORT_LOCK:
+        task = STATIC_EXPORT_TASKS.get(task_id)
+        if not task or task.get('owner_device_id') != device_id:
+            return jsonify({'status': 'error', 'message': '任务不存在'}), 404
+        task_snapshot = _build_static_export_task_snapshot(task_id, task)
+
+    return jsonify({
+        'status': 'success',
+        'task': task_snapshot,
+    })
+
+
+@app.route('/export_static_full/download', methods=['GET'])
+def export_static_full_download():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('下载整包资源')
+    if locked_response:
+        return locked_response
+
+    task_id = (request.args.get('task_id') or '').strip()
+    if not task_id:
+        return jsonify({'status': 'error', 'message': '请提供任务ID'}), 400
+
+    device_id = request.cookies.get('FEW_DEVICE_ID')
+    if not device_id:
+        return jsonify({'status': 'error', 'message': '设备未解锁'}), 403
+
+    with STATIC_EXPORT_LOCK:
+        task = STATIC_EXPORT_TASKS.get(task_id)
+        if not task or task.get('owner_device_id') != device_id:
+            return jsonify({'status': 'error', 'message': '任务不存在'}), 404
+        task_snapshot = _build_static_export_task_snapshot(task_id, task)
+
+    if task_snapshot['status'] != 'done':
+        return jsonify({'status': 'error', 'message': '任务尚未完成'}), 409
+
+    archive_path = Path(task.get('download_path', ''))
+    if not archive_path.exists():
+        return jsonify({'status': 'error', 'message': '导出文件已失效'}), 404
+
+    return send_file(
+        archive_path,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=task.get('archive_name', 'static-full.zip')
+    )
 
 
 @app.route('/import_static', methods=['POST'])
