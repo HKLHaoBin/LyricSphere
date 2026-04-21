@@ -948,6 +948,13 @@
             margin-top: 10px;
         }
 
+        .create-sections {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+
         .create-card {
             border: 1px solid var(--border-color);
             border-radius: 12px;
@@ -972,7 +979,20 @@
             cursor: not-allowed;
         }
 
-        .create-card .card-header {
+        .create-section {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px;
+            background: var(--input-bg);
+        }
+
+        .create-section.selected {
+            border-color: #4dabf7;
+            box-shadow: 0 8px 24px rgba(77, 171, 247, 0.22);
+        }
+
+        .create-card .card-header,
+        .create-section .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -980,7 +1000,8 @@
             margin-bottom: 8px;
         }
 
-        .create-card .card-title {
+        .create-card .card-title,
+        .create-section .card-title {
             display: flex;
             align-items: center;
             gap: 6px;
@@ -988,7 +1009,8 @@
             font-size: 1.05rem;
         }
 
-        .create-card .pill {
+        .create-card .pill,
+        .create-section .pill {
             padding: 4px 10px;
             border-radius: 999px;
             background: var(--tag-bg);
@@ -996,7 +1018,8 @@
             color: var(--text-color);
         }
 
-        .create-card .link-btn {
+        .create-card .link-btn,
+        .create-section .link-btn {
             border: none;
             background: transparent;
             color: #4dabf7;
@@ -1005,8 +1028,15 @@
             padding: 4px 8px;
         }
 
-        .create-card .link-btn:hover {
+        .create-card .link-btn:hover,
+        .create-section .link-btn:hover {
             text-decoration: underline;
+        }
+
+        .create-section .section-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
         }
 
         .amll-row {
@@ -3118,41 +3148,47 @@
                                 <div id="amllLyricsSummary" data-i18n="create.lyricsDisplay">歌词：--</div>
                             </div>
                             <div class="amll-lyrics-preview" id="amllLyricsPreview" data-i18n="create.waitingDataText">等待 AMLL 数据...</div>
-                            <div class="create-hint" data-i18n="create.amllHintText">选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手、封面和歌词生成新条目。</div>
+                            <div class="create-hint" data-i18n="create.amllHintText">选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手和封面生成新条目；无歌词时也可创建。</div>
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="create-card selected" id="manualCreateCard" onclick="selectCreateMode('manual')">
+            <div class="create-sections">
+                <div class="create-section" id="manualCreateSection" onclick="selectCreateMode('manual')">
                     <div class="card-header">
                         <div class="card-title" data-i18n="create.manualTitle">手动输入</div>
                         <div class="pill" data-i18n="create.customPill">自定义</div>
                     </div>
-                    <div>
-                        <label data-i18n="create.songNameLabel">歌曲名：</label>
-                        <input type="text" id="songTitle" class="file-path-input" onfocus="selectCreateMode('manual')" oninput="updateCreateFilenamePreview()">
+                    <div class="section-body">
+                        <div>
+                            <label data-i18n="create.songNameLabel">歌曲名：</label>
+                            <input type="text" id="songTitle" class="file-path-input" onfocus="selectCreateMode('manual')" oninput="selectCreateMode('manual'); updateCreateFilenamePreview()">
+                        </div>
+                        <div>
+                            <label data-i18n="create.artistNameLabel">歌手名（多个歌手用逗号分隔）：</label>
+                            <input type="text" id="songArtists" class="file-path-input" data-i18n-placeholder="create.artistPlaceholder" placeholder="歌手1,歌手2" onfocus="selectCreateMode('manual')" oninput="selectCreateMode('manual'); updateCreateFilenamePreview()">
+                        </div>
+                        <div class="create-hint" id="createFileNamePreview" data-i18n="create.filenamePreview">文件名预览：--</div>
+                        <div class="create-hint" data-i18n="create.manualHintText">不使用 AMLL 源时，手动填写信息后创建。</div>
                     </div>
-                    <div>
-                        <label data-i18n="create.artistNameLabel">歌手名（多个歌手用逗号分隔）：</label>
-                        <input type="text" id="songArtists" class="file-path-input" data-i18n-placeholder="create.artistPlaceholder" placeholder="歌手1,歌手2" onfocus="selectCreateMode('manual')" oninput="updateCreateFilenamePreview()">
-                    </div>
-                    <div class="create-hint" id="createFileNamePreview"</div>
-                    <div class="create-hint" data-i18n="create.manualHintText">不使用 AMLL 源时，手动填写信息后创建。</div>
                 </div>
 
-                <div class="create-card" id="audioImportCard" onclick="selectCreateMode('audio')">
+                <div class="create-section" id="audioImportSection">
                     <div class="card-header">
                         <div class="card-title" data-i18n="create.audioImportTitle">导入音频</div>
-                        <div class="pill" data-i18n="create.batchPill">批量</div>
+                        <div class="pill" data-i18n="create.instantPill">即时</div>
                     </div>
-                    <div>
-                        <button type="button" class="lyrics-action-btn path-update-btn" style="cursor:pointer; display:inline-block;" data-i18n="create.selectAudio" onclick="triggerCreateAudioImport()">
-                            📤 选择音频文件
-                        </button>
-                        <input type="file" id="audioImportInput" accept="audio/*,video/*" multiple style="display:none;"
-                            onchange="handleCreateAudioImport(this.files, this)">
+                    <div class="section-body">
+                        <div>
+                            <button type="button" class="lyrics-action-btn path-update-btn" style="cursor:pointer; display:inline-block;" data-i18n="create.selectAudio" onclick="triggerCreateAudioImport()">
+                                📤 选择音频文件
+                            </button>
+                            <input type="file" id="audioImportInput" accept="audio/*,video/*" multiple style="display:none;"
+                                onchange="handleCreateAudioImport(this.files, this)">
+                        </div>
+                        <div id="createAudioStatus" class="lyrics-search-status" data-i18n="create.audioHintText">选择文件后会立即上传并创建 JSON；支持单个/多个音频文件，JSON 名称会使用音频文件名。</div>
                     </div>
-                    <div id="createAudioStatus" class="lyrics-search-status" data-i18n="create.audioHintText">支持单个/多个音频文件，JSON 名称会使用音频文件名。</div>
                 </div>
             </div>
 
@@ -3635,7 +3671,7 @@
                 'create.album': '专辑：',
                 'create.lyrics': '歌词：',
                 'create.waitingData': '等待 AMLL 数据...',
-                'create.amllHint': '选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手、封面和歌词生成新条目。',
+                'create.amllHint': '选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手和封面生成新条目；无歌词时也可创建。',
                 'create.manualInput': '手动输入',
                 'create.custom': '自定义',
                 'create.artistLabelLong': '歌手名（多个歌手用逗号分隔）：',
@@ -3644,7 +3680,7 @@
                 'create.audioImport': '导入音频',
                 'create.batch': '批量',
                 'create.selectAudioShort': '选择音频文件',
-                'create.audioHint': '支持单个/多个音频文件，JSON 名称会使用音频文件名。',
+                'create.audioHint': '选择文件后会立即上传并创建 JSON；支持单个/多个音频文件，JSON 名称会使用音频文件名。',
                 'create.create': '创建',
                 'create.cancel': '取消',
 
@@ -3945,6 +3981,7 @@
                 'alert.lysToTtmlSuccess': 'LYS/LRC转TTML转换成功！需要点击"保存全部"应用，若转换出错请直接点击关闭!',
                 'alert.filenameEmptyAdjust': '文件名在清理后为空或命中了 Windows 保留名，请调整歌曲名或歌手名。',
                 'alert.amllNoData': 'AMLL源暂无可用数据，请先播放并刷新。',
+                'alert.amllNotReady': 'AMLL源数据未就绪，请先播放并刷新。',
                 'alert.renameFailedWithMsg': '重命名失败：',
                 'alert.lqeExported': 'LQE文件已导出！',
                 'alert.presetNotExistSelected': '选中的预设不存在',
@@ -4175,7 +4212,7 @@
                 'create.albumLabel': '专辑：',
                 'create.lyricsLabel': '歌词：',
                 'create.waitingDataText': '等待 AMLL 数据...',
-                'create.amllHintText': '选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手、封面和歌词生成新条目。',
+                'create.amllHintText': '选中此卡片并点击创建，将直接使用 AMLL 源的歌曲名、歌手和封面生成新条目；无歌词时也可创建。',
                 'create.manualTitle': '手动输入',
                 'create.customPill': '自定义',
                 'create.songNameLabel': '歌曲名：',
@@ -4183,11 +4220,13 @@
                 'create.manualHintText': '不使用 AMLL 源时，手动填写信息后创建。',
                 'create.audioImportTitle': '导入音频',
                 'create.batchPill': '批量',
+                'create.instantPill': '即时',
                 'create.selectAudio': '📤 选择音频文件',
-                'create.audioHintText': '支持单个/多个音频文件，JSON 名称会使用音频文件名。',
+                'create.audioHintText': '选择文件后会立即上传并创建 JSON；支持单个/多个音频文件，JSON 名称会使用音频文件名。',
                 'create.createBtn': '创建',
                 'create.cancelBtn': '取消',
                 'create.noLyricsData': '暂无歌词数据',
+                'create.noLyricsCreatable': '无歌词（可创建）',
                 'create.emptyLine': '（空行）',
                 'create.moreLines': '还有 {count} 行',
                 'create.songTitleDisplay': '歌曲名：',
@@ -4195,6 +4234,7 @@
                 'create.albumDisplay': '专辑：',
                 'create.lyricsDisplay': '歌词：',
                 'create.available': '可用',
+                'create.availableNoLyrics': '可创建，无歌词',
                 'create.waitingDataStatus': '等待数据',
                 'create.notProvided': '未提供',
                 'create.filenamePreview': '文件名预览：',
@@ -4548,7 +4588,7 @@
                 'create.album': 'Album:',
                 'create.lyrics': 'Lyrics:',
                 'create.waitingData': 'Waiting for AMLL data...',
-                'create.amllHint': 'Select this card and click Create to use AMLL source song title, artist, cover and lyrics.',
+                'create.amllHint': 'Select this card and click Create to use AMLL source song title, artist and cover; it can still create when there are no lyrics.',
                 'create.manualInput': 'Manual Input',
                 'create.custom': 'Custom',
                 'create.songNameLabel': 'Song title:',
@@ -4559,7 +4599,7 @@
                 'create.audioImport': 'Import Audio',
                 'create.batch': 'Batch',
                 'create.selectAudio': 'Select Audio Files',
-                'create.audioHint': 'Supports single/multiple audio files. JSON name will use audio filename.',
+                'create.audioHint': 'Selecting files will upload and create JSON immediately. Supports single/multiple audio files; JSON names use the audio filename.',
                 'create.create': 'Create',
                 'create.cancel': 'Cancel',
 
@@ -4858,6 +4898,7 @@
                 'alert.lysToTtmlSuccess': 'LYS/LRC to TTML conversion successful! Click "Save All" to apply. If errors, click Close.',
                 'alert.filenameEmptyAdjust': 'Filename is empty after cleanup or matches a Windows reserved name. Please adjust.',
                 'alert.amllNoData': 'AMLL source has no data. Please play and refresh first.',
+                'alert.amllNotReady': 'AMLL source is not ready yet. Please play and refresh first.',
                 'alert.renameFailedWithMsg': 'Rename failed: ',
                 'alert.lqeExported': 'LQE file exported!',
                 'alert.presetNotExistSelected': 'Selected preset does not exist',
@@ -5027,17 +5068,19 @@
                 'create.albumLabel': 'Album: ',
                 'create.lyricsLabel': 'Lyrics: ',
                 'create.waitingDataText': 'Waiting for AMLL data...',
-                'create.amllHintText': 'Select this card and click Create to use AMLL source song name, artist, cover, and lyrics.',
+                'create.amllHintText': 'Select this card and click Create to use AMLL source song name, artist and cover; it can still create when there are no lyrics.',
                 'create.manualTitle': 'Manual Input',
                 'create.customPill': 'Custom',
                 'create.artistNameLabel': 'Artist (comma-separated): ',
                 'create.manualHintText': 'Fill in the info manually when not using AMLL source.',
                 'create.audioImportTitle': 'Import Audio',
                 'create.batchPill': 'Batch',
-                'create.audioHintText': 'Support single/multiple audio files. JSON name will use audio filename.',
+                'create.instantPill': 'Instant',
+                'create.audioHintText': 'Selecting files will upload and create JSON immediately. Supports single/multiple audio files; JSON names will use the audio filename.',
                 'create.createBtn': 'Create',
                 'create.cancelBtn': 'Cancel',
                 'create.noLyricsData': 'No lyrics data',
+                'create.noLyricsCreatable': 'No lyrics (ready to create)',
                 'create.emptyLine': '(empty line)',
                 'create.moreLines': '{count} more lines',
                 'create.songTitleDisplay': 'Song: ',
@@ -5045,6 +5088,7 @@
                 'create.albumDisplay': 'Album: ',
                 'create.lyricsDisplay': 'Lyrics: ',
                 'create.available': 'Available',
+                'create.availableNoLyrics': 'Ready to create, no lyrics',
                 'create.waitingDataStatus': 'Waiting',
                 'create.notProvided': 'Not provided',
                 'create.filenameEmpty': 'Filename is empty after cleanup or matches Windows reserved name',
@@ -10555,22 +10599,18 @@
             }
             createMode = mode;
             const amllCard = document.getElementById('amllSourceCard');
-            const manualCard = document.getElementById('manualCreateCard');
-            const audioCard = document.getElementById('audioImportCard');
+            const manualSection = document.getElementById('manualCreateSection');
             if (amllCard) {
-                amllCard.classList.toggle('selected', mode === 'amll');
+                amllCard.classList.toggle('selected', mode === 'amll' && amllCardReady);
             }
-            if (manualCard) {
-                manualCard.classList.toggle('selected', mode === 'manual');
-            }
-            if (audioCard) {
-                audioCard.classList.toggle('selected', mode === 'audio');
+            if (manualSection) {
+                manualSection.classList.toggle('selected', mode === 'manual');
             }
         }
 
         function renderAmllPreview(lines) {
             if (!Array.isArray(lines) || lines.length === 0) {
-                return t('create.noLyricsData');
+                return t('create.noLyricsCreatable');
             }
             const previewLines = [];
             lines.slice(0, 4).forEach((line, idx) => {
@@ -10638,10 +10678,12 @@
                 if (titleEl) titleEl.textContent = t('create.songTitleDisplay') + (song.musicName || t('create.notProvided'));
                 if (artistsEl) artistsEl.textContent = t('create.artistDisplay') + ((song.artists || []).join(' / ') || t('create.notProvided'));
                 if (albumEl) albumEl.textContent = t('create.albumDisplay') + (song.album || t('create.notProvided'));
-                if (summaryEl) summaryEl.textContent = t('create.lyricsDisplay') + (lines.length ? `${lines.length} ${t('batch.lineUnit')}` : t('create.noLyricsData'));
+                if (summaryEl) summaryEl.textContent = t('create.lyricsDisplay') + (lines.length ? `${lines.length} ${t('batch.lineUnit')}` : t('create.noLyricsCreatable'));
                 if (previewEl) previewEl.textContent = renderAmllPreview(lines);
-                amllCardReady = Boolean(song.musicName) && Array.isArray(lines) && lines.length > 0;
-                if (statusEl) statusEl.textContent = amllCardReady ? t('create.available') : t('create.waitingDataStatus');
+                amllCardReady = Boolean(String(song.musicName || '').trim());
+                if (statusEl) statusEl.textContent = amllCardReady
+                    ? (Array.isArray(lines) && lines.length > 0 ? t('create.available') : t('create.availableNoLyrics'))
+                    : t('create.waitingDataStatus');
                 if (cardEl) cardEl.classList.toggle('disabled', !amllCardReady);
                 if (!amllCardReady && createMode === 'amll') {
                     selectCreateMode('manual');
@@ -10655,13 +10697,20 @@
             }
         }
 
-        function showCreateModal() {
+        async function showCreateModal() {
             document.getElementById('createJsonModal').style.display = 'block'
             document.getElementById('songTitle').value = ''
             document.getElementById('songArtists').value = ''
-            selectCreateMode('manual')
+            createMode = ''
+            document.getElementById('amllSourceCard')?.classList.remove('selected')
+            document.getElementById('manualCreateSection')?.classList.remove('selected')
             updateCreateFilenamePreview()
-            refreshAmllSnapshot()
+            await refreshAmllSnapshot()
+            if (!createMode) {
+                selectCreateMode(amllCardReady ? 'amll' : 'manual')
+            } else {
+                selectCreateMode(createMode)
+            }
         }
 
         function closeCreateModal() {
@@ -10742,39 +10791,35 @@
             }
         }
 
-        function createJsonFile() {
-            if (createMode === 'amll') {
-                createFromAmllSource()
-                return
-            }
-            if (createMode === 'audio') {
-                alert(t('alert.selectAudioToImport'))
-                return
-            }
+        function readManualCreateState() {
             const title = document.getElementById('songTitle').value.trim()
             const artistsInput = document.getElementById('songArtists').value.trim()
-
-            if (!title || !artistsInput) {
-                alert(t('alert.fillTitleAndSinger'))
-                return
+            const artists = artistsInput
+                .split(',')
+                .map(artist => artist.trim())
+                .filter(artist => artist)
+            return {
+                title,
+                artistsInput,
+                artists,
+                hasAnyInput: Boolean(title || artistsInput),
+                hasCompleteInput: Boolean(title && artists.length > 0)
             }
+        }
 
-            const artists = artistsInput.split(',').map(artist => artist.trim()).filter(artist => artist)
+        function hasUsableAmllSource() {
+            return Boolean(amllCardReady && amllSnapshot && amllSnapshot.song && String(amllSnapshot.song.musicName || '').trim())
+        }
 
-            if (artists.length === 0) {
-                alert(t('alert.enterAtLeastOneArtist'))
-                return
-            }
-
-            const fileName = buildStrictSongJsonFilename(title, artists)
+        function createManualJson(manualState) {
+            const fileName = buildStrictSongJsonFilename(manualState.title, manualState.artists)
             if (!fileName) {
                 alert(t('alert.filenameEmptyAdjust'))
                 return
             }
 
-            const jsonData = buildSongJsonData(title, artists, '歌词', '音乐.mp3')
+            const jsonData = buildSongJsonData(manualState.title, manualState.artists, '歌词', '音乐.mp3')
 
-            // 发送创建请求
             fetch('/create_json', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -10797,9 +10842,36 @@
                 })
         }
 
+        function createJsonFile() {
+            const manualState = readManualCreateState()
+            const amllReady = hasUsableAmllSource()
+
+            if (createMode === 'amll' && amllReady) {
+                createFromAmllSource()
+                return
+            }
+
+            if (manualState.hasCompleteInput) {
+                createManualJson(manualState)
+                return
+            }
+
+            if (manualState.hasAnyInput && createMode === 'manual') {
+                alert(t('alert.fillTitleAndSinger'))
+                return
+            }
+
+            if (amllReady) {
+                createFromAmllSource()
+                return
+            }
+
+            alert(t('alert.fillTitleAndSinger'))
+        }
+
         async function createFromAmllSource() {
-            if (!amllCardReady || !amllSnapshot || !Array.isArray(amllSnapshot.lines) || amllSnapshot.lines.length === 0) {
-                alert(t('alert.amllNoData'))
+            if (!amllCardReady || !amllSnapshot || !amllSnapshot.song || !String(amllSnapshot.song.musicName || '').trim()) {
+                alert(t('alert.amllNotReady'))
                 return
             }
             const btn = document.getElementById('createJsonConfirm')
@@ -10861,7 +10933,6 @@
             if (!files || files.length === 0) {
                 return
             }
-            selectCreateMode('audio')
             const statusEl = document.getElementById('createAudioStatus')
             const results = []
             console.debug('DEBUG: create audio import selected', files.length)

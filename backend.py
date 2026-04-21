@@ -10036,9 +10036,6 @@ def amll_create_song():
     snapshot_song = AMLL_STATE.get("song", {}) or {}
     lines = AMLL_STATE.get("lines", []) or []
 
-    if not lines:
-        return jsonify({'status': 'error', 'message': 'AMLL源暂无歌词数据，无法创建。'})
-
     title = (snapshot_song.get("musicName") or "AMLL 未命名").strip()
     artists = [str(item).strip() for item in (snapshot_song.get("artists") or []) if str(item).strip()]
     album = (snapshot_song.get("album") or "").strip()
@@ -10054,15 +10051,20 @@ def amll_create_song():
     base_stem = os.path.splitext(json_filename)[0]
 
     try:
+        lyrics_filename = None
+        lyrics_url = "!"
+
         # 写入 LYS
-        lys_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}.lys")
-        lys_path = SONGS_DIR / lys_filename
-        lys_path.write_text(_amll_lines_to_lys(lines), encoding="utf-8-sig")
+        if lines:
+            lyrics_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}.lys")
+            lyrics_path = SONGS_DIR / lyrics_filename
+            lyrics_path.write_text(_amll_lines_to_lys(lines), encoding="utf-8-sig")
+            lyrics_url = build_public_url('songs', lyrics_filename)
 
         # 写入翻译 LRC（可选）
         translation_filename = None
         translation_url = "!"
-        if use_translation and any(str(line.get("translatedLyric") or "").strip() for line in lines):
+        if lines and use_translation and any(str(line.get("translatedLyric") or "").strip() for line in lines):
             translation_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}_trans.lrc")
             translation_path = SONGS_DIR / translation_filename
             translation_path.write_text(_amll_lines_to_lrc(lines), encoding="utf-8-sig")
@@ -10081,8 +10083,7 @@ def amll_create_song():
         elif cover_source:
             cover_url = cover_source
 
-        lyrics_url = build_public_url('songs', lys_filename)
-        lyrics_field = f"::{lyrics_url}::{translation_url}::!::"
+        lyrics_field = f"::{lyrics_url}::{translation_url}::!::" if lines else "::!::!::!::"
 
         placeholder_song = build_public_url('songs', "音乐.mp3")
         json_content = {
@@ -10107,7 +10108,7 @@ def amll_create_song():
         return jsonify({
             'status': 'success',
             'jsonFile': json_filename,
-            'lyricsFile': lys_filename,
+            'lyricsFile': lyrics_filename,
             'translationFile': translation_filename,
             'coverFile': cover_filename,
             'coverUrl': cover_url,
