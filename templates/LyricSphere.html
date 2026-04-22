@@ -989,6 +989,240 @@
             font-size: 1.1em;
         }
 
+        .image-path-modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-height: 0;
+        }
+
+        .image-path-priority-summary {
+            margin: 0;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: rgba(77, 171, 247, 0.08);
+            color: var(--text-color);
+            font-size: 0.92rem;
+            line-height: 1.5;
+        }
+
+        .image-path-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 14px;
+            min-width: 0;
+        }
+
+        .image-path-card {
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 14px;
+            background: var(--input-bg);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-width: 0;
+            min-height: 0;
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04);
+        }
+
+        .image-path-card--album {
+            border-top: 3px solid rgba(77, 171, 247, 0.8);
+        }
+
+        .image-path-card--background {
+            border-top: 3px solid rgba(145, 158, 171, 0.8);
+        }
+
+        .image-path-card--dynamic {
+            border-top: 3px solid rgba(153, 102, 255, 0.85);
+        }
+
+        .image-path-card-header {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .image-path-card-title {
+            margin: 0;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text-color);
+        }
+
+        .image-path-card-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .image-path-priority-badge {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.8rem;
+            line-height: 1.2;
+            background: rgba(77, 171, 247, 0.12);
+            color: var(--text-color);
+            border: 1px solid rgba(77, 171, 247, 0.22);
+            white-space: nowrap;
+        }
+
+        .image-path-priority-badge--medium {
+            background: rgba(145, 158, 171, 0.12);
+            border-color: rgba(145, 158, 171, 0.22);
+        }
+
+        .image-path-priority-badge--high {
+            background: rgba(153, 102, 255, 0.12);
+            border-color: rgba(153, 102, 255, 0.22);
+        }
+
+        .image-path-card-desc,
+        .image-path-poster-note {
+            margin: 0;
+            color: var(--field-help-text);
+            font-size: 0.85rem;
+            line-height: 1.45;
+        }
+
+        .image-path-field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .image-path-field-label {
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .image-path-field-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            align-items: center;
+            min-width: 0;
+        }
+
+        .image-path-field-row--stacked {
+            grid-template-columns: 1fr;
+        }
+
+        .image-path-input {
+            width: 100%;
+            margin: 0;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+
+        .image-path-input--readonly {
+            opacity: 0.9;
+        }
+
+        .image-path-upload-btn,
+        .image-path-save-btn,
+        .image-path-global-btn {
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .image-path-upload-input {
+            display: none;
+        }
+
+        .image-path-preview {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .image-path-preview-stage {
+            width: min(100%, 220px);
+            aspect-ratio: 1 / 1;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #222;
+            border: 1px solid var(--border-color);
+        }
+
+        .image-path-preview-media {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .image-path-preview-placeholder {
+            padding: 12px;
+            text-align: center;
+        }
+
+        .image-path-card-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .image-path-global-actions {
+            justify-content: flex-end;
+            padding-top: 4px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .image-path-card-actions .lyrics-action-btn {
+            margin: 0;
+        }
+
+        @media (max-width: 1200px) {
+            .image-path-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .image-path-card--dynamic {
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (max-width: 840px) {
+            .image-path-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .image-path-card--dynamic {
+                grid-column: auto;
+            }
+
+            .image-path-field-row {
+                grid-template-columns: 1fr;
+            }
+
+            .image-path-global-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .image-path-global-actions .lyrics-action-btn {
+                width: 100%;
+            }
+
+            .image-path-card-actions .lyrics-action-btn,
+            .image-path-field-row .image-path-upload-btn {
+                width: 100%;
+                white-space: normal;
+            }
+        }
+
         .create-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -3088,89 +3322,125 @@
     <div id="imagePathModal" class="modal">
         <div class="modal-content">
             <h2 data-i18n="imagePath.title">修改图片路径</h2>
-            <div>
-                <h3 data-i18n="imagePath.albumCoverTitle">专辑封面</h3>
-                <label data-i18n="imagePath.currentPathLabel">当前路径：</label>
-                <input type="text" id="imagePath" class="file-path-input" readonly>
-                <label data-i18n="imagePath.newPathLabel">新路径：</label>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <input type="text" id="newImagePath" class="file-path-input" style="flex:1">
-                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadAlbum" onclick="triggerImageUpload('album')">
-                        📤 上传专辑图
-                    </button>
-                    <input type="file" id="imageUpload" accept="image/*" style="display: none;"
-                        onchange="handleImageUpload(this.files[0], 'album')">
-                </div>
-                <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintAlbum">
-                    提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名
-                </small>
-            </div>
-            
-            <div>
-                <h3 data-i18n="imagePath.backgroundTitle">背景图片/视频</h3>
-                <label data-i18n="imagePath.currentPathLabel">当前路径：</label>
-                <input type="text" id="backgroundPath" class="file-path-input" readonly>
-                <label data-i18n="imagePath.newPathLabel">新路径：</label>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <input type="text" id="newBackgroundPath" class="file-path-input" style="flex:1">
-                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadBackground" onclick="triggerImageUpload('background')">
-                        📤 上传背景图/视频
-                    </button>
-                    <input type="file" id="backgroundUpload" accept="image/*,video/*" style="display: none;"
-                        onchange="handleImageUpload(this.files[0], 'background')">
-                </div>
-                <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintBackground">
-                    提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名
-                </small>
-            </div>
+            <div class="image-path-modal-body">
+                <p class="image-path-priority-summary" data-i18n="imagePath.prioritySummary">显示优先级：动态封面源 &gt; 专辑封面 &gt; 背景；动态封面为视频时，poster 会先作为静态封面，并在动态源缺失时参与回退。</p>
 
-            <div style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
-                <h3 data-i18n="imagePath.dynamicCoverTitle">动态封面（实验性功能）</h3>
-                <label data-i18n="imagePath.dynamicCoverPathLabel">动态封面路径（GIF/视频）：</label>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <input type="text" id="dynamicCoverPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
-                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadDynamic" onclick="triggerImageUpload('dynamicCover')">
-                        📤 上传动态封面
-                    </button>
-                    <input type="file" id="dynamicCoverUpload" accept="image/*,video/*" style="display: none;"
-                        onchange="handleImageUpload(this.files[0], 'dynamicCover')">
-                </div>
-                <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintDynamic">
-                    提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放
-                </small>
-
-                <label style="margin-top: 10px;" data-i18n="imagePath.posterLabel">海报/静态封面（可选）：</label>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                    <input type="text" id="dynamicCoverPosterPath" class="file-path-input" style="flex:1" onchange="updateDynamicCoverPreview()">
-                    <button type="button" class="lyrics-action-btn path-update-btn" style="margin:0; cursor:pointer;" data-i18n="imagePath.uploadPoster" onclick="triggerImageUpload('dynamicCoverPoster')">
-                        📤 上传海报
-                    </button>
-                    <input type="file" id="dynamicCoverPosterUpload" accept="image/*" style="display: none;"
-                        onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
-                </div>
-                <small class="form-help-text" style="display: block; margin-top: 5px;" data-i18n="imagePath.hintPoster">
-                    提示：视频加载前显示的静态图片，建议用专辑图
-                </small>
-
-                <!-- 动态封面预览区域 -->
-                <div id="dynamicCoverPreviewContainer" style="margin-top: 15px; display: none;">
-                    <label data-i18n="imagePath.previewLabel">预览：</label>
-                    <div style="width: 200px; height: 200px; background: #222; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
-                        <img id="dynamicCoverPreviewImg" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" data-i18n-alt="imagePath.altPreview" alt="动态封面预览">
-                        <video id="dynamicCoverPreviewVideo" style="max-width: 100%; max-height: 100%; object-fit: contain; display: none;" muted loop autoplay playsinline></video>
-                        <div id="dynamicCoverPreviewPlaceholder" class="form-help-text" style="text-align: center; padding: 10px;" data-i18n="imagePath.noPreview">
-                            无预览
+                <div class="image-path-grid">
+                    <section class="image-path-card image-path-card--album">
+                        <div class="image-path-card-header">
+                            <h3 class="image-path-card-title" data-i18n="imagePath.albumCoverTitle">专辑封面</h3>
+                            <div class="image-path-card-meta">
+                                <span class="image-path-priority-badge" data-i18n="imagePath.priorityMedium">优先级：中</span>
+                                <span class="image-path-card-desc" data-i18n="imagePath.albumCardDesc">常规封面来源</span>
+                            </div>
                         </div>
-                    </div>
-                </div>
-            </div>
 
-            <div class="editor-buttons">
-                <button onclick="saveAllImagePaths()" data-i18n="imagePath.saveAll">保存全部</button>
-                <button onclick="updateImagePath()" data-i18n="imagePath.saveAlbum">保存专辑图</button>
-                <button onclick="updateBackgroundPath()" data-i18n="imagePath.saveBackground">保存背景图</button>
-                <button onclick="updateDynamicCoverPath()" data-i18n="imagePath.saveDynamicCover">保存动态封面</button>
-                <button onclick="closeImagePathModal()" data-i18n="imagePath.cancel">取消</button>
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.currentPathLabel">当前路径：</label>
+                            <input type="text" id="imagePath" class="file-path-input image-path-input image-path-input--readonly" readonly>
+                        </div>
+
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.newPathLabel">新路径：</label>
+                            <div class="image-path-field-row">
+                                <input type="text" id="newImagePath" class="file-path-input image-path-input">
+                                <button type="button" class="lyrics-action-btn path-update-btn image-path-upload-btn" data-i18n="imagePath.uploadAlbum" onclick="triggerImageUpload('album')">
+                                    📤 上传专辑图
+                                </button>
+                                <input type="file" id="imageUpload" class="image-path-upload-input" accept="image/*" onchange="handleImageUpload(this.files[0], 'album')">
+                            </div>
+                            <small class="form-help-text" data-i18n="imagePath.hintAlbum">提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名</small>
+                        </div>
+
+                        <div class="image-path-card-actions">
+                            <button type="button" class="lyrics-action-btn path-update-btn image-path-save-btn" onclick="updateImagePath()" data-i18n="imagePath.saveAlbum">保存专辑图</button>
+                        </div>
+                    </section>
+
+                    <section class="image-path-card image-path-card--background">
+                        <div class="image-path-card-header">
+                            <h3 class="image-path-card-title" data-i18n="imagePath.backgroundTitle">背景图片/视频</h3>
+                            <div class="image-path-card-meta">
+                                <span class="image-path-priority-badge image-path-priority-badge--medium" data-i18n="imagePath.priorityLow">优先级：低</span>
+                                <span class="image-path-card-desc" data-i18n="imagePath.backgroundCardDesc">最后兜底背景来源</span>
+                            </div>
+                        </div>
+
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.currentPathLabel">当前路径：</label>
+                            <input type="text" id="backgroundPath" class="file-path-input image-path-input image-path-input--readonly" readonly>
+                        </div>
+
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.newPathLabel">新路径：</label>
+                            <div class="image-path-field-row">
+                                <input type="text" id="newBackgroundPath" class="file-path-input image-path-input">
+                                <button type="button" class="lyrics-action-btn path-update-btn image-path-upload-btn" data-i18n="imagePath.uploadBackground" onclick="triggerImageUpload('background')">
+                                    📤 上传背景图/视频
+                                </button>
+                                <input type="file" id="backgroundUpload" class="image-path-upload-input" accept="image/*,video/*" onchange="handleImageUpload(this.files[0], 'background')">
+                            </div>
+                            <small class="form-help-text" data-i18n="imagePath.hintBackground">提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名</small>
+                        </div>
+
+                        <div class="image-path-card-actions">
+                            <button type="button" class="lyrics-action-btn path-update-btn image-path-save-btn" onclick="updateBackgroundPath()" data-i18n="imagePath.saveBackground">保存背景图</button>
+                        </div>
+                    </section>
+
+                    <section class="image-path-card image-path-card--dynamic">
+                        <div class="image-path-card-header">
+                            <h3 class="image-path-card-title" data-i18n="imagePath.dynamicCoverTitle">动态封面（实验性功能）</h3>
+                            <div class="image-path-card-meta">
+                                <span class="image-path-priority-badge image-path-priority-badge--high" data-i18n="imagePath.priorityHigh">优先级：高</span>
+                                <span class="image-path-card-desc" data-i18n="imagePath.dynamicCardDesc">资源用途：poster 参与静态封面回退</span>
+                            </div>
+                        </div>
+
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.dynamicCoverPathLabel">动态封面路径（GIF/视频）：</label>
+                            <div class="image-path-field-row">
+                                <input type="text" id="dynamicCoverPath" class="file-path-input image-path-input" onchange="updateDynamicCoverPreview()">
+                                <button type="button" class="lyrics-action-btn path-update-btn image-path-upload-btn" data-i18n="imagePath.uploadDynamic" onclick="triggerImageUpload('dynamicCover')">
+                                    📤 上传动态封面
+                                </button>
+                                <input type="file" id="dynamicCoverUpload" class="image-path-upload-input" accept="image/*,video/*" onchange="handleImageUpload(this.files[0], 'dynamicCover')">
+                            </div>
+                            <small class="form-help-text" data-i18n="imagePath.hintDynamic">提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放</small>
+                        </div>
+
+                        <div class="image-path-field-group">
+                            <label class="image-path-field-label" data-i18n="imagePath.posterLabel">海报/静态封面（可选）：</label>
+                            <div class="image-path-field-row">
+                                <input type="text" id="dynamicCoverPosterPath" class="file-path-input image-path-input" onchange="updateDynamicCoverPreview()">
+                                <button type="button" class="lyrics-action-btn path-update-btn image-path-upload-btn" data-i18n="imagePath.uploadPoster" onclick="triggerImageUpload('dynamicCoverPoster')">
+                                    📤 上传海报
+                                </button>
+                                <input type="file" id="dynamicCoverPosterUpload" class="image-path-upload-input" accept="image/*" onchange="handleImageUpload(this.files[0], 'dynamicCoverPoster')">
+                            </div>
+                            <small class="form-help-text" data-i18n="imagePath.hintPoster">提示：视频加载前显示的静态图片，建议用专辑图</small>
+                            <small class="image-path-poster-note" data-i18n="imagePath.posterNote">poster 不是独立模式；它是动态封面视频的静态封面，也会参与封面回退。</small>
+                        </div>
+
+                        <div id="dynamicCoverPreviewContainer" class="image-path-preview" style="display: none;">
+                            <label class="image-path-field-label" data-i18n="imagePath.previewLabel">预览：</label>
+                            <div class="image-path-preview-stage">
+                                <img id="dynamicCoverPreviewImg" class="image-path-preview-media" style="display: none;" data-i18n-alt="imagePath.altPreview" alt="动态封面预览">
+                                <video id="dynamicCoverPreviewVideo" class="image-path-preview-media" style="display: none;" muted loop autoplay playsinline></video>
+                                <div id="dynamicCoverPreviewPlaceholder" class="form-help-text image-path-preview-placeholder" data-i18n="imagePath.noPreview">无预览</div>
+                            </div>
+                        </div>
+
+                        <div class="image-path-card-actions">
+                            <button type="button" class="lyrics-action-btn path-update-btn image-path-save-btn" onclick="updateDynamicCoverPath()" data-i18n="imagePath.saveDynamicCover">保存动态封面</button>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="editor-buttons image-path-global-actions">
+                    <button type="button" class="lyrics-action-btn save-all-btn image-path-global-btn" onclick="saveAllImagePaths()" data-i18n="imagePath.saveAll">保存全部</button>
+                    <button type="button" class="lyrics-action-btn close-btn image-path-global-btn" onclick="closeImagePathModal()" data-i18n="imagePath.cancel">取消</button>
+                </div>
             </div>
         </div>
     </div>
@@ -3728,11 +3998,40 @@
                 'imagePath.currentPath': '当前路径：',
                 'imagePath.newPath': '新路径：',
                 'imagePath.uploadAlbumShort': '上传专辑图',
-                'imagePath.uploadBackground': '上传背景图/视频',
                 'imagePath.hint.album': '提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名',
                 'imagePath.dynamicCover': '动态封面',
                 'imagePath.uploadDynamicCover': '上传动态封面',
                 'imagePath.hint.dynamic': '提示：支持 MP4/WebM/GIF 格式的动态封面',
+                'imagePath.albumCoverTitle': '专辑封面',
+                'imagePath.backgroundTitle': '背景图片/视频',
+                'imagePath.currentPathLabel': '当前路径：',
+                'imagePath.newPathLabel': '新路径：',
+                'imagePath.uploadAlbum': '📤 上传专辑图',
+                'imagePath.uploadBackground': '📤 上传背景图/视频',
+                'imagePath.hintAlbum': '提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名',
+                'imagePath.dynamicCoverTitle': '动态封面（实验性功能）',
+                'imagePath.dynamicCoverPathLabel': '动态封面路径（GIF/视频）：',
+                'imagePath.uploadDynamic': '📤 上传动态封面',
+                'imagePath.hintDynamic': '提示：支持 GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV，在主播放器区域循环播放',
+                'imagePath.posterLabel': '海报/静态封面（可选）：',
+                'imagePath.uploadPoster': '📤 上传海报',
+                'imagePath.hintPoster': '提示：视频加载前显示的静态图片，建议用专辑图',
+                'imagePath.previewLabel': '预览：',
+                'imagePath.noPreview': '无预览',
+                'imagePath.altPreview': '动态封面预览',
+                'imagePath.saveAll': '保存全部',
+                'imagePath.saveAlbum': '保存专辑图',
+                'imagePath.saveBackground': '保存背景图',
+                'imagePath.saveDynamicCover': '保存动态封面',
+                'imagePath.hintBackground': '提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名',
+                'imagePath.prioritySummary': '显示优先级：动态封面源 > 专辑封面 > 背景；动态封面为视频时，poster 会先作为静态封面，并在动态源缺失时参与回退。',
+                'imagePath.priorityHigh': '优先级：高',
+                'imagePath.priorityMedium': '优先级：中',
+                'imagePath.priorityLow': '优先级：低',
+                'imagePath.albumCardDesc': '常规封面来源',
+                'imagePath.backgroundCardDesc': '最后兜底背景来源',
+                'imagePath.dynamicCardDesc': '资源用途：poster 参与静态封面回退',
+                'imagePath.posterNote': 'poster 不是独立模式；它是动态封面视频的静态封面，也会参与封面回退。',
                 'imagePath.save': '保存',
                 'imagePath.cancel': '取消',
 
@@ -4285,6 +4584,7 @@
                 'imagePath.currentPathLabel': '当前路径：',
                 'imagePath.newPathLabel': '新路径：',
                 'imagePath.uploadAlbum': '📤 上传专辑图',
+                'imagePath.uploadBackground': '📤 上传背景图/视频',
                 'imagePath.hintAlbum': '提示：支持 JPG/PNG/GIF/WEBP 格式，可直接上传或输入文件名',
                 'imagePath.dynamicCoverTitle': '动态封面（实验性功能）',
                 'imagePath.dynamicCoverPathLabel': '动态封面路径（GIF/视频）：',
@@ -4300,6 +4600,15 @@
                 'imagePath.saveBackground': '保存背景图',
                 'imagePath.saveDynamicCover': '保存动态封面',
                 'imagePath.hintBackground': '提示：支持 JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV，可直接上传或输入文件名',
+                'imagePath.altPreview': '动态封面预览',
+                'imagePath.prioritySummary': '显示优先级：动态封面源 > 专辑封面 > 背景；动态封面为视频时，poster 会先作为静态封面，并在动态源缺失时参与回退。',
+                'imagePath.priorityHigh': '优先级：高',
+                'imagePath.priorityMedium': '优先级：中',
+                'imagePath.priorityLow': '优先级：低',
+                'imagePath.albumCardDesc': '常规封面来源',
+                'imagePath.backgroundCardDesc': '最后兜底背景来源',
+                'imagePath.dynamicCardDesc': '资源用途：poster 参与静态封面回退',
+                'imagePath.posterNote': 'poster 不是独立模式；它是动态封面视频的静态封面，也会参与封面回退。',
 
                 // === 创建歌曲补充 ===
                 'create.amllSourceTitle': 'AMLL源',
@@ -4666,13 +4975,40 @@
                 'imagePath.background': 'Background Image/Video',
                 'imagePath.currentPath': 'Current path:',
                 'imagePath.newPath': 'New path:',
-                'imagePath.uploadAlbum': 'Upload Album Art',
-                'imagePath.uploadBackground': 'Upload Background',
                 'imagePath.hint.album': 'Tip: Supports JPG/PNG/GIF/WEBP, upload or enter filename',
                 'imagePath.dynamicCover': 'Dynamic Cover',
                 'imagePath.uploadDynamicCover': 'Upload Dynamic Cover',
                 'imagePath.saveDynamicCover': 'Save Dynamic Cover',
                 'imagePath.hint.dynamic': 'Tip: Supports MP4/WebM/GIF format dynamic covers',
+                'imagePath.albumCoverTitle': 'Album Cover',
+                'imagePath.backgroundTitle': 'Background Image/Video',
+                'imagePath.currentPathLabel': 'Current Path: ',
+                'imagePath.newPathLabel': 'New Path: ',
+                'imagePath.uploadAlbum': '📤 Upload Album Art',
+                'imagePath.uploadBackground': '📤 Upload Background Image/Video',
+                'imagePath.hintAlbum': 'Tip: Supports JPG/PNG/GIF/WEBP, upload or enter filename',
+                'imagePath.dynamicCoverTitle': 'Dynamic Cover (Experimental)',
+                'imagePath.dynamicCoverPathLabel': 'Dynamic Cover Path (GIF/Video): ',
+                'imagePath.uploadDynamic': '📤 Upload Dynamic Cover',
+                'imagePath.hintDynamic': 'Tip: Supports GIF/WEBP/APNG/MP4/WEBM/OGG/M4V/MOV, loops in player area',
+                'imagePath.posterLabel': 'Poster/Static Cover (Optional): ',
+                'imagePath.uploadPoster': '📤 Upload Poster',
+                'imagePath.hintPoster': 'Tip: Static image shown before video loads, recommend album art',
+                'imagePath.previewLabel': 'Preview: ',
+                'imagePath.noPreview': 'No Preview',
+                'imagePath.altPreview': 'Dynamic cover preview',
+                'imagePath.saveAll': 'Save All',
+                'imagePath.saveAlbum': 'Save Album Art',
+                'imagePath.saveBackground': 'Save Background',
+                'imagePath.hintBackground': 'Tip: Supports JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV, upload or enter filename',
+                'imagePath.prioritySummary': 'Display priority: dynamic cover source > album cover > background; when the dynamic cover is a video, the poster is used first as the static cover and also participates in fallback when the dynamic source is missing.',
+                'imagePath.priorityHigh': 'Priority: High',
+                'imagePath.priorityMedium': 'Priority: Medium',
+                'imagePath.priorityLow': 'Priority: Low',
+                'imagePath.albumCardDesc': 'Main album cover source',
+                'imagePath.backgroundCardDesc': 'Last-resort background source',
+                'imagePath.dynamicCardDesc': 'Resource role: poster participates in static cover fallback',
+                'imagePath.posterNote': 'The poster is not a separate mode; it is the static cover for dynamic cover videos and also participates in fallback.',
                 'imagePath.save': 'Save',
                 'imagePath.cancel': 'Cancel',
 
@@ -5286,6 +5622,8 @@
                 'imagePath.backgroundTitle': 'Background Image/Video',
                 'imagePath.currentPathLabel': 'Current Path: ',
                 'imagePath.newPathLabel': 'New Path: ',
+                'imagePath.uploadAlbum': '📤 Upload Album Art',
+                'imagePath.uploadBackground': '📤 Upload Background Image/Video',
                 'imagePath.hintAlbum': 'Tip: Supports JPG/PNG/GIF/WEBP, upload or enter filename',
                 'imagePath.dynamicCoverTitle': 'Dynamic Cover (Experimental)',
                 'imagePath.dynamicCoverPathLabel': 'Dynamic Cover Path (GIF/Video): ',
@@ -5299,7 +5637,17 @@
                 'imagePath.saveAll': 'Save All',
                 'imagePath.saveAlbum': 'Save Album Art',
                 'imagePath.saveBackground': 'Save Background',
+                'imagePath.saveDynamicCover': 'Save Dynamic Cover',
                 'imagePath.hintBackground': 'Tip: Supports JPG/PNG/GIF/WEBP/MP4/WEBM/OGG/M4V/MOV, upload or enter filename',
+                'imagePath.altPreview': 'Dynamic cover preview',
+                'imagePath.prioritySummary': 'Display priority: dynamic cover source > album cover > background; when the dynamic cover is a video, the poster is used first as the static cover and also participates in fallback when the dynamic source is missing.',
+                'imagePath.priorityHigh': 'Priority: High',
+                'imagePath.priorityMedium': 'Priority: Medium',
+                'imagePath.priorityLow': 'Priority: Low',
+                'imagePath.albumCardDesc': 'Common cover source',
+                'imagePath.backgroundCardDesc': 'Last-resort background source',
+                'imagePath.dynamicCardDesc': 'Resource role: poster participates in static cover fallback',
+                'imagePath.posterNote': 'The poster is not a separate mode; it is the static cover for dynamic cover videos and also participates in fallback.',
                 // === AI settings supplementary ===
                 'aiSettings.presetTitle': 'Preset Management',
                 'aiSettings.selectPresetOption': 'Select Preset...',
