@@ -3673,6 +3673,8 @@
                     <div style="display: flex; gap: 8px;">
                         <button onclick="saveAsAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.saveAsPreset">另存为预设</button>
                         <button onclick="updateCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.updatePreset">更新当前预设</button>
+                        <button onclick="renameCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.renamePreset">重命名当前预设</button>
+                        <button onclick="duplicateCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.duplicatePreset">复制当前预设</button>
                         <button onclick="deleteAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.deletePreset">删除预设</button>
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
@@ -4132,6 +4134,8 @@
                 'aiSettings.selectPreset': '选择预设...',
                 'aiSettings.saveAsPreset': '另存为预设',
                 'aiSettings.updatePreset': '更新当前预设',
+                'aiSettings.renamePreset': '重命名当前预设',
+                'aiSettings.duplicatePreset': '复制当前预设',
                 'aiSettings.deletePreset': '删除预设',
                 'aiSettings.exportPresets': '导出预设',
                 'aiSettings.importPresets': '导入预设',
@@ -4219,7 +4223,10 @@
 
                 // === 预设管理弹窗 ===
                 'preset.inputName': '请输入预设名称：',
+                'preset.renameInputName': '请输入新的预设名称：',
+                'preset.defaultName': '未命名预设',
                 'preset.exportScope': '输入导出范围：1=当前预设，2=全部预设',
+                'preset.duplicateSuffix': ' 副本',
                 'preset.confirmDelete': '确定要删除预设 "{name}" 吗？',
                 'preset.confirmReplaceAll': '确定要替换全部预设吗？当前预设将被覆盖。',
 
@@ -4264,6 +4271,8 @@
                 'alert.selectPreset': '请选择一个预设',
                 'alert.presetNotExist': '预设不存在',
                 'alert.selectPresetToUpdate': '请先选择要更新的预设',
+                'alert.selectPresetToRename': '请先选择要重命名的预设',
+                'alert.selectPresetToDuplicate': '请先选择要复制的预设',
                 'alert.selectPresetToDelete': '请先选择要删除的预设',
                 'alert.noSaveResult': '没有可保存的结果',
                 'alert.fillApiKey': '请先填写 API Key',
@@ -4721,6 +4730,8 @@
                 'runtime.confirmRevokeDevice': '确定要吊销设备 {id}... 吗？此操作不可撤销！',
                 'runtime.presetSaved': '预设 "{name}" 已保存',
                 'runtime.presetUpdated': '预设 "{name}" 已更新',
+                'runtime.presetRenamed': '预设 "{name}" 已重命名',
+                'runtime.presetDuplicated': '预设 "{name}" 已复制',
                 'runtime.importSuccess': '导入成功，当前共有 {count} 个预设',
                 'runtime.importFailed': '导入失败',
                 'runtime.exportFailed': '导出失败',
@@ -5112,6 +5123,8 @@
                 'aiSettings.selectPreset': 'Select preset...',
                 'aiSettings.saveAsPreset': 'Save as Preset',
                 'aiSettings.updatePreset': 'Update Preset',
+                'aiSettings.renamePreset': 'Rename Current Preset',
+                'aiSettings.duplicatePreset': 'Duplicate Current Preset',
                 'aiSettings.deletePreset': 'Delete Preset',
                 'aiSettings.exportPresets': 'Export Presets',
                 'aiSettings.importPresets': 'Import Presets',
@@ -5199,7 +5212,10 @@
 
                 // === 预设管理弹窗 ===
                 'preset.inputName': 'Enter preset name:',
+                'preset.renameInputName': 'Enter new preset name:',
+                'preset.defaultName': 'Untitled Preset',
                 'preset.exportScope': 'Export scope: 1=current preset, 2=all presets',
+                'preset.duplicateSuffix': ' Copy',
                 'preset.confirmDelete': 'Are you sure you want to delete preset "{name}"?',
                 'preset.confirmReplaceAll': 'Are you sure you want to replace all presets? Current presets will be overwritten.',
 
@@ -5248,6 +5264,8 @@
                 'alert.selectPreset': 'Please select a preset',
                 'alert.presetNotExist': 'Preset does not exist',
                 'alert.selectPresetToUpdate': 'Please select a preset to update first',
+                'alert.selectPresetToRename': 'Please select a preset to rename first',
+                'alert.selectPresetToDuplicate': 'Please select a preset to duplicate first',
                 'alert.selectPresetToDelete': 'Please select a preset to delete first',
                 'alert.noSaveResult': 'No results to save',
                 'alert.fillApiKey': 'Please fill in API Key first',
@@ -5570,6 +5588,8 @@
                 'runtime.confirmRevokeDevice': 'Are you sure you want to revoke device {id}...? This action cannot be undone!',
                 'runtime.presetSaved': 'Preset "{name}" saved',
                 'runtime.presetUpdated': 'Preset "{name}" updated',
+                'runtime.presetRenamed': 'Preset "{name}" renamed',
+                'runtime.presetDuplicated': 'Preset "{name}" duplicated',
                 'runtime.importSuccess': 'Import successful, {count} presets total',
                 'runtime.importFailed': 'Import failed',
                 'runtime.exportFailed': 'Export failed',
@@ -13791,7 +13811,7 @@
         function normalizeAiPreset(preset, fallbackId) {
             const state = getBatchWorkbenchPresetStateFromPreset(preset || {});
             const id = typeof preset?.id === 'string' && preset.id.trim() ? preset.id.trim() : (fallbackId || generateAiPresetId());
-            const name = typeof preset?.name === 'string' && preset.name.trim() ? preset.name.trim() : '未命名预设';
+            const name = typeof preset?.name === 'string' && preset.name.trim() ? preset.name.trim() : t('preset.defaultName');
             return {
                 id,
                 name,
@@ -13938,7 +13958,8 @@
         }
 
         function makeUniqueAiPresetName(baseName, usedNames) {
-            const trimmed = (baseName || '未命名预设').trim() || '未命名预设';
+            const fallbackName = t('preset.defaultName');
+            const trimmed = (baseName || fallbackName).trim() || fallbackName;
             if (!usedNames.has(trimmed)) {
                 return trimmed;
             }
@@ -14119,6 +14140,24 @@
             };
         }
 
+        function getSelectedAiPresetContext(alertKey) {
+            const select = document.getElementById('aiPresetSelect');
+            const presetId = select ? select.value : '';
+            if (!presetId) {
+                alert(t(alertKey));
+                return null;
+            }
+
+            const presets = loadAiPresets();
+            const index = presets.findIndex(preset => preset.id === presetId);
+            if (index === -1) {
+                alert(t('alert.presetNotExist'));
+                return null;
+            }
+
+            return { select, presetId, presets, index, preset: presets[index] };
+        }
+
         // 另存为预设
         function saveAsAiPreset() {
             const name = prompt(t('preset.inputName'));
@@ -14178,6 +14217,66 @@
             alert(t('runtime.presetUpdated', {name: presets[index].name}));
             updateQuickAiPresetSelect(); // 更新快速选择框
             updateBatchWorkbenchPresetSelect();
+        }
+
+        function renameCurrentAiPreset() {
+            const context = getSelectedAiPresetContext('alert.selectPresetToRename');
+            if (!context) {
+                return;
+            }
+
+            const currentName = context.preset.name || '';
+            const inputName = prompt(t('preset.renameInputName'), currentName);
+            if (inputName === null) {
+                return;
+            }
+
+            const trimmedName = inputName.trim();
+            if (!trimmedName) {
+                return;
+            }
+
+            const usedNames = new Set(context.presets.filter(preset => preset.id !== context.presetId).map(preset => preset.name));
+            const nextName = makeUniqueAiPresetName(trimmedName, usedNames);
+
+            context.presets[context.index] = {
+                ...context.preset,
+                name: nextName,
+                updated_at: Date.now()
+            };
+            saveAiPresets(context.presets);
+
+            localStorage.setItem(ACTIVE_AI_PRESET_KEY, context.presetId);
+            updateAiPresetSelect();
+            updateQuickAiPresetSelect();
+            updateBatchWorkbenchPresetSelect();
+
+            alert(t('runtime.presetRenamed', {name: nextName}));
+        }
+
+        function duplicateCurrentAiPreset() {
+            const context = getSelectedAiPresetContext('alert.selectPresetToDuplicate');
+            if (!context) {
+                return;
+            }
+
+            const usedNames = new Set(context.presets.map(preset => preset.name));
+            const duplicateName = makeUniqueAiPresetName(`${context.preset.name || t('preset.defaultName')}${t('preset.duplicateSuffix')}`, usedNames);
+            const duplicatedPreset = {
+                ...context.preset,
+                id: generateAiPresetId(),
+                name: duplicateName,
+                updated_at: Date.now()
+            };
+
+            context.presets.push(duplicatedPreset);
+            saveAiPresets(context.presets);
+
+            localStorage.setItem(ACTIVE_AI_PRESET_KEY, duplicatedPreset.id);
+            updateAiPresetSelect();
+            applyAiPreset(duplicatedPreset);
+
+            alert(t('runtime.presetDuplicated', {name: duplicateName}));
         }
 
         // 删除预设
