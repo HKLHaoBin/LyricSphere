@@ -4667,6 +4667,10 @@
                 'aiSettings.baseUrl': '基础URL：',
                 'aiSettings.model': '模型名称：',
                 'aiSettings.expectReasoning': '期望思维链内容（仅部分模型支持）',
+                'aiSettings.reasoningCapabilityCheckFailed': '能力检测失败',
+                'aiSettings.reasoningCapabilityConfirmed': '✅ 当前 provider/model 已确认支持显式思考控制：系统会按你的选择发送 reasoning 控制字段。',
+                'aiSettings.reasoningCapabilityProviderDefined': '⚠️ 当前 provider 未确认可用的显式思考开关；系统仍会按你的选择发送 reasoning 控制字段，实际效果由服务商或模型决定。',
+                'aiSettings.reasoningCapabilityUnknown': '⚠️ 当前 provider/model 未确认支持显式思考控制；系统仍会按你的选择发送 reasoning 控制字段，服务商可能接受、忽略或报错。',
                 'aiSettings.compatMode': '兼容模式：将提示词合并到用户消息中',
                 'aiSettings.stripBrackets': '预处理歌词时去掉括号',
                 'aiSettings.fullLineBracketStrip': '实验性：仅去除整句外层括号',
@@ -5721,6 +5725,10 @@
                 'aiSettings.baseUrl': 'Base URL:',
                 'aiSettings.model': 'Model Name:',
                 'aiSettings.expectReasoning': 'Expect chain-of-thought content (some models only)',
+                'aiSettings.reasoningCapabilityCheckFailed': 'Capability check failed',
+                'aiSettings.reasoningCapabilityConfirmed': '✅ The current provider/model is confirmed to support explicit reasoning control: the system will send reasoning control fields according to your choice.',
+                'aiSettings.reasoningCapabilityProviderDefined': '⚠️ No confirmed explicit reasoning toggle for the current provider; the system will still send reasoning control fields according to your choice, while the actual effect is determined by the provider or model.',
+                'aiSettings.reasoningCapabilityUnknown': '⚠️ Explicit reasoning control is not yet confirmed for the current provider/model; the system will still send reasoning control fields according to your choice, and the provider may accept, ignore, or reject them.',
                 'aiSettings.compatMode': 'Compat mode: merge prompt into user message',
                 'aiSettings.stripBrackets': 'Strip brackets when preprocessing lyrics',
                 'aiSettings.fullLineBracketStrip': 'Experimental: Only strip outermost brackets of full lines',
@@ -6503,6 +6511,10 @@
             // 刷新 AI 设置来源说明/保存状态（仅重绘文案，不改业务状态）
             if (typeof updateAiSettingsSourceInfo === 'function') updateAiSettingsSourceInfo();
             if (typeof updateAiPresetApplyStatus === 'function') updateAiPresetApplyStatus();
+            // 刷新推理能力提示文案（语言切换后立即同步）
+            if (typeof refreshReasoningControlCapabilityHint === 'function') {
+                refreshReasoningControlCapabilityHint().catch(() => {});
+            }
             // 刷新歌曲列表项文本
             document.querySelectorAll('.json-item').forEach(function(item) {
                 const filename = item.dataset.filename;
@@ -15628,25 +15640,31 @@
             if (data.status !== 'success') {
                 hintEl.style.display = 'block';
                 hintEl.style.color = '#b91c1c';
-                hintEl.textContent = data.message || '能力检测失败';
+                hintEl.textContent = t('aiSettings.reasoningCapabilityCheckFailed');
                 checkEl.disabled = false;
                 return;
             }
             const cap = data.capability || {};
             const supported = Boolean(cap.supported);
+            const userSelectable = cap.user_selectable !== false;
+            const status = String(cap.status || 'unknown');
             if (supported) {
                 hintEl.style.display = 'block';
                 hintEl.style.color = 'var(--text-secondary)';
-                hintEl.textContent = '✅ 当前 provider/model 支持显式思考控制：勾选/取消都会通过请求字段生效。';
+                hintEl.textContent = t('aiSettings.reasoningCapabilityConfirmed');
                 checkEl.disabled = false;
                 return;
             }
 
             hintEl.style.display = 'block';
             hintEl.style.color = '#b45309';
-            hintEl.textContent = `⚠️ 当前 provider/model 不支持显式思考控制：${cap.message || '该开关不会通过专门字段生效'}。`;
-            // Avoid misleading state: disable toggle when unsupported
-            checkEl.disabled = true;
+            if (status === 'provider_defined') {
+                hintEl.textContent = t('aiSettings.reasoningCapabilityProviderDefined');
+            } else {
+                hintEl.textContent = t('aiSettings.reasoningCapabilityUnknown');
+            }
+            // Unknown/unsupported should still remain user selectable by design.
+            checkEl.disabled = !userSelectable ? true : false;
         }
 
         function sanitizeBaseUrl(value) {

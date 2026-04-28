@@ -1143,18 +1143,25 @@ def get_reasoning_control_capability(provider: str, base_url: str, model: str) -
     """
     Returns capability information for explicit reasoning control.
     - supported: whether we can explicitly control reasoning via request fields
+    - user_selectable: whether UI should allow user to choose expectation
+    - control_field_sent: whether backend will attempt to send reasoning control fields
+    - status: confirmed | unknown | provider_defined
     - options_for(expect_reasoning): returns kwargs to pass into chat.completions.create()
     """
     provider_norm = str(provider or '').strip().lower()
     base_url_norm = str(base_url or '').strip().lower()
 
+    def _options_for(expect_reasoning: bool) -> Dict[str, Any]:
+        effort = 'medium' if expect_reasoning else 'none'
+        return {'extra_body': {'reasoning': {'effort': effort}}}
+
     is_openai_official = provider_norm == 'openai' or 'api.openai.com' in base_url_norm
     if is_openai_official:
-        def _options_for(expect_reasoning: bool) -> Dict[str, Any]:
-            effort = 'medium' if expect_reasoning else 'none'
-            return {'extra_body': {'reasoning': {'effort': effort}}}
         return {
             'supported': True,
+            'user_selectable': True,
+            'control_field_sent': True,
+            'status': 'confirmed',
             'provider': 'openai',
             'message': '',
             'options_for': _options_for,
@@ -1165,16 +1172,22 @@ def get_reasoning_control_capability(provider: str, base_url: str, model: str) -
     if provider_norm == 'deepseek' or 'deepseek' in base_url_norm:
         return {
             'supported': False,
+            'user_selectable': True,
+            'control_field_sent': True,
+            'status': 'provider_defined',
             'provider': provider_norm or 'deepseek',
-            'message': '当前 provider 不支持显式思考控制（DeepSeek 未确认可用的关闭/开启字段）',
-            'options_for': lambda _expect: {},
+            'message': '当前 provider 未确认可用的显式思考开关（模型行为可能由服务商或模型自身决定）',
+            'options_for': _options_for,
         }
 
     return {
         'supported': False,
+        'user_selectable': True,
+        'control_field_sent': True,
+        'status': 'unknown',
         'provider': provider_norm or 'unknown',
-        'message': '当前 provider/model 不支持显式思考控制（未在白名单中）',
-        'options_for': lambda _expect: {},
+        'message': '当前 provider/model 未确认支持显式思考控制（未在白名单中）',
+        'options_for': _options_for,
     }
 
 
@@ -1184,7 +1197,7 @@ def build_reasoning_request_options(provider: str, base_url: str, model: str, ex
     This does NOT raise; callers should enforce support when they must guarantee behavior.
     """
     cap = get_reasoning_control_capability(provider=provider, base_url=base_url, model=model)
-    if not cap.get('supported'):
+    if not cap.get('control_field_sent', False):
         return {}
     return cap['options_for'](bool(expect_reasoning))
 
@@ -3829,6 +3842,7 @@ def build_translation_prompt_lines(
 
     for entry in entries:
         source_line_no = int(entry.get('source_line_no') or 0)
+        entry_index = int(entry.get('entry_index') or 0)
         raw_line = str(entry.get('raw_line') or '')
         original_text = str(entry.get('text') or '')
         normalized_text = original_text.strip()
@@ -3865,6 +3879,7 @@ def build_translation_prompt_lines(
         display_index = f"{current_main_index}_{sub_index}" if is_subline else str(current_main_index)
         prompt_lines.append({
             'source_line_no': source_line_no,
+            'entry_index': entry_index,
             'original_text': original_text,
             'normalized_text': normalized_text,
             'is_full_line_bracket': is_full_line_bracket,
@@ -9014,6 +9029,7 @@ def extract_timestamps_from_content(lyrics_content: str) -> List[str]:
 
 def extract_lyrics_entries_from_content(lyrics_content: str) -> List[Dict[str, Any]]:
     extracted_entries: List[Dict[str, Any]] = []
+    entry_index = 0
     for source_line_no, line in enumerate((lyrics_content or '').split('\n'), 1):
         raw_line = str(line or '')
         line_tag_match = re.match(r'^\s*\[(\d+)\]', raw_line)
@@ -9022,8 +9038,10 @@ def extract_lyrics_entries_from_content(lyrics_content: str) -> List[Dict[str, A
         line_lyrics = re.sub(r'\(\d+,\d+\)', '', line_lyrics)
         line_lyrics = line_lyrics.strip()
         if line_lyrics:
+            entry_index += 1
             extracted_entries.append({
                 'source_line_no': source_line_no,
+                'entry_index': entry_index,
                 'raw_line': raw_line,
                 'line_tag': line_tag,
                 'text': line_lyrics,
@@ -9370,6 +9388,9 @@ def ai_reasoning_control_capability():
         'status': 'success',
         'capability': {
             'supported': bool(cap.get('supported', False)),
+            'user_selectable': bool(cap.get('user_selectable', True)),
+            'control_field_sent': bool(cap.get('control_field_sent', True)),
+            'status': str(cap.get('status') or 'unknown'),
             'provider': str(cap.get('provider') or ''),
             'message': str(cap.get('message') or ''),
         }
@@ -9478,8 +9499,8 @@ def probe_ai():
         client = build_openai_client(api_key=api_key, base_url=base_url)
         expect_reasoning = bool(runtime.get('translation', {}).get('expect_reasoning', AI_TRANSLATION_SETTINGS.get('expect_reasoning', True)))
         translation_provider = runtime.get('translation', {}).get('provider') or AI_TRANSLATION_SETTINGS.get('provider', '')
-        reasoning_cap = get_reasoning_control_capability(provider=translation_provider, base_url=base_url, model=model) if mode != 'thinking' else {'supported': True, 'message': '', 'provider': translation_provider}
-        reasoning_opts = build_reasoning_request_options(provider=translation_provider, base_url=base_url, model=model, expect_reasoning=expect_reasoning) if (mode != 'thinking' and reasoning_cap.get('supported')) else {}
+        reasoning_cap = get_reasoning_control_capability(provider=translation_provider, base_url=base_url, model=model) if mode != 'thinking' else {'supported': True, 'control_field_sent': False, 'message': '', 'provider': translation_provider}
+        reasoning_opts = build_reasoning_request_options(provider=translation_provider, base_url=base_url, model=model, expect_reasoning=expect_reasoning) if mode != 'thinking' else {}
         if compat_mode:
             probe_prompt = f"{system_prompt}\n\nping".strip() if system_prompt else 'ping'
             probe_messages = [
@@ -9510,6 +9531,7 @@ def probe_ai():
             'observed_chunk': first_chunk is not None,
             'reasoning_control': {
                 'supported': bool(reasoning_cap.get('supported', False)),
+                'control_field_sent': bool(reasoning_cap.get('control_field_sent', False)),
                 'provider': reasoning_cap.get('provider', ''),
                 'message': str(reasoning_cap.get('message') or ''),
             },
@@ -9817,8 +9839,8 @@ def translate_lyrics():
                                 translation = translated_dict.get(prompt_line['display_index'])
                                 if translation is None:
                                     continue
-                                source_idx = max(0, int(prompt_line.get('source_line_no', 1)) - 1)
-                                prefix = line_prefixes[source_idx] if source_idx < len(line_prefixes) else ''
+                                entry_idx = max(0, int(prompt_line.get('entry_index', 1)) - 1)
+                                prefix = line_prefixes[entry_idx] if entry_idx < len(line_prefixes) else ''
                                 final_lyrics.append(f"{prefix}{translation}" if prefix else translation)
                             if not final_lyrics:
                                 continue
@@ -10222,8 +10244,8 @@ def translate_lyrics():
                             for prompt_line in prompt_lines:
                                 translation = translated_dict.get(prompt_line['display_index'])
                                 if translation is not None:
-                                    source_idx = max(0, int(prompt_line.get('source_line_no', 1)) - 1)
-                                    prefix = line_prefixes[source_idx] if source_idx < len(line_prefixes) else ''
+                                    entry_idx = max(0, int(prompt_line.get('entry_index', 1)) - 1)
+                                    prefix = line_prefixes[entry_idx] if entry_idx < len(line_prefixes) else ''
                                     final_line = f"{prefix}{translation}" if prefix else translation
                                     final_lyrics.append(final_line)
 
