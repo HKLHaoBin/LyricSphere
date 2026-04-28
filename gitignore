@@ -1,0 +1,72 @@
+# 阻止音频文件版本控制
+static/songs/*
+*.wav
+*.flac
+*.mp3
+logs/*
+exports/*
+logs/*
+electron-shell/node_modules/*
+electron-shell/dist/*
+
+
+
+static/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760352374
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760352406
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760352625
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760352813
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760352835
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760353006
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760353119
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760353312
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_e411c1f8. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.ttml.20251013_184614
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_e411c1f8. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.ttml.20251013_185025
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_e411c1f8. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.ttml.20251013_185333
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_e411c1f8. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.ttml.20251013_185355
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_e411c1f8. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.ttml.20251013_185646
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760351618
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251013_185839
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251013_185839
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665850
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665875
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665900
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665925
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665940
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760665941
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760668090
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760668091
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760668144
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1760668149
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_095140
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_095205
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_095221
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_102811
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_102904
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Sihan _ Lyla P. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.lys.20251017_102909
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_095140
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_095205
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_095221
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_102811
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_102904
+static/backups/《绝区零》卢西娅EP  DAMIDAMI -_12e37537. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound_trans.lrc.20251017_102909
+electron-shell/dist.zip
+
+
+
+ __pycache__/backend.cpython-312.pyc
+__pycache__/
+*.pyc
+logs/upload.log
+
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1768027090
+static/backups/《绝区零》卢西娅EP  DAMIDAMI - Siha_7c5ceb60. _ Sihan _ Nellie Fors _ SmileL _ Nanyan P _ Zilan Li _ Aylin Abbasova _ Ivan Korop _ Daniele Fabio _ Dimitris Papageorgiou _ Aylin Abbasova _ 核野 _ SmileL _ Stephen Kaye _ Joe LaPorta@SterlingSound.json.1768027082
+.iflow
+settings.json
+static/public/service-worker.js.gz
+手动复制的日志.log
+velopack_libc_0.0.1298
+velopack
+templates/Trace-20260415T170105.json.gz
+.gitignore
+templates/Trace-20260415T170105.json/Trace-20260415T170105.json

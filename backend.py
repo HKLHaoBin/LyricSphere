@@ -1138,18 +1138,84 @@ def build_openai_client(api_key: str, base_url: str) -> OpenAI:
                 app.logger.error("禁用SSL验证的回退也失败: %s", insecure_error)
         raise exc
 
+
+def get_reasoning_control_capability(provider: str, base_url: str, model: str) -> Dict[str, Any]:
+    """
+    Returns capability information for explicit reasoning control.
+    - supported: whether we can explicitly control reasoning via request fields
+    - options_for(expect_reasoning): returns kwargs to pass into chat.completions.create()
+    """
+    provider_norm = str(provider or '').strip().lower()
+    base_url_norm = str(base_url or '').strip().lower()
+
+    is_openai_official = provider_norm == 'openai' or 'api.openai.com' in base_url_norm
+    if is_openai_official:
+        def _options_for(expect_reasoning: bool) -> Dict[str, Any]:
+            effort = 'medium' if expect_reasoning else 'none'
+            return {'extra_body': {'reasoning': {'effort': effort}}}
+        return {
+            'supported': True,
+            'provider': 'openai',
+            'message': '',
+            'options_for': _options_for,
+        }
+
+    # NOTE: We intentionally do NOT silently no-op for DeepSeek/reasoner here.
+    # DeepSeek reasoner behavior appears model-defined; without a confirmed explicit switch, mark unsupported.
+    if provider_norm == 'deepseek' or 'deepseek' in base_url_norm:
+        return {
+            'supported': False,
+            'provider': provider_norm or 'deepseek',
+            'message': '当前 provider 不支持显式思考控制（DeepSeek 未确认可用的关闭/开启字段）',
+            'options_for': lambda _expect: {},
+        }
+
+    return {
+        'supported': False,
+        'provider': provider_norm or 'unknown',
+        'message': '当前 provider/model 不支持显式思考控制（未在白名单中）',
+        'options_for': lambda _expect: {},
+    }
+
+
+def build_reasoning_request_options(provider: str, base_url: str, model: str, expect_reasoning: bool) -> Dict[str, Any]:
+    """
+    Backward-compatible wrapper: returns kwargs for upstream request.
+    This does NOT raise; callers should enforce support when they must guarantee behavior.
+    """
+    cap = get_reasoning_control_capability(provider=provider, base_url=base_url, model=model)
+    if not cap.get('supported'):
+        return {}
+    return cap['options_for'](bool(expect_reasoning))
+
 # 所有路径定义使用绝对路径
 STATIC_DIR = BASE_PATH / 'static'
 SONGS_DIR = STATIC_DIR / 'songs'
 BACKUP_DIR = STATIC_DIR / 'backups'
 LOG_DIR = BASE_PATH / 'logs'
+AI_USAGE_LOG_DIR = LOG_DIR / 'ai-usage'
 
 BACKUP_WRITE_LOCKS: Dict[str, threading.Lock] = {}
 BACKUP_WRITE_LOCKS_GUARD = threading.Lock()
 
 # 自动创建目录（首次运行时）
-for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR]:
+for path in [SONGS_DIR, BACKUP_DIR, LOG_DIR, AI_USAGE_LOG_DIR]:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def get_ai_usage_log_path(dt: Optional[datetime] = None) -> Path:
+    now_dt = dt or datetime.now()
+    return AI_USAGE_LOG_DIR / f"ai-usage-{now_dt.strftime('%Y-%m-%d')}.jsonl"
+
+
+def append_ai_usage_log(event: Dict[str, Any]) -> None:
+    try:
+        payload = dict(event) if isinstance(event, dict) else {'event': str(event)}
+        payload.setdefault('ts', int(time.time() * 1000))
+        with open(get_ai_usage_log_path(), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + '\n')
+    except Exception as exc:
+        app.logger.warning("Failed to write ai usage log: %s", exc)
 
 AMLL_COVER_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
@@ -2261,6 +2327,1286 @@ AI_TRANSLATION_SETTINGS = {
 }
 
 AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
+
+AI_PRESETS_FILE = BASE_PATH / 'ai_presets.json'
+AI_PRESET_STORE_VERSION = 1
+DEFAULT_AI_PRESET_ID = 'default'
+AI_SETTINGS_FILE = BASE_PATH / 'ai_settings.json'
+AI_SETTINGS_STORE_VERSION = 1
+
+DEFAULT_DEVICE_PERMISSIONS = {
+    'ai_use': False,
+    'ai_view_provider': False,
+    'ai_view_base_url': False,
+    'ai_view_model': False,
+    'ai_view_prompts': False,
+    'ai_edit_preset': False,
+    'write_access': False,
+}
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec='seconds')
+
+
+def coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    try:
+        if value is None or value == '':
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_device_permissions(raw_permissions: Any) -> Dict[str, bool]:
+    permissions = dict(DEFAULT_DEVICE_PERMISSIONS)
+    if isinstance(raw_permissions, list):
+        for key in raw_permissions:
+            if key in permissions:
+                permissions[key] = True
+        return permissions
+    if isinstance(raw_permissions, dict):
+        for key in permissions:
+            permissions[key] = parse_bool(raw_permissions.get(key), permissions[key])
+    return permissions
+
+
+def default_device_permissions(write_access: bool = True) -> Dict[str, bool]:
+    permissions = dict(DEFAULT_DEVICE_PERMISSIONS)
+    permissions.update({
+        'ai_use': True,
+        'ai_view_provider': True,
+        'ai_view_base_url': True,
+        'ai_view_model': True,
+        'ai_view_prompts': True,
+        'ai_edit_preset': bool(write_access),
+        'write_access': bool(write_access),
+    })
+    return permissions
+
+
+def normalize_security_credential(raw_credential: Any, fallback_id: Optional[str] = None) -> Dict[str, Any]:
+    credential = raw_credential if isinstance(raw_credential, dict) else {}
+    credential_id = str(credential.get('credential_id') or fallback_id or f'cred_{uuid.uuid4().hex[:12]}').strip()
+    password_hash = str(credential.get('password_hash') or '').strip()
+    permissions = normalize_device_permissions(credential.get('permissions'))
+    max_uses = coerce_int(credential.get('max_uses'))
+    used_count = coerce_int(credential.get('used_count'), 0) or 0
+    created_at = str(credential.get('created_at') or now_iso())
+    updated_at = str(credential.get('updated_at') or created_at)
+    remark = str(credential.get('remark') or '').strip()
+    expires_at = str(credential.get('expires_at') or '').strip()
+    revoked = parse_bool(credential.get('revoked'), False)
+    return {
+        'credential_id': credential_id,
+        'password_hash': password_hash,
+        'remark': remark,
+        'expires_at': expires_at,
+        'max_uses': max_uses,
+        'used_count': used_count,
+        'revoked': revoked,
+        'permissions': permissions,
+        'created_at': created_at,
+        'updated_at': updated_at,
+    }
+
+
+def normalize_security_config(config: Any) -> Tuple[Dict[str, Any], bool]:
+    raw = config if isinstance(config, dict) else {}
+    normalized = dict(DEFAULT_SECURITY_CONFIG)
+    normalized.update(raw)
+    migrated = False
+
+    credentials = normalized.get('device_credentials')
+    if not isinstance(credentials, list):
+        credentials = []
+
+    system_password_hash = str(normalized.get('system_password_hash') or '').strip()
+    next_credentials = []
+    for item in credentials:
+        credential = normalize_security_credential(item)
+        credential_id = str(credential.get('credential_id') or '').strip()
+        if credential_id == 'legacy-admin':
+            if not system_password_hash:
+                system_password_hash = credential.get('password_hash', '')
+            migrated = True
+            continue
+        next_credentials.append(credential)
+
+    legacy_password_hash = str(normalized.get('password_hash') or '').strip()
+    if not system_password_hash and legacy_password_hash:
+        system_password_hash = legacy_password_hash
+        migrated = True
+
+    normalized['device_credentials'] = next_credentials
+    normalized['system_password_hash'] = system_password_hash
+    normalized['password_hash'] = ''
+    normalized['trusted_expire_days'] = coerce_int(normalized.get('trusted_expire_days'), DEFAULT_SECURITY_CONFIG['trusted_expire_days']) or DEFAULT_SECURITY_CONFIG['trusted_expire_days']
+    normalized['security_enabled'] = parse_bool(normalized.get('security_enabled'), DEFAULT_SECURITY_CONFIG['security_enabled'])
+
+    if migrated or normalized != raw:
+        migrated = True
+    return normalized, migrated
+
+
+def get_system_password_hash(security_config: Dict[str, Any]) -> str:
+    return str(security_config.get('system_password_hash') or security_config.get('password_hash') or '').strip()
+
+
+def system_admin_permissions() -> Dict[str, bool]:
+    return default_device_permissions(write_access=True)
+
+
+def find_password_conflict(
+    security_config: Dict[str, Any],
+    password: str,
+    exclude_credential_id: Optional[str] = None,
+    skip_system_password: bool = False,
+) -> Optional[str]:
+    candidate_password = str(password or '').strip()
+    if not candidate_password:
+        return None
+
+    system_password_hash = get_system_password_hash(security_config)
+    if system_password_hash and not skip_system_password and verify_password(candidate_password, system_password_hash):
+        return 'system'
+
+    for credential in security_config.get('device_credentials', []):
+        credential_id = str(credential.get('credential_id') or '').strip()
+        if exclude_credential_id and credential_id == exclude_credential_id:
+            continue
+        if verify_password(candidate_password, credential.get('password_hash', '')):
+            return credential_id or 'credential'
+
+    return None
+
+
+def resolve_trusted_device_auth_state(security_config: Dict[str, Any], device_info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    credential_id = str(device_info.get('credential_id') or '').strip()
+    auth_type = str(device_info.get('auth_type') or '').strip().lower()
+    is_system_admin = parse_bool(device_info.get('system_admin'), False) or auth_type == 'system' or credential_id == 'legacy-admin'
+
+    if is_system_admin:
+        if get_system_password_hash(security_config):
+            return {
+                'auth_type': 'system',
+                'is_system_admin': True,
+                'credential': None,
+                'permissions': system_admin_permissions(),
+                'remark': str(device_info.get('remark') or '系统密码'),
+                'credential_id': '',
+            }
+        return None
+
+    credential = get_device_credential_by_id(security_config, credential_id)
+    if not credential or parse_bool(credential.get('revoked'), False) or is_credential_expired(credential):
+        return None
+
+    return {
+        'auth_type': 'credential',
+        'is_system_admin': False,
+        'credential': credential,
+        'permissions': credential_permissions_snapshot(credential),
+        'remark': str(device_info.get('remark') or credential.get('remark') or ''),
+        'credential_id': credential_id,
+    }
+
+
+def get_device_credential_by_id(security_config: Dict[str, Any], credential_id: str) -> Optional[Dict[str, Any]]:
+    for credential in security_config.get('device_credentials', []):
+        if credential.get('credential_id') == credential_id:
+            return credential
+    return None
+
+
+def is_credential_expired(credential: Dict[str, Any]) -> bool:
+    expires_at = str(credential.get('expires_at') or '').strip()
+    if not expires_at:
+        return False
+    try:
+        return datetime.fromisoformat(expires_at) <= datetime.now()
+    except Exception:
+        return False
+
+
+def get_credential_status(credential: Dict[str, Any]) -> str:
+    if not credential:
+        return 'unknown'
+    if parse_bool(credential.get('revoked'), False):
+        return 'revoked'
+    if is_credential_expired(credential):
+        return 'expired'
+    max_uses = coerce_int(credential.get('max_uses'))
+    used_count = coerce_int(credential.get('used_count'), 0) or 0
+    if max_uses is not None and max_uses >= 0 and used_count >= max_uses:
+        return 'exhausted'
+    return 'usable'
+
+
+def is_credential_usable(credential: Dict[str, Any]) -> bool:
+    return get_credential_status(credential) == 'usable'
+
+
+def credential_permissions_snapshot(credential: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+    if not credential:
+        return dict(DEFAULT_DEVICE_PERMISSIONS)
+    return normalize_device_permissions(credential.get('permissions'))
+
+
+def build_ai_public_payload_from_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    translation = settings.get('translation', {}) if isinstance(settings.get('translation'), dict) else {}
+    thinking = settings.get('thinking', {}) if isinstance(settings.get('thinking'), dict) else {}
+    batch = settings.get('batch', {}) if isinstance(settings.get('batch'), dict) else {}
+    return {
+        'translation': {
+            'provider': translation.get('provider', AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')),
+            'base_url': translation.get('base_url', AI_TRANSLATION_DEFAULTS.get('base_url', '')),
+            'model': translation.get('model', AI_TRANSLATION_DEFAULTS.get('model', '')),
+            'system_prompt': translation.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('system_prompt', '')),
+            'expect_reasoning': parse_bool(translation.get('expect_reasoning'), AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True)),
+            'strip_brackets': parse_bool(translation.get('strip_brackets'), AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)),
+            'experimental_full_line_bracket_strip': parse_bool(translation.get('experimental_full_line_bracket_strip'), AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)),
+            'experimental_bracket_line_as_subline': parse_bool(translation.get('experimental_bracket_line_as_subline'), AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)),
+            'compat_mode': parse_bool(translation.get('compat_mode'), AI_TRANSLATION_DEFAULTS.get('compat_mode', False)),
+        },
+        'thinking': {
+            'enabled': parse_bool(thinking.get('enabled'), AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True)),
+            'provider': thinking.get('provider', AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek')),
+            'base_url': thinking.get('base_url', AI_TRANSLATION_DEFAULTS.get('thinking_base_url', '')),
+            'model': thinking.get('model', AI_TRANSLATION_DEFAULTS.get('thinking_model', '')),
+            'system_prompt': thinking.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', '')),
+        },
+        'batch': {
+            'auto_save': parse_bool(batch.get('auto_save'), True),
+            'only_empty': parse_bool(batch.get('only_empty'), True),
+            'always_override': parse_bool(batch.get('always_override'), False),
+            'extra_prompt': batch.get('extra_prompt', ''),
+        },
+    }
+
+
+def build_ai_settings_snapshot(record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = record or {}
+    if isinstance(source, dict):
+        if isinstance(source.get('settings'), dict):
+            source = source.get('settings', {})
+        elif isinstance(source.get('public_payload'), dict):
+            source = source.get('public_payload', {})
+    normalized = normalize_ai_settings_state(source)
+    snapshot = build_ai_public_payload_from_settings(normalized)
+    snapshot['translation_api_key_present'] = bool(str((normalized.get('translation') or {}).get('api_key') or '').strip())
+    snapshot['thinking_api_key_present'] = bool(str((normalized.get('thinking') or {}).get('api_key') or '').strip())
+    return snapshot
+
+
+def ai_preset_secret_presence(preset: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+    preset = preset if isinstance(preset, dict) else {}
+    secret_payload = preset.get('secret_payload') if isinstance(preset.get('secret_payload'), dict) else {}
+    translation_secret = str(
+        ((secret_payload.get('translation') or {}).get('api_key'))
+        or ((preset.get('translation') or {}).get('api_key'))
+        or preset.get('api_key')
+        or ''
+    ).strip()
+    thinking_secret = str(
+        ((secret_payload.get('thinking') or {}).get('api_key'))
+        or ((preset.get('thinking') or {}).get('api_key'))
+        or preset.get('thinking_api_key')
+        or ''
+    ).strip()
+    return {
+        'translation_api_key_present': bool(translation_secret),
+        'thinking_api_key_present': bool(thinking_secret),
+    }
+
+
+def materialize_ai_settings_from_preset(preset: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = normalize_ai_preset_record(preset)
+    public_payload = normalized.get('public_payload', {}) if isinstance(normalized.get('public_payload'), dict) else {}
+    secret_payload = normalized.get('secret_payload', {}) if isinstance(normalized.get('secret_payload'), dict) else {}
+    source_state = {
+        'translation': {
+            **(public_payload.get('translation', {}) if isinstance(public_payload.get('translation'), dict) else {}),
+            'api_key': str((secret_payload.get('translation') or {}).get('api_key') or '').strip(),
+        },
+        'thinking': {
+            **(public_payload.get('thinking', {}) if isinstance(public_payload.get('thinking'), dict) else {}),
+            'api_key': str((secret_payload.get('thinking') or {}).get('api_key') or '').strip(),
+        },
+        'batch': public_payload.get('batch', {}) if isinstance(public_payload.get('batch'), dict) else {},
+    }
+    return normalize_ai_settings_state(source_state)
+
+
+def resolve_effective_ai_settings_state(settings_store: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    store = settings_store if isinstance(settings_store, dict) else get_ai_settings_store()
+    stored_settings = store.get('settings', {}) if isinstance(store.get('settings'), dict) else normalize_ai_settings_state({})
+    source_mode = str(store.get('source_mode') or 'manual').strip().lower()
+    if source_mode not in {'manual', 'preset'}:
+        source_mode = 'manual'
+    source_preset_id = str(store.get('source_preset_id') or '').strip() if source_mode == 'preset' else ''
+    if source_mode == 'preset' and source_preset_id:
+        preset = get_ai_preset_by_id(source_preset_id)
+        if preset:
+            return materialize_ai_settings_from_preset(preset)
+    return normalize_ai_settings_state(stored_settings)
+
+
+def normalize_ai_preset_record(raw_preset: Any, fallback_id: Optional[str] = None) -> Dict[str, Any]:
+    preset = raw_preset if isinstance(raw_preset, dict) else {}
+    preset_id = str(preset.get('id') or fallback_id or f'preset_{uuid.uuid4().hex[:12]}').strip()
+    name = str(preset.get('name') or preset_id).strip() or preset_id
+    created_at = str(preset.get('created_at') or now_iso())
+    updated_at = str(preset.get('updated_at') or created_at)
+    acl = preset.get('acl') if isinstance(preset.get('acl'), dict) else {}
+    owner_scope_raw = str(preset.get('owner_scope') or '').strip().lower()
+    if owner_scope_raw:
+        owner_scope = owner_scope_raw
+    else:
+        owner_scope = 'system' if preset_id == DEFAULT_AI_PRESET_ID else 'personal'
+    # Canonical scope normalization:
+    # - default/system preset: system
+    # - any preset with acl rules: shared
+    # - others: personal
+    if owner_scope in {'user', 'local', 'mine'}:
+        owner_scope = 'personal'
+    if preset_id == DEFAULT_AI_PRESET_ID or owner_scope == 'system':
+        owner_scope = 'system'
+    elif acl:
+        owner_scope = 'shared'
+    else:
+        owner_scope = 'personal'
+    public_payload = build_ai_public_payload_from_settings(preset)
+    translation = preset.get('translation') if isinstance(preset.get('translation'), dict) else {}
+    thinking = preset.get('thinking') if isinstance(preset.get('thinking'), dict) else {}
+    batch = preset.get('batch') if isinstance(preset.get('batch'), dict) else {}
+    raw_secret_payload = preset.get('secret_payload') if isinstance(preset.get('secret_payload'), dict) else {}
+    secret_payload = {
+        'translation': {
+            'api_key': str(
+                translation.get('api_key')
+                or (raw_secret_payload.get('translation') or {}).get('api_key')
+                or preset.get('api_key')
+                or ''
+            ).strip(),
+        },
+        'thinking': {
+            'api_key': str(
+                thinking.get('api_key')
+                or (raw_secret_payload.get('thinking') or {}).get('api_key')
+                or preset.get('thinking_api_key')
+                or ''
+            ).strip(),
+        },
+    }
+    return {
+        'id': preset_id,
+        'name': name,
+        'created_at': created_at,
+        'updated_at': updated_at,
+        'owner_scope': owner_scope,
+        'acl': acl,
+        'public_payload': public_payload,
+        'secret_payload': secret_payload,
+        'translation': {**public_payload['translation'], 'api_key': secret_payload['translation']['api_key']},
+        'thinking': {**public_payload['thinking'], 'api_key': secret_payload['thinking']['api_key']},
+        'batch': public_payload['batch'],
+    }
+
+
+def flatten_ai_preset_record(preset: Dict[str, Any], include_secrets: bool = False) -> Dict[str, Any]:
+    public_payload = preset.get('public_payload', {}) if isinstance(preset.get('public_payload'), dict) else {}
+    translation = dict(public_payload.get('translation', {}))
+    thinking = dict(public_payload.get('thinking', {}))
+    batch = dict(public_payload.get('batch', {}))
+    if include_secrets:
+        secret_payload = preset.get('secret_payload', {}) if isinstance(preset.get('secret_payload'), dict) else {}
+        translation['api_key'] = str((secret_payload.get('translation') or {}).get('api_key') or '')
+        thinking['api_key'] = str((secret_payload.get('thinking') or {}).get('api_key') or '')
+    return {
+        'id': preset.get('id', ''),
+        'name': preset.get('name', ''),
+        'created_at': preset.get('created_at', ''),
+        'updated_at': preset.get('updated_at', ''),
+        'owner_scope': preset.get('owner_scope', 'global'),
+        'acl': preset.get('acl', {}),
+        'translation': translation,
+        'thinking': thinking,
+        'batch': batch,
+    }
+
+
+def load_ai_preset_store() -> Dict[str, Any]:
+    if AI_PRESETS_FILE.exists():
+        try:
+            with open(AI_PRESETS_FILE, 'r', encoding='utf-8') as f:
+                store = json.load(f)
+        except Exception:
+            store = {}
+    else:
+        store = {}
+    if not isinstance(store, dict):
+        store = {}
+    presets = store.get('presets')
+    if not isinstance(presets, list):
+        presets = []
+    needs_legacy_owner_scope_migration = False
+    for raw_preset in presets:
+        if not isinstance(raw_preset, dict):
+            continue
+        raw_scope = str(raw_preset.get('owner_scope') or '').strip().lower()
+        raw_acl = raw_preset.get('acl') if isinstance(raw_preset.get('acl'), dict) else {}
+        raw_id = str(raw_preset.get('id') or '').strip()
+        target_scope = 'system' if (raw_id == DEFAULT_AI_PRESET_ID or raw_scope == 'system') else ('shared' if raw_acl else 'personal')
+        # Force rewrite whenever stored scope is not canonical target
+        if raw_scope != target_scope:
+            needs_legacy_owner_scope_migration = True
+            break
+    normalized_presets = [normalize_ai_preset_record(preset) for preset in presets]
+    if not normalized_presets:
+        normalized_presets = [normalize_ai_preset_record({
+            'id': DEFAULT_AI_PRESET_ID,
+            'name': '默认预设',
+            'owner_scope': 'system',
+            'translation': {
+                'provider': AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek'),
+                'base_url': AI_TRANSLATION_DEFAULTS.get('base_url', 'https://api.deepseek.com'),
+                'model': AI_TRANSLATION_DEFAULTS.get('model', 'deepseek-reasoner'),
+                'system_prompt': AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
+                'expect_reasoning': AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True),
+                'strip_brackets': AI_TRANSLATION_DEFAULTS.get('strip_brackets', False),
+                'experimental_full_line_bracket_strip': AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False),
+                'experimental_bracket_line_as_subline': AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False),
+                'compat_mode': AI_TRANSLATION_DEFAULTS.get('compat_mode', False),
+            },
+            'thinking': {
+                'enabled': AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True),
+                'provider': AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek'),
+                'base_url': AI_TRANSLATION_DEFAULTS.get('thinking_base_url', 'https://api.deepseek.com'),
+                'model': AI_TRANSLATION_DEFAULTS.get('thinking_model', 'deepseek-reasoner'),
+                'system_prompt': AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
+            },
+            'batch': {
+                'auto_save': True,
+                'only_empty': True,
+                'always_override': False,
+                'extra_prompt': '',
+            },
+            'secret_payload': {
+                'translation': {'api_key': ''},
+                'thinking': {'api_key': ''},
+            }
+        }, DEFAULT_AI_PRESET_ID)]
+    active_preset_id = str(store.get('active_preset_id') or normalized_presets[0]['id']).strip() or normalized_presets[0]['id']
+    if not any(preset['id'] == active_preset_id for preset in normalized_presets):
+        active_preset_id = normalized_presets[0]['id']
+    normalized_store = {
+        'version': AI_PRESET_STORE_VERSION,
+        'active_preset_id': active_preset_id,
+        'presets': normalized_presets,
+    }
+    if needs_legacy_owner_scope_migration:
+        normalized_store['_needs_owner_scope_migration_save'] = True
+    return normalized_store
+
+
+def save_ai_preset_store(store: Dict[str, Any]) -> None:
+    normalized_store = load_ai_preset_store()
+    if isinstance(store, dict):
+        presets = store.get('presets') if isinstance(store.get('presets'), list) else normalized_store['presets']
+        normalized_store['presets'] = [normalize_ai_preset_record(preset) for preset in presets]
+        active_preset_id = str(store.get('active_preset_id') or normalized_store.get('active_preset_id') or DEFAULT_AI_PRESET_ID).strip()
+        if active_preset_id and any(preset['id'] == active_preset_id for preset in normalized_store['presets']):
+            normalized_store['active_preset_id'] = active_preset_id
+        elif normalized_store['presets']:
+            normalized_store['active_preset_id'] = normalized_store['presets'][0]['id']
+        normalized_store['version'] = AI_PRESET_STORE_VERSION
+    with open(AI_PRESETS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(normalized_store, f, ensure_ascii=False, indent=2)
+
+
+def get_ai_preset_store() -> Dict[str, Any]:
+    store = load_ai_preset_store()
+    needs_migration_save = parse_bool(store.pop('_needs_owner_scope_migration_save', False), False)
+    if not AI_PRESETS_FILE.exists() or needs_migration_save:
+        save_ai_preset_store(store)
+    return store
+
+
+def normalize_ai_settings_state(raw_state: Any, fallback_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    state = raw_state if isinstance(raw_state, dict) else {}
+    fallback = fallback_state if isinstance(fallback_state, dict) else {}
+
+    state_translation = state.get('translation') if isinstance(state.get('translation'), dict) else {}
+    state_thinking = state.get('thinking') if isinstance(state.get('thinking'), dict) else {}
+    state_batch = state.get('batch') if isinstance(state.get('batch'), dict) else {}
+
+    fallback_translation = fallback.get('translation') if isinstance(fallback.get('translation'), dict) else {}
+    fallback_thinking = fallback.get('thinking') if isinstance(fallback.get('thinking'), dict) else {}
+    fallback_batch = fallback.get('batch') if isinstance(fallback.get('batch'), dict) else {}
+
+    def pick_text(flat_key: str, nested_section: Dict[str, Any], nested_key: str, fallback_section: Dict[str, Any], default_value: str = '') -> str:
+        if flat_key in state:
+            value = state.get(flat_key)
+        elif nested_key in nested_section:
+            value = nested_section.get(nested_key)
+        elif flat_key in fallback:
+            value = fallback.get(flat_key)
+        elif nested_key in fallback_section:
+            value = fallback_section.get(nested_key)
+        else:
+            value = default_value
+        return '' if value is None else str(value)
+
+    def pick_bool(flat_key: str, nested_section: Dict[str, Any], nested_key: str, fallback_section: Dict[str, Any], fallback_value: bool) -> bool:
+        if flat_key in state:
+            value = state.get(flat_key)
+        elif nested_key in nested_section:
+            value = nested_section.get(nested_key)
+        elif flat_key in fallback:
+            value = fallback.get(flat_key)
+        elif nested_key in fallback_section:
+            value = fallback_section.get(nested_key)
+        else:
+            value = fallback_value
+        return parse_bool(value, fallback_value)
+
+    translation = {
+        'provider': pick_text('provider', state_translation, 'provider', fallback_translation, AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')).strip(),
+        'base_url': pick_text('base_url', state_translation, 'base_url', fallback_translation, AI_TRANSLATION_DEFAULTS.get('base_url', '')).strip(),
+        'model': pick_text('model', state_translation, 'model', fallback_translation, AI_TRANSLATION_DEFAULTS.get('model', '')).strip(),
+        'system_prompt': pick_text('system_prompt', state_translation, 'system_prompt', fallback_translation, AI_TRANSLATION_DEFAULTS.get('system_prompt', '')),
+        'expect_reasoning': pick_bool('expect_reasoning', state_translation, 'expect_reasoning', fallback_translation, parse_bool(fallback_translation.get('expect_reasoning'), AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True))),
+        'strip_brackets': pick_bool('strip_brackets', state_translation, 'strip_brackets', fallback_translation, parse_bool(fallback_translation.get('strip_brackets'), AI_TRANSLATION_DEFAULTS.get('strip_brackets', False))),
+        'experimental_full_line_bracket_strip': pick_bool('experimental_full_line_bracket_strip', state_translation, 'experimental_full_line_bracket_strip', fallback_translation, parse_bool(fallback_translation.get('experimental_full_line_bracket_strip'), AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False))),
+        'experimental_bracket_line_as_subline': pick_bool('experimental_bracket_line_as_subline', state_translation, 'experimental_bracket_line_as_subline', fallback_translation, parse_bool(fallback_translation.get('experimental_bracket_line_as_subline'), AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False))),
+        'compat_mode': pick_bool('compat_mode', state_translation, 'compat_mode', fallback_translation, parse_bool(fallback_translation.get('compat_mode'), AI_TRANSLATION_DEFAULTS.get('compat_mode', False))),
+        'api_key': pick_text('api_key', state_translation, 'api_key', fallback_translation, '').strip(),
+    }
+
+    thinking = {
+        'enabled': pick_bool('thinking_enabled', state_thinking, 'enabled', fallback_thinking, parse_bool(fallback_thinking.get('enabled'), AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True))),
+        'provider': pick_text('thinking_provider', state_thinking, 'provider', fallback_thinking, AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek')).strip(),
+        'base_url': pick_text('thinking_base_url', state_thinking, 'base_url', fallback_thinking, AI_TRANSLATION_DEFAULTS.get('thinking_base_url', '')).strip(),
+        'model': pick_text('thinking_model', state_thinking, 'model', fallback_thinking, AI_TRANSLATION_DEFAULTS.get('thinking_model', '')).strip(),
+        'system_prompt': pick_text('thinking_system_prompt', state_thinking, 'system_prompt', fallback_thinking, AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', '')),
+        'api_key': pick_text('thinking_api_key', state_thinking, 'api_key', fallback_thinking, '').strip(),
+    }
+
+    batch = {
+        'auto_save': pick_bool('auto_save', state_batch, 'auto_save', fallback_batch, parse_bool(fallback_batch.get('auto_save'), True)),
+        'only_empty': pick_bool('only_empty', state_batch, 'only_empty', fallback_batch, parse_bool(fallback_batch.get('only_empty'), True)),
+        'always_override': pick_bool('always_override', state_batch, 'always_override', fallback_batch, parse_bool(fallback_batch.get('always_override'), False)),
+        'extra_prompt': pick_text('extra_prompt', state_batch, 'extra_prompt', fallback_batch, ''),
+    }
+
+    return {
+        'translation': translation,
+        'thinking': thinking,
+        'batch': batch,
+    }
+
+
+def load_ai_settings_store() -> Dict[str, Any]:
+    if AI_SETTINGS_FILE.exists():
+        try:
+            with open(AI_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                store = json.load(f)
+        except Exception:
+            store = {}
+    else:
+        store = {}
+    if not isinstance(store, dict):
+        store = {}
+
+    # Backward compatibility:
+    # - legacy file may store translation/thinking/batch directly at root
+    # - new file stores meta fields (source_mode/source_preset_id) + nested settings
+    if isinstance(store.get('settings'), dict):
+        raw_settings = store.get('settings')
+    elif any(key in store for key in ('translation', 'thinking', 'batch', 'provider', 'base_url', 'model', 'api_key')):
+        raw_settings = store
+    else:
+        raw_settings = {}
+    normalized_settings = normalize_ai_settings_state(raw_settings, AI_TRANSLATION_SETTINGS)
+    source_mode = str(store.get('source_mode') or 'manual').strip().lower()
+    if source_mode not in {'manual', 'preset'}:
+        source_mode = 'manual'
+    source_preset_id = str(store.get('source_preset_id') or '').strip() if source_mode == 'preset' else ''
+    normalized_store = {
+        'version': AI_SETTINGS_STORE_VERSION,
+        'updated_at': str(store.get('updated_at') or now_iso()),
+        'source_mode': source_mode,
+        'source_preset_id': source_preset_id,
+        'settings': normalized_settings,
+    }
+    return normalized_store
+
+
+def save_ai_settings_store(store: Dict[str, Any]) -> None:
+    normalized_store = load_ai_settings_store()
+    if isinstance(store, dict):
+        # persist meta fields
+        incoming_mode = str(store.get('source_mode') or normalized_store.get('source_mode') or 'manual').strip().lower()
+        if incoming_mode not in {'manual', 'preset'}:
+            incoming_mode = 'manual'
+        incoming_preset_id = str(store.get('source_preset_id') or '').strip() if incoming_mode == 'preset' else ''
+        normalized_store['source_mode'] = incoming_mode
+        normalized_store['source_preset_id'] = incoming_preset_id
+
+        raw_settings = store.get('settings') if isinstance(store.get('settings'), dict) else store
+        normalized_store['settings'] = normalize_ai_settings_state(raw_settings, normalized_store.get('settings', {}))
+        normalized_store['updated_at'] = str(store.get('updated_at') or now_iso())
+        normalized_store['version'] = AI_SETTINGS_STORE_VERSION
+    with open(AI_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(normalized_store, f, ensure_ascii=False, indent=2)
+
+
+def get_ai_settings_store() -> Dict[str, Any]:
+    store = load_ai_settings_store()
+    if not AI_SETTINGS_FILE.exists():
+        save_ai_settings_store(store)
+    return store
+
+
+def sync_ai_translation_settings(settings_state: Dict[str, Any]) -> None:
+    translation = settings_state.get('translation', {}) if isinstance(settings_state.get('translation'), dict) else {}
+    thinking = settings_state.get('thinking', {}) if isinstance(settings_state.get('thinking'), dict) else {}
+    global AI_TRANSLATION_SETTINGS
+    AI_TRANSLATION_SETTINGS.update({
+        'api_key': str(translation.get('api_key') or ''),
+        'system_prompt': str(translation.get('system_prompt') or ''),
+        'provider': str(translation.get('provider') or AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')),
+        'base_url': str(translation.get('base_url') or AI_TRANSLATION_DEFAULTS.get('base_url', '')),
+        'model': str(translation.get('model') or AI_TRANSLATION_DEFAULTS.get('model', '')),
+        'expect_reasoning': parse_bool(translation.get('expect_reasoning'), AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True)),
+        'strip_brackets': parse_bool(translation.get('strip_brackets'), AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)),
+        'experimental_full_line_bracket_strip': parse_bool(translation.get('experimental_full_line_bracket_strip'), AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)),
+        'experimental_bracket_line_as_subline': parse_bool(translation.get('experimental_bracket_line_as_subline'), AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)),
+        'compat_mode': parse_bool(translation.get('compat_mode'), AI_TRANSLATION_DEFAULTS.get('compat_mode', False)),
+        'thinking_enabled': parse_bool(thinking.get('enabled'), AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True)),
+        'thinking_api_key': str(thinking.get('api_key') or ''),
+        'thinking_provider': str(thinking.get('provider') or AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek')),
+        'thinking_base_url': str(thinking.get('base_url') or AI_TRANSLATION_DEFAULTS.get('thinking_base_url', '')),
+        'thinking_model': str(thinking.get('model') or AI_TRANSLATION_DEFAULTS.get('thinking_model', '')),
+        'thinking_system_prompt': str(thinking.get('system_prompt') or ''),
+    })
+
+
+def get_current_ai_settings_state() -> Dict[str, Any]:
+    store = get_ai_settings_store()
+    settings_state = store.get('settings') if isinstance(store.get('settings'), dict) else normalize_ai_settings_state({})
+    sync_ai_translation_settings(settings_state)
+    return settings_state
+
+
+def get_active_ai_preset() -> Optional[Dict[str, Any]]:
+    store = get_ai_preset_store()
+    active_id = store.get('active_preset_id')
+    for preset in store.get('presets', []):
+        if preset.get('id') == active_id:
+            return preset
+    return store.get('presets', [None])[0]
+
+
+def set_active_ai_preset(preset_id: str) -> None:
+    store = get_ai_preset_store()
+    if any(preset.get('id') == preset_id for preset in store.get('presets', [])):
+        store['active_preset_id'] = preset_id
+        save_ai_preset_store(store)
+
+
+def update_ai_preset_store_from_payload(
+    presets_payload: List[Dict[str, Any]],
+    active_preset_id: Optional[str] = None,
+    mode: str = 'replace_all',
+    permissions: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    current_store = get_ai_preset_store()
+    current_presets = [preset for preset in current_store.get('presets', []) if isinstance(preset, dict)]
+    current_presets_by_id = {
+        str(preset.get('id') or ''): preset
+        for preset in current_presets
+        if str(preset.get('id') or '')
+    }
+    normalized_permissions = normalize_device_permissions(permissions) if isinstance(permissions, dict) else None
+
+    def should_update_field(permission_key: Optional[str]) -> bool:
+        if not permission_key:
+            return True
+        if normalized_permissions is None:
+            return True
+        return bool(normalized_permissions.get(permission_key, False))
+
+    def has_nested_key(container: Dict[str, Any], field_name: str) -> bool:
+        return isinstance(container, dict) and field_name in container
+
+    def preserve_existing_secret_payload(raw_preset: Dict[str, Any], existing_preset: Dict[str, Any]) -> Dict[str, Any]:
+        preserved = dict(raw_preset)
+        existing_secret_payload = existing_preset.get('secret_payload') if isinstance(existing_preset.get('secret_payload'), dict) else {}
+        existing_translation_secret = str((existing_secret_payload.get('translation') or {}).get('api_key') or '').strip()
+        existing_thinking_secret = str((existing_secret_payload.get('thinking') or {}).get('api_key') or '').strip()
+
+        raw_translation = raw_preset.get('translation') if isinstance(raw_preset.get('translation'), dict) else {}
+        raw_thinking = raw_preset.get('thinking') if isinstance(raw_preset.get('thinking'), dict) else {}
+
+        incoming_translation_secret = ''
+        if 'api_key' in raw_preset:
+            incoming_translation_secret = str(raw_preset.get('api_key') or '').strip()
+        elif has_nested_key(raw_translation, 'api_key'):
+            incoming_translation_secret = str(raw_translation.get('api_key') or '').strip()
+
+        incoming_thinking_secret = ''
+        if 'thinking_api_key' in raw_preset:
+            incoming_thinking_secret = str(raw_preset.get('thinking_api_key') or '').strip()
+        elif has_nested_key(raw_thinking, 'api_key'):
+            incoming_thinking_secret = str(raw_thinking.get('api_key') or '').strip()
+
+        preserved_secret_payload = dict(preserved.get('secret_payload')) if isinstance(preserved.get('secret_payload'), dict) else {}
+        if not incoming_translation_secret and existing_translation_secret:
+            preserved_secret_payload.setdefault('translation', {})['api_key'] = existing_translation_secret
+        if not incoming_thinking_secret and existing_thinking_secret:
+            preserved_secret_payload.setdefault('thinking', {})['api_key'] = existing_thinking_secret
+        if preserved_secret_payload:
+            preserved['secret_payload'] = preserved_secret_payload
+        return preserved
+
+    def merge_existing_preset(existing_preset: Dict[str, Any], raw_preset: Dict[str, Any]) -> Dict[str, Any]:
+        merged = normalize_ai_preset_record(flatten_ai_preset_record(existing_preset, include_secrets=True), existing_preset.get('id'))
+        merged['created_at'] = existing_preset.get('created_at', merged.get('created_at', now_iso()))
+
+        if 'name' in raw_preset:
+            merged['name'] = str(raw_preset.get('name') or merged.get('name') or merged['id']).strip() or merged['id']
+        if 'owner_scope' in raw_preset:
+            merged['owner_scope'] = str(raw_preset.get('owner_scope') or merged.get('owner_scope') or 'global').strip() or 'global'
+        if 'acl' in raw_preset and isinstance(raw_preset.get('acl'), dict):
+            merged['acl'] = raw_preset.get('acl')
+
+        public_payload = merged.get('public_payload', {}) if isinstance(merged.get('public_payload'), dict) else {}
+        translation = dict(public_payload.get('translation', {}))
+        thinking = dict(public_payload.get('thinking', {}))
+        batch = dict(public_payload.get('batch', {}))
+        raw_translation = raw_preset.get('translation') if isinstance(raw_preset.get('translation'), dict) else {}
+        raw_thinking = raw_preset.get('thinking') if isinstance(raw_preset.get('thinking'), dict) else {}
+        raw_batch = raw_preset.get('batch') if isinstance(raw_preset.get('batch'), dict) else {}
+
+        if should_update_field('ai_view_provider'):
+            if 'provider' in raw_preset or has_nested_key(raw_translation, 'provider'):
+                translation['provider'] = str(raw_preset.get('provider', raw_translation.get('provider')) or '').strip()
+            if 'thinking_provider' in raw_preset or has_nested_key(raw_thinking, 'provider'):
+                thinking['provider'] = str(raw_preset.get('thinking_provider', raw_thinking.get('provider')) or '').strip()
+        if should_update_field('ai_view_base_url'):
+            if 'base_url' in raw_preset or has_nested_key(raw_translation, 'base_url'):
+                translation['base_url'] = str(raw_preset.get('base_url', raw_translation.get('base_url')) or '').strip()
+            if 'thinking_base_url' in raw_preset or has_nested_key(raw_thinking, 'base_url'):
+                thinking['base_url'] = str(raw_preset.get('thinking_base_url', raw_thinking.get('base_url')) or '').strip()
+        if should_update_field('ai_view_model'):
+            if 'model' in raw_preset or has_nested_key(raw_translation, 'model'):
+                translation['model'] = str(raw_preset.get('model', raw_translation.get('model')) or '').strip()
+            if 'thinking_model' in raw_preset or has_nested_key(raw_thinking, 'model'):
+                thinking['model'] = str(raw_preset.get('thinking_model', raw_thinking.get('model')) or '').strip()
+        if should_update_field('ai_view_prompts'):
+            if 'system_prompt' in raw_preset or has_nested_key(raw_translation, 'system_prompt'):
+                translation['system_prompt'] = str(raw_preset.get('system_prompt', raw_translation.get('system_prompt')) or '')
+            if 'thinking_system_prompt' in raw_preset or has_nested_key(raw_thinking, 'system_prompt'):
+                thinking['system_prompt'] = str(raw_preset.get('thinking_system_prompt', raw_thinking.get('system_prompt')) or '')
+            if 'extra_prompt' in raw_preset or has_nested_key(raw_batch, 'extra_prompt'):
+                batch['extra_prompt'] = str(raw_preset.get('extra_prompt', raw_batch.get('extra_prompt')) or '')
+
+        if 'expect_reasoning' in raw_preset or has_nested_key(raw_translation, 'expect_reasoning'):
+            translation['expect_reasoning'] = parse_bool(
+                raw_preset.get('expect_reasoning', raw_translation.get('expect_reasoning')),
+                translation.get('expect_reasoning', True)
+            )
+        if 'compat_mode' in raw_preset or has_nested_key(raw_translation, 'compat_mode'):
+            translation['compat_mode'] = parse_bool(
+                raw_preset.get('compat_mode', raw_translation.get('compat_mode')),
+                translation.get('compat_mode', False)
+            )
+        if 'strip_brackets' in raw_preset or has_nested_key(raw_translation, 'strip_brackets'):
+            translation['strip_brackets'] = parse_bool(
+                raw_preset.get('strip_brackets', raw_translation.get('strip_brackets')),
+                translation.get('strip_brackets', False)
+            )
+        if 'experimental_full_line_bracket_strip' in raw_preset or has_nested_key(raw_translation, 'experimental_full_line_bracket_strip'):
+            translation['experimental_full_line_bracket_strip'] = parse_bool(
+                raw_preset.get('experimental_full_line_bracket_strip', raw_translation.get('experimental_full_line_bracket_strip')),
+                translation.get('experimental_full_line_bracket_strip', False)
+            )
+        if 'experimental_bracket_line_as_subline' in raw_preset or has_nested_key(raw_translation, 'experimental_bracket_line_as_subline'):
+            translation['experimental_bracket_line_as_subline'] = parse_bool(
+                raw_preset.get('experimental_bracket_line_as_subline', raw_translation.get('experimental_bracket_line_as_subline')),
+                translation.get('experimental_bracket_line_as_subline', False)
+            )
+        if 'thinking_enabled' in raw_preset or has_nested_key(raw_thinking, 'enabled'):
+            thinking['enabled'] = parse_bool(
+                raw_preset.get('thinking_enabled', raw_thinking.get('enabled')),
+                thinking.get('enabled', True)
+            )
+        if 'auto_save' in raw_preset or has_nested_key(raw_batch, 'auto_save'):
+            batch['auto_save'] = parse_bool(
+                raw_preset.get('auto_save', raw_batch.get('auto_save')),
+                batch.get('auto_save', True)
+            )
+        if 'only_empty' in raw_preset or has_nested_key(raw_batch, 'only_empty'):
+            batch['only_empty'] = parse_bool(
+                raw_preset.get('only_empty', raw_batch.get('only_empty')),
+                batch.get('only_empty', True)
+            )
+        if 'always_override' in raw_preset or has_nested_key(raw_batch, 'always_override'):
+            batch['always_override'] = parse_bool(
+                raw_preset.get('always_override', raw_batch.get('always_override')),
+                batch.get('always_override', False)
+            )
+
+        if 'api_key' in raw_preset or has_nested_key(raw_translation, 'api_key'):
+            translation_secret = str(raw_preset.get('api_key', raw_translation.get('api_key')) or '').strip()
+            if translation_secret:
+                merged.setdefault('secret_payload', {}).setdefault('translation', {})['api_key'] = translation_secret
+        if 'thinking_api_key' in raw_preset or has_nested_key(raw_thinking, 'api_key'):
+            thinking_secret = str(raw_preset.get('thinking_api_key', raw_thinking.get('api_key')) or '').strip()
+            if thinking_secret:
+                merged.setdefault('secret_payload', {}).setdefault('thinking', {})['api_key'] = thinking_secret
+
+        merged['public_payload'] = build_ai_public_payload_from_settings({
+            'translation': translation,
+            'thinking': thinking,
+            'batch': batch,
+        })
+        merged['translation'] = {**merged['public_payload']['translation'], 'api_key': merged.get('secret_payload', {}).get('translation', {}).get('api_key', '')}
+        merged['thinking'] = {**merged['public_payload']['thinking'], 'api_key': merged.get('secret_payload', {}).get('thinking', {}).get('api_key', '')}
+        merged['batch'] = merged['public_payload']['batch']
+        merged['updated_at'] = now_iso()
+        return merged
+
+    def parse_updated_at_to_ts(value: Any) -> float:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+        text = str(value).strip()
+        if not text:
+            return 0.0
+        try:
+            if text.isdigit():
+                return float(text)
+        except Exception:
+            pass
+        try:
+            return float(datetime.fromisoformat(text.replace('Z', '+00:00')).timestamp() * 1000.0)
+        except Exception:
+            return 0.0
+
+    def stable_public_fingerprint(preset: Dict[str, Any]) -> str:
+        """Stable fingerprint for comparing preset visible configuration (exclude secrets/timestamps)."""
+        try:
+            flat = flatten_ai_preset_record(preset, include_secrets=False)
+        except Exception:
+            flat = preset if isinstance(preset, dict) else {}
+        if not isinstance(flat, dict):
+            flat = {}
+
+        translation = flat.get('translation') if isinstance(flat.get('translation'), dict) else {}
+        thinking = flat.get('thinking') if isinstance(flat.get('thinking'), dict) else {}
+        batch = flat.get('batch') if isinstance(flat.get('batch'), dict) else {}
+        payload = {
+            'id': str(flat.get('id') or ''),
+            'name': str(flat.get('name') or ''),
+            'owner_scope': str(flat.get('owner_scope') or ''),
+            'acl': flat.get('acl') if isinstance(flat.get('acl'), dict) else {},
+            'translation': {
+                'provider': str(translation.get('provider') or ''),
+                'base_url': str(translation.get('base_url') or ''),
+                'model': str(translation.get('model') or ''),
+                'system_prompt': str(translation.get('system_prompt') or ''),
+                'expect_reasoning': parse_bool(translation.get('expect_reasoning'), True),
+                'compat_mode': parse_bool(translation.get('compat_mode'), False),
+                'strip_brackets': parse_bool(translation.get('strip_brackets'), False),
+                'experimental_full_line_bracket_strip': parse_bool(translation.get('experimental_full_line_bracket_strip'), False),
+                'experimental_bracket_line_as_subline': parse_bool(translation.get('experimental_bracket_line_as_subline'), False),
+            },
+            'thinking': {
+                'enabled': parse_bool(thinking.get('enabled'), True),
+                'provider': str(thinking.get('provider') or ''),
+                'base_url': str(thinking.get('base_url') or ''),
+                'model': str(thinking.get('model') or ''),
+                'system_prompt': str(thinking.get('system_prompt') or ''),
+            },
+            'batch': {
+                'auto_save': parse_bool(batch.get('auto_save'), True),
+                'only_empty': parse_bool(batch.get('only_empty'), True),
+                'always_override': parse_bool(batch.get('always_override'), False),
+                'extra_prompt': str(batch.get('extra_prompt') or ''),
+            }
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    def is_backend_generated_default_preset(preset: Dict[str, Any]) -> bool:
+        if not isinstance(preset, dict):
+            return False
+        if str(preset.get('id') or '').strip() != DEFAULT_AI_PRESET_ID:
+            return False
+        name = str(preset.get('name') or '').strip()
+        if name and name not in ('默认预设', 'Default', 'default'):
+            # user renamed it: treat as customized
+            return False
+        secret_payload = preset.get('secret_payload') if isinstance(preset.get('secret_payload'), dict) else {}
+        translation_secret = str((secret_payload.get('translation') or {}).get('api_key') or '').strip()
+        thinking_secret = str((secret_payload.get('thinking') or {}).get('api_key') or '').strip()
+        if translation_secret or thinking_secret:
+            # has secrets, likely customized
+            return False
+
+        default_template = normalize_ai_preset_record({
+            'id': DEFAULT_AI_PRESET_ID,
+            'name': '默认预设',
+            'translation': {
+                'provider': AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek'),
+                'base_url': AI_TRANSLATION_DEFAULTS.get('base_url', 'https://api.deepseek.com'),
+                'model': AI_TRANSLATION_DEFAULTS.get('model', 'deepseek-reasoner'),
+                'system_prompt': AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
+                'expect_reasoning': AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True),
+                'strip_brackets': AI_TRANSLATION_DEFAULTS.get('strip_brackets', False),
+                'experimental_full_line_bracket_strip': AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False),
+                'experimental_bracket_line_as_subline': AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False),
+                'compat_mode': AI_TRANSLATION_DEFAULTS.get('compat_mode', False),
+            },
+            'thinking': {
+                'enabled': AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True),
+                'provider': AI_TRANSLATION_DEFAULTS.get('thinking_provider', AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')),
+                'base_url': AI_TRANSLATION_DEFAULTS.get('thinking_base_url', AI_TRANSLATION_DEFAULTS.get('base_url', 'https://api.deepseek.com')),
+                'model': AI_TRANSLATION_DEFAULTS.get('thinking_model', AI_TRANSLATION_DEFAULTS.get('model', 'deepseek-reasoner')),
+                'system_prompt': AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
+            },
+            'batch': {
+                'auto_save': True,
+                'only_empty': True,
+                'always_override': False,
+                'extra_prompt': '',
+            },
+            'secret_payload': {
+                'translation': {'api_key': ''},
+                'thinking': {'api_key': ''},
+            }
+        }, DEFAULT_AI_PRESET_ID)
+
+        try:
+            return stable_public_fingerprint(preset) == stable_public_fingerprint(default_template)
+        except Exception:
+            return False
+
+    next_presets: List[Dict[str, Any]] = []
+    next_presets_by_id: Dict[str, Dict[str, Any]] = {}
+
+    if mode == 'upsert':
+        for raw_preset in presets_payload or []:
+            raw = raw_preset if isinstance(raw_preset, dict) else {}
+            preset_id = str(raw.get('id') or raw.get('preset_id') or '').strip()
+            existing_preset = current_presets_by_id.get(preset_id) if preset_id else None
+            if existing_preset:
+                next_preset = merge_existing_preset(existing_preset, raw)
+            else:
+                next_preset = normalize_ai_preset_record(raw, preset_id or None)
+                next_preset['updated_at'] = now_iso()
+            next_presets_by_id[next_preset['id']] = next_preset
+
+        for preset in current_presets:
+            preset_id = str(preset.get('id') or '')
+            if preset_id in next_presets_by_id:
+                next_presets.append(next_presets_by_id.pop(preset_id))
+            else:
+                next_presets.append(preset)
+        next_presets.extend(next_presets_by_id.values())
+    elif mode == 'merge_legacy_local':
+        for raw_preset in presets_payload or []:
+            raw = raw_preset if isinstance(raw_preset, dict) else {}
+            preset_id = str(raw.get('id') or raw.get('preset_id') or '').strip()
+            if not preset_id:
+                continue
+            existing_preset = current_presets_by_id.get(preset_id)
+            if existing_preset:
+                incoming_ts = parse_updated_at_to_ts(raw.get('updated_at'))
+                existing_ts = parse_updated_at_to_ts(existing_preset.get('updated_at'))
+                existing_fp = stable_public_fingerprint(existing_preset)
+                incoming_fp = stable_public_fingerprint(normalize_ai_preset_record(raw, preset_id))
+                content_differs = bool(existing_fp and incoming_fp and existing_fp != incoming_fp)
+                # Protect legacy customized default preset: backend-generated default should not overwrite it
+                prefer_incoming = (
+                    preset_id == DEFAULT_AI_PRESET_ID
+                    and content_differs
+                    and is_backend_generated_default_preset(existing_preset)
+                )
+                if prefer_incoming or incoming_ts >= existing_ts:
+                    raw = preserve_existing_secret_payload(raw, existing_preset)
+                    next_presets_by_id[preset_id] = merge_existing_preset(existing_preset, raw)
+                else:
+                    next_presets_by_id[preset_id] = existing_preset
+            else:
+                next_preset = normalize_ai_preset_record(raw, preset_id)
+                next_preset['updated_at'] = now_iso()
+                next_presets_by_id[next_preset['id']] = next_preset
+
+        # keep ordering: existing first, then new
+        for preset in current_presets:
+            preset_id = str(preset.get('id') or '')
+            if preset_id in next_presets_by_id:
+                next_presets.append(next_presets_by_id.pop(preset_id))
+            else:
+                next_presets.append(preset)
+        next_presets.extend(next_presets_by_id.values())
+    else:
+        for raw_preset in presets_payload or []:
+            raw = raw_preset if isinstance(raw_preset, dict) else {}
+            preset_id = str(raw.get('id') or raw.get('preset_id') or '').strip()
+            existing_preset = current_presets_by_id.get(preset_id) if preset_id else None
+            if existing_preset:
+                raw = preserve_existing_secret_payload(raw, existing_preset)
+            next_preset = normalize_ai_preset_record(raw)
+            next_preset['updated_at'] = now_iso()
+            next_presets.append(next_preset)
+
+    if not next_presets:
+        next_presets = current_store.get('presets', [])
+
+    next_active_id = active_preset_id or current_store.get('active_preset_id') or (next_presets[0]['id'] if next_presets else DEFAULT_AI_PRESET_ID)
+    if next_presets and not any(preset['id'] == next_active_id for preset in next_presets):
+        next_active_id = next_presets[0]['id']
+    next_store = {
+        'version': AI_PRESET_STORE_VERSION,
+        'active_preset_id': next_active_id,
+        'presets': next_presets,
+    }
+    save_ai_preset_store(next_store)
+    return next_store
+
+
+def sanitize_preset_for_device(preset: Dict[str, Any], permissions: Optional[Dict[str, bool]] = None) -> Dict[str, Any]:
+    permissions = permissions or dict(DEFAULT_DEVICE_PERMISSIONS)
+    flat = flatten_ai_preset_record(preset, include_secrets=False)
+    kind, label = classify_ai_preset_source(preset, str(preset.get('id') or ''))
+    flat['kind'] = kind
+    flat['label'] = label
+    flat.update(ai_preset_secret_presence(preset))
+    if not permissions.get('ai_view_provider', False):
+        flat['translation']['provider'] = ''
+        flat['thinking']['provider'] = ''
+    if not permissions.get('ai_view_base_url', False):
+        flat['translation']['base_url'] = ''
+        flat['thinking']['base_url'] = ''
+    if not permissions.get('ai_view_model', False):
+        flat['translation']['model'] = ''
+        flat['thinking']['model'] = ''
+    if not permissions.get('ai_view_prompts', False):
+        flat['translation']['system_prompt'] = ''
+        flat['thinking']['system_prompt'] = ''
+        flat['batch']['extra_prompt'] = ''
+    return flat
+
+
+def get_current_device_auth_context() -> Dict[str, Any]:
+    device_id = request.cookies.get('FEW_DEVICE_ID')
+    if not device_id:
+        return {
+            'device_id': None,
+            'authenticated': False,
+            'trusted': False,
+            'is_system_admin': False,
+            'is_local': is_loopback_request(),
+            'auth_type': '',
+            'permissions': dict(DEFAULT_DEVICE_PERMISSIONS),
+            'credential': None,
+            'device_info': None,
+            'remark': '',
+            'expires_at': '',
+            'max_uses': None,
+            'used_count': 0,
+        }
+
+    trusted_devices = load_trusted_devices()
+    device_info = trusted_devices.get(device_id)
+    if not isinstance(device_info, dict):
+        return {
+            'device_id': device_id,
+            'authenticated': False,
+            'trusted': False,
+            'is_system_admin': False,
+            'is_local': is_loopback_request(),
+            'auth_type': '',
+            'permissions': dict(DEFAULT_DEVICE_PERMISSIONS),
+            'credential': None,
+            'device_info': None,
+            'remark': '',
+            'expires_at': '',
+            'max_uses': None,
+            'used_count': 0,
+        }
+
+    security_config = get_security_config()
+    resolved = resolve_trusted_device_auth_state(security_config, device_info)
+    if not resolved:
+        return {
+            'device_id': device_id,
+            'authenticated': False,
+            'trusted': False,
+            'is_system_admin': False,
+            'is_local': is_loopback_request(),
+            'auth_type': '',
+            'permissions': dict(DEFAULT_DEVICE_PERMISSIONS),
+            'credential': None,
+            'device_info': device_info,
+            'remark': str(device_info.get('remark') or ''),
+            'expires_at': str(device_info.get('expires_at') or ''),
+            'max_uses': coerce_int(device_info.get('max_uses')),
+            'used_count': coerce_int(device_info.get('used_count'), 0) or 0,
+        }
+
+    auth_type = str(resolved.get('auth_type') or '').strip().lower()
+    is_system_admin = bool(resolved.get('is_system_admin'))
+    credential = resolved.get('credential')
+    permissions = resolved.get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    max_uses = coerce_int(device_info.get('max_uses'), coerce_int((credential or {}).get('max_uses')))
+    used_count = coerce_int(device_info.get('used_count'), 0) or 0
+    expires_at = str(device_info.get('expires_at') or (credential or {}).get('expires_at') or '')
+
+    if expires_at:
+        try:
+            if datetime.fromisoformat(expires_at) <= datetime.now():
+                return {
+                    'device_id': device_id,
+                    'authenticated': False,
+                    'trusted': False,
+                    'is_system_admin': False,
+                    'is_local': is_loopback_request(),
+                    'auth_type': '',
+                    'permissions': dict(DEFAULT_DEVICE_PERMISSIONS),
+                    'credential': None,
+                    'device_info': device_info,
+                    'remark': str(device_info.get('remark') or resolved.get('remark') or ''),
+                    'expires_at': expires_at,
+                    'max_uses': max_uses,
+                    'used_count': used_count,
+                }
+        except Exception:
+            pass
+
+    if max_uses is not None and max_uses >= 0 and used_count >= max_uses:
+        return {
+            'device_id': device_id,
+            'authenticated': False,
+            'trusted': False,
+            'is_system_admin': False,
+            'is_local': is_loopback_request(),
+            'auth_type': '',
+            'permissions': dict(DEFAULT_DEVICE_PERMISSIONS),
+            'credential': None,
+            'device_info': device_info,
+            'remark': str(device_info.get('remark') or resolved.get('remark') or ''),
+            'expires_at': expires_at,
+            'max_uses': max_uses,
+            'used_count': used_count,
+        }
+
+    return {
+        'device_id': device_id,
+        'authenticated': True,
+        'trusted': bool(is_system_admin or (credential and is_credential_usable(credential) and permissions.get('write_access', False))),
+        'is_system_admin': is_system_admin,
+        'is_local': is_loopback_request(),
+        'auth_type': auth_type,
+        'permissions': permissions,
+        'credential': credential,
+        'device_info': device_info,
+        'remark': str(resolved.get('remark') or device_info.get('remark') or (credential or {}).get('remark') or ''),
+        'expires_at': expires_at,
+        'max_uses': max_uses,
+        'used_count': used_count,
+    }
+
+
+def has_device_permission(permission: str) -> bool:
+    context = get_current_device_auth_context()
+    if context.get('is_system_admin'):
+        return True
+    return bool(context.get('permissions', {}).get(permission, False))
+
+
+def can_use_ai() -> bool:
+    return is_local_request() or has_device_permission('ai_use')
+
+
+def can_edit_ai_presets() -> bool:
+    return is_local_request() or has_device_permission('ai_edit_preset')
+
+
+def can_manage_system() -> bool:
+    return is_loopback_request() or bool(get_current_device_auth_context().get('is_system_admin'))
+
+
+def get_ai_preset_by_id(preset_id: str) -> Optional[Dict[str, Any]]:
+    if not preset_id:
+        return None
+    store = get_ai_preset_store()
+    for preset in store.get('presets', []):
+        if preset.get('id') == preset_id:
+            return preset
+    return None
+
+
+def classify_ai_preset_source(preset: Optional[Dict[str, Any]], preset_id: str = '') -> Tuple[str, str]:
+    pid = str(preset_id or (preset or {}).get('id') or '').strip()
+    if not preset:
+        if pid:
+            return ('missing_preset', f'预设已丢失：{pid}')
+        return ('manual', '独立当前设置')
+    name = str(preset.get('name') or pid or '未命名预设').strip() or '未命名预设'
+    owner_scope = str(preset.get('owner_scope') or '').strip().lower()
+    acl = preset.get('acl') if isinstance(preset.get('acl'), dict) else {}
+    if owner_scope in {'system'} or str(preset.get('id') or '') == DEFAULT_AI_PRESET_ID:
+        return ('system_preset', f'系统预设：{name}')
+    if owner_scope in {'shared'} or acl:
+        return ('shared_preset', f'分享预设：{name}')
+    return ('personal_preset', f'个人预设：{name}')
+
+
+def resolve_ai_request_preset(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    settings_store = get_ai_settings_store()
+    current_settings = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
+
+    request_preset_id = str(request_data.get('preset_id') or '').strip()
+    stored_source_mode = str(settings_store.get('source_mode') or 'manual').strip().lower()
+    if stored_source_mode not in {'manual', 'preset'}:
+        stored_source_mode = 'manual'
+    stored_preset_id = str(settings_store.get('source_preset_id') or '').strip() if stored_source_mode == 'preset' else ''
+
+    resolved_from = 'manual'
+    effective_preset_id = ''
+    if request_preset_id:
+        effective_preset_id = request_preset_id
+        resolved_from = 'request_preset'
+    elif stored_source_mode == 'preset' and stored_preset_id:
+        effective_preset_id = stored_preset_id
+        resolved_from = 'stored_preset'
+
+    preset = get_ai_preset_by_id(effective_preset_id) if effective_preset_id else None
+    base_state = preset if preset else current_settings
+    runtime = normalize_ai_settings_state(base_state)
+    runtime = normalize_ai_settings_state(request_data, runtime)
+    # If stored binding points to a missing preset, explicitly fall back to manual.
+    if effective_preset_id and not preset and resolved_from == 'stored_preset':
+        resolved_from = 'stored_preset_missing_fallback'
+        runtime['source_mode'] = 'manual'
+        runtime['source_preset_id'] = ''
+    else:
+        runtime['source_mode'] = 'preset' if preset else 'manual'
+        runtime['source_preset_id'] = str(preset.get('id') or '') if preset else ''
+    runtime['requested_preset_id'] = request_preset_id
+    runtime['resolved_from'] = resolved_from
+    runtime['id'] = str((preset or {}).get('id') or effective_preset_id or '')
+    runtime['name'] = str((preset or {}).get('name') or effective_preset_id or '')
+    return runtime
 
 BATCH_TRANSLATION_FIXED_PROMPT = '''批量翻译固定规则：
 1. 每个歌曲块必须先输出对应的 [ID:xxx]。
@@ -7760,20 +9106,44 @@ def extract_lyrics():
 
 @app.route('/get_ai_settings', methods=['GET'])
 def get_ai_settings():
-    global AI_TRANSLATION_SETTINGS
-    if isinstance(AI_TRANSLATION_SETTINGS.get('system_prompt'), str) and not AI_TRANSLATION_SETTINGS['system_prompt'].strip():
-        AI_TRANSLATION_SETTINGS['system_prompt'] = AI_TRANSLATION_DEFAULTS['system_prompt']
-    if isinstance(AI_TRANSLATION_SETTINGS.get('thinking_system_prompt'), str) and not AI_TRANSLATION_SETTINGS['thinking_system_prompt'].strip():
-        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
-    if 'strip_brackets' not in AI_TRANSLATION_SETTINGS:
-        AI_TRANSLATION_SETTINGS['strip_brackets'] = AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)
-    if 'experimental_full_line_bracket_strip' not in AI_TRANSLATION_SETTINGS:
-        AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'] = AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)
-    if 'experimental_bracket_line_as_subline' not in AI_TRANSLATION_SETTINGS:
-        AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'] = AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)
+    settings_store = get_ai_settings_store()
+    settings_state = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
+    effective_settings_state = resolve_effective_ai_settings_state(settings_store)
+    sync_ai_translation_settings(effective_settings_state)
+    preset_store = get_ai_preset_store()
+    permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    active_preset = get_active_ai_preset()
+    active_settings = sanitize_preset_for_device(active_preset or {}, permissions)
+
+    # Source status (manual vs preset binding)
+    source_mode = str(settings_store.get('source_mode') or 'manual').strip().lower()
+    if source_mode not in {'manual', 'preset'}:
+        source_mode = 'manual'
+    source_preset_id = str(settings_store.get('source_preset_id') or '').strip() if source_mode == 'preset' else ''
+    source_preset = get_ai_preset_by_id(source_preset_id) if source_preset_id else None
+    source_preset_sanitized = sanitize_preset_for_device(source_preset or {}, permissions) if source_preset else None
+    if source_mode == 'preset':
+        source_kind, source_label = classify_ai_preset_source(source_preset, source_preset_id)
+    else:
+        source_kind, source_label = ('manual', '独立当前设置')
+
     return jsonify({
         'status': 'success',
-        'settings': AI_TRANSLATION_SETTINGS,
+        'settings': build_ai_settings_snapshot({'settings': effective_settings_state}),
+        'stored_settings': build_ai_settings_snapshot({'settings': settings_state}),
+        'effective_settings': build_ai_settings_snapshot({'settings': effective_settings_state}),
+        'preset': active_settings,
+        'active_preset_id': preset_store.get('active_preset_id', ''),
+        'source_mode': source_mode,
+        'source_preset_id': source_preset_id,
+        'source_preset': source_preset_sanitized,
+        'source_kind': source_kind,
+        'source_label': source_label,
+        'presets': [sanitize_preset_for_device(preset, permissions) for preset in preset_store.get('presets', [])],
+        'permissions': permissions,
+        'can_use_ai': bool(permissions.get('ai_use', False) or is_local_request()),
+        'can_edit_preset': bool(permissions.get('ai_edit_preset', False) or is_local_request()),
+        'can_save_settings': bool(permissions.get('ai_use', False) or is_local_request()),
         'defaults': {
             'system_prompt': AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
             'thinking_system_prompt': AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
@@ -7786,92 +9156,302 @@ def get_ai_settings():
 
 @app.route('/save_ai_settings', methods=['POST'])
 def save_ai_settings():
-    if not is_request_allowed():
-        return abort(403)
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有保存 AI 设置的权限'}), 403
     try:
-        data = request.json
-        global AI_TRANSLATION_SETTINGS
-        AI_TRANSLATION_SETTINGS['api_key'] = data.get('api_key', '')
-        system_prompt_input = data.get('system_prompt')
-        if isinstance(system_prompt_input, str) and not system_prompt_input.strip():
-            system_prompt_input = AI_TRANSLATION_DEFAULTS['system_prompt']
-        elif system_prompt_input is None:
-            system_prompt_input = AI_TRANSLATION_SETTINGS['system_prompt'] or AI_TRANSLATION_DEFAULTS['system_prompt']
-        AI_TRANSLATION_SETTINGS['system_prompt'] = system_prompt_input
-        AI_TRANSLATION_SETTINGS['provider'] = data.get('provider', AI_TRANSLATION_SETTINGS['provider'])
-        AI_TRANSLATION_SETTINGS['base_url'] = data.get('base_url', AI_TRANSLATION_SETTINGS['base_url'])
-        AI_TRANSLATION_SETTINGS['model'] = data.get('model', AI_TRANSLATION_SETTINGS['model'])
-        AI_TRANSLATION_SETTINGS['expect_reasoning'] = data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
-        AI_TRANSLATION_SETTINGS['strip_brackets'] = parse_bool(
-            data.get('strip_brackets'),
-            AI_TRANSLATION_SETTINGS.get('strip_brackets', AI_TRANSLATION_DEFAULTS.get('strip_brackets', False))
-        )
-        AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'] = parse_bool(
-            data.get('experimental_full_line_bracket_strip'),
-            AI_TRANSLATION_SETTINGS.get(
-                'experimental_full_line_bracket_strip',
-                AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)
-            )
-        )
-        AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'] = parse_bool(
-            data.get('experimental_bracket_line_as_subline'),
-            AI_TRANSLATION_SETTINGS.get(
-                'experimental_bracket_line_as_subline',
-                AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)
-            )
-        )
-        AI_TRANSLATION_SETTINGS['compat_mode'] = parse_bool(data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
-        AI_TRANSLATION_SETTINGS['thinking_enabled'] = parse_bool(data.get('thinking_enabled'), AI_TRANSLATION_SETTINGS['thinking_enabled'])
-        AI_TRANSLATION_SETTINGS['thinking_api_key'] = data.get('thinking_api_key', AI_TRANSLATION_SETTINGS['thinking_api_key'])
-        AI_TRANSLATION_SETTINGS['thinking_provider'] = data.get('thinking_provider', AI_TRANSLATION_SETTINGS['thinking_provider'])
-        AI_TRANSLATION_SETTINGS['thinking_base_url'] = data.get('thinking_base_url', AI_TRANSLATION_SETTINGS['thinking_base_url'])
-        AI_TRANSLATION_SETTINGS['thinking_model'] = data.get('thinking_model', AI_TRANSLATION_SETTINGS['thinking_model'])
-        thinking_prompt_input = data.get('thinking_system_prompt')
-        if isinstance(thinking_prompt_input, str) and not thinking_prompt_input.strip():
-            thinking_prompt_input = AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
-        elif thinking_prompt_input is None:
-            thinking_prompt_input = AI_TRANSLATION_SETTINGS['thinking_system_prompt'] or AI_TRANSLATION_DEFAULTS['thinking_system_prompt']
-        AI_TRANSLATION_SETTINGS['thinking_system_prompt'] = thinking_prompt_input
+        data = request.get_json(silent=True) or {}
+        settings_store = get_ai_settings_store()
+        current_settings = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
+        intent = str(data.get('intent') or '').strip().lower()
+
+        # Prevent implicit secret deletion: empty string means "unchanged".
+        # Explicit clearing must be requested via dedicated flags.
+        clear_translation_api_key = parse_bool(data.get('clear_translation_api_key'), False)
+        clear_thinking_api_key = parse_bool(data.get('clear_thinking_api_key'), False)
+        if 'api_key' in data and not clear_translation_api_key:
+            if not str(data.get('api_key') or '').strip():
+                data.pop('api_key', None)
+        if 'thinking_api_key' in data and not clear_thinking_api_key:
+            if not str(data.get('thinking_api_key') or '').strip():
+                data.pop('thinking_api_key', None)
+
+        preset_secret_updated = False
+        if intent == 'bind_preset':
+            incoming_source_preset_id = str(data.get('source_preset_id') or data.get('preset_id') or '').strip()
+            if not incoming_source_preset_id:
+                return jsonify({'status': 'error', 'message': '绑定失败：请选择要绑定的预设'}), 400
+            bound_preset = get_ai_preset_by_id(incoming_source_preset_id)
+            if not bound_preset:
+                return jsonify({'status': 'error', 'message': f'绑定失败：预设不存在或已被删除（{incoming_source_preset_id}）'}), 400
+            incoming_translation_api_key = str(data.get('api_key') or '').strip()
+            incoming_thinking_api_key = str(data.get('thinking_api_key') or '').strip()
+            if incoming_translation_api_key or incoming_thinking_api_key:
+                if can_edit_ai_presets():
+                    update_payload = {
+                        'id': incoming_source_preset_id,
+                    }
+                    if incoming_translation_api_key:
+                        update_payload['api_key'] = incoming_translation_api_key
+                    if incoming_thinking_api_key:
+                        update_payload['thinking_api_key'] = incoming_thinking_api_key
+                    update_ai_preset_store_from_payload(
+                        [update_payload],
+                        mode='upsert',
+                        permissions=default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+                    )
+                    preset_secret_updated = True
+                    bound_preset = get_ai_preset_by_id(incoming_source_preset_id)
+                else:
+                    preset_name = str(bound_preset.get('name') or incoming_source_preset_id).strip() or incoming_source_preset_id
+                    return jsonify({'status': 'error', 'message': f'绑定失败：当前设备没有修改 AI 预设的权限，无法保存输入的 API 密钥到预设「{preset_name}」。请清空输入框后绑定已有凭据，或使用有权限的设备更新预设'}), 403
+            if not ai_preset_secret_presence(bound_preset).get('translation_api_key_present'):
+                preset_name = str(bound_preset.get('name') or incoming_source_preset_id).strip() or incoming_source_preset_id
+                return jsonify({'status': 'error', 'message': f'绑定失败：预设「{preset_name}」缺少翻译模型 API 凭据。请输入 API 密钥，或先更新该预设后再绑定'}), 400
+            settings_store['source_mode'] = 'preset'
+            settings_store['source_preset_id'] = incoming_source_preset_id
+            next_settings = current_settings
+        elif intent == 'apply_manual_settings':
+            preview_source_mode = str(data.get('source_mode') or settings_store.get('source_mode') or 'manual').strip().lower()
+            if preview_source_mode not in {'manual', 'preset'}:
+                preview_source_mode = 'manual'
+            preview_source_preset_id = str(data.get('source_preset_id') or '').strip() if preview_source_mode == 'preset' else ''
+
+            base_settings = current_settings
+            if preview_source_mode == 'preset' and preview_source_preset_id:
+                source_preset = get_ai_preset_by_id(preview_source_preset_id)
+                if not source_preset:
+                    return jsonify({'status': 'error', 'message': f'应用失败：预设不存在或已被删除（{preview_source_preset_id}）'}), 400
+                base_settings = materialize_ai_settings_from_preset(source_preset)
+
+            next_settings = normalize_ai_settings_state(data, base_settings)
+            if clear_translation_api_key:
+                next_settings.setdefault('translation', {})['api_key'] = ''
+            if clear_thinking_api_key:
+                next_settings.setdefault('thinking', {})['api_key'] = ''
+            settings_store['settings'] = next_settings
+            settings_store['source_mode'] = 'manual'
+            settings_store['source_preset_id'] = ''
+        else:
+            # Backward-compatible legacy save semantics.
+            incoming_source_mode = str(data.get('source_mode') or settings_store.get('source_mode') or 'manual').strip().lower()
+            if incoming_source_mode not in {'manual', 'preset'}:
+                incoming_source_mode = 'manual'
+            incoming_source_preset_id = str(data.get('source_preset_id') or '').strip() if incoming_source_mode == 'preset' else ''
+            if incoming_source_mode == 'preset':
+                if not incoming_source_preset_id:
+                    incoming_source_mode = 'manual'
+                    incoming_source_preset_id = ''
+                elif not get_ai_preset_by_id(incoming_source_preset_id):
+                    return jsonify({'status': 'error', 'message': f'绑定失败：预设不存在或已被删除（{incoming_source_preset_id}）'}), 400
+            settings_store['source_mode'] = incoming_source_mode
+            settings_store['source_preset_id'] = incoming_source_preset_id
+
+            next_settings = normalize_ai_settings_state(data, current_settings)
+            if clear_translation_api_key:
+                next_settings.setdefault('translation', {})['api_key'] = ''
+            if clear_thinking_api_key:
+                next_settings.setdefault('thinking', {})['api_key'] = ''
+            settings_store['settings'] = next_settings
+
+        settings_store['updated_at'] = now_iso()
+        save_ai_settings_store(settings_store)
+        sync_ai_translation_settings(resolve_effective_ai_settings_state(settings_store))
+
+        response_permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+        preset_store = get_ai_preset_store()
+        stored_settings_rsp = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
+        effective_settings_rsp = resolve_effective_ai_settings_state(settings_store)
+        active_preset = get_active_ai_preset() or {}
+        source_mode_rsp = str(settings_store.get('source_mode') or 'manual').strip().lower()
+        source_preset_id_rsp = str(settings_store.get('source_preset_id') or '').strip() if source_mode_rsp == 'preset' else ''
+        source_preset_rsp = get_ai_preset_by_id(source_preset_id_rsp) if source_preset_id_rsp else None
+        source_preset_rsp_sanitized = sanitize_preset_for_device(source_preset_rsp or {}, response_permissions) if source_preset_rsp else None
+        if source_mode_rsp == 'preset':
+            source_kind_rsp, source_label_rsp = classify_ai_preset_source(source_preset_rsp, source_preset_id_rsp)
+        else:
+            source_kind_rsp, source_label_rsp = ('manual', '独立当前设置')
+
         return jsonify({
             'status': 'success',
-            'api_key': AI_TRANSLATION_SETTINGS['api_key'],
-            'system_prompt': AI_TRANSLATION_SETTINGS['system_prompt'],
-            'provider': AI_TRANSLATION_SETTINGS['provider'],
-            'base_url': AI_TRANSLATION_SETTINGS['base_url'],
-            'model': AI_TRANSLATION_SETTINGS['model'],
-            'expect_reasoning': AI_TRANSLATION_SETTINGS['expect_reasoning'],
-            'strip_brackets': AI_TRANSLATION_SETTINGS['strip_brackets'],
-            'experimental_full_line_bracket_strip': AI_TRANSLATION_SETTINGS['experimental_full_line_bracket_strip'],
-            'experimental_bracket_line_as_subline': AI_TRANSLATION_SETTINGS['experimental_bracket_line_as_subline'],
-            'compat_mode': AI_TRANSLATION_SETTINGS['compat_mode'],
-            'thinking_enabled': AI_TRANSLATION_SETTINGS['thinking_enabled'],
-            'thinking_api_key': AI_TRANSLATION_SETTINGS['thinking_api_key'],
-            'thinking_provider': AI_TRANSLATION_SETTINGS['thinking_provider'],
-            'thinking_base_url': AI_TRANSLATION_SETTINGS['thinking_base_url'],
-            'thinking_model': AI_TRANSLATION_SETTINGS['thinking_model'],
-            'thinking_system_prompt': AI_TRANSLATION_SETTINGS['thinking_system_prompt']
+            'settings': build_ai_settings_snapshot({'settings': effective_settings_rsp}),
+            'stored_settings': build_ai_settings_snapshot({'settings': stored_settings_rsp}),
+            'effective_settings': build_ai_settings_snapshot({'settings': effective_settings_rsp}),
+            'preset': sanitize_preset_for_device(active_preset, response_permissions),
+            'active_preset_id': preset_store.get('active_preset_id', ''),
+            'source_mode': source_mode_rsp,
+            'source_preset_id': source_preset_id_rsp,
+            'source_preset': source_preset_rsp_sanitized,
+            'source_kind': source_kind_rsp,
+            'source_label': source_label_rsp,
+            'preset_secret_updated': preset_secret_updated,
+            'presets': [sanitize_preset_for_device(preset, response_permissions) for preset in preset_store.get('presets', [])],
+            'permissions': response_permissions,
+            'can_use_ai': bool(response_permissions.get('ai_use', False) or is_local_request()),
+            'can_edit_preset': bool(response_permissions.get('ai_edit_preset', False) or is_local_request()),
+            'can_save_settings': bool(response_permissions.get('ai_use', False) or is_local_request()),
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
+
+@app.route('/ai-presets', methods=['GET', 'PUT', 'POST'])
+def ai_presets_collection():
+    if request.method == 'GET':
+        store = get_ai_preset_store()
+        permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+        return jsonify({
+            'status': 'success',
+            'active_preset_id': store.get('active_preset_id', ''),
+            'presets': [sanitize_preset_for_device(preset, permissions) for preset in store.get('presets', [])],
+            'permissions': permissions,
+            'can_edit_preset': bool(permissions.get('ai_edit_preset', False) or is_local_request()),
+        })
+
+    if not can_edit_ai_presets():
+        return jsonify({'status': 'error', 'message': '当前设备没有修改 AI 预设的权限'}), 403
+
+    data = request.get_json(silent=True) or {}
+    if request.method == 'POST':
+        payload = dict(data)
+        active_preset_id = str(payload.get('id') or payload.get('preset_id') or DEFAULT_AI_PRESET_ID).strip() or DEFAULT_AI_PRESET_ID
+        payload['id'] = active_preset_id
+        presets_payload = [payload]
+    else:
+        presets_payload = data.get('presets') if isinstance(data.get('presets'), list) else data if isinstance(data, list) else []
+        active_preset_id = str(data.get('active_preset_id') or data.get('preset_id') or '').strip() or None
+
+    if not isinstance(presets_payload, list):
+        return jsonify({'status': 'error', 'message': '预设数据格式不正确'}), 400
+
+    store = update_ai_preset_store_from_payload(presets_payload, active_preset_id=active_preset_id, mode='upsert' if request.method == 'POST' else 'replace_all')
+    permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    return jsonify({
+        'status': 'success',
+        'active_preset_id': store.get('active_preset_id', ''),
+        'presets': [sanitize_preset_for_device(preset, permissions) for preset in store.get('presets', [])],
+    })
+
+
+@app.route('/ai-presets/migrate-local-cache', methods=['POST'])
+def ai_presets_migrate_local_cache():
+    if not can_edit_ai_presets():
+        return jsonify({'status': 'error', 'message': '当前设备没有修改 AI 预设的权限'}), 403
+
+    data = request.get_json(silent=True) or {}
+    presets_payload = data.get('presets') if isinstance(data.get('presets'), list) else []
+    active_preset_id = str(data.get('active_preset_id') or '').strip() or None
+
+    response_permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    store_before = get_ai_preset_store()
+    count_before = len(store_before.get('presets', []) or [])
+    store = update_ai_preset_store_from_payload(presets_payload, active_preset_id=active_preset_id, mode='merge_legacy_local', permissions=response_permissions)
+    count_after = len(store.get('presets', []) or [])
+
+    return jsonify({
+        'status': 'success',
+        'migrated': True,
+        'before': count_before,
+        'after': count_after,
+        'active_preset_id': store.get('active_preset_id', ''),
+        'presets': [sanitize_preset_for_device(preset, response_permissions) for preset in store.get('presets', [])],
+        'permissions': response_permissions,
+    })
+
+
+@app.route('/ai/reasoning-control-capability', methods=['GET'])
+def ai_reasoning_control_capability():
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    provider = str(request.args.get('provider') or '').strip()
+    base_url = str(request.args.get('base_url') or '').strip()
+    model = str(request.args.get('model') or '').strip()
+    cap = get_reasoning_control_capability(provider=provider, base_url=base_url, model=model)
+    return jsonify({
+        'status': 'success',
+        'capability': {
+            'supported': bool(cap.get('supported', False)),
+            'provider': str(cap.get('provider') or ''),
+            'message': str(cap.get('message') or ''),
+        }
+    })
+
+
+@app.route('/ai-presets/<preset_id>', methods=['GET', 'PUT', 'DELETE'])
+def ai_preset_item(preset_id):
+    if request.method == 'GET':
+        preset = get_ai_preset_by_id(preset_id)
+        if not preset:
+            return jsonify({'status': 'error', 'message': '预设不存在'}), 404
+        permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+        return jsonify({
+            'status': 'success',
+            'preset': sanitize_preset_for_device(preset, permissions),
+        })
+
+    if not can_edit_ai_presets():
+        return jsonify({'status': 'error', 'message': '当前设备没有修改 AI 预设的权限'}), 403
+
+    store = get_ai_preset_store()
+    preset = get_ai_preset_by_id(preset_id)
+    if request.method == 'DELETE':
+        if not preset:
+            return jsonify({'status': 'error', 'message': '预设不存在'}), 404
+        next_presets = [item for item in store.get('presets', []) if item.get('id') != preset_id]
+        next_active_id = store.get('active_preset_id')
+        if next_active_id == preset_id:
+            next_active_id = next_presets[0]['id'] if next_presets else DEFAULT_AI_PRESET_ID
+        save_ai_preset_store({'presets': next_presets, 'active_preset_id': next_active_id})
+        permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+        return jsonify({'status': 'success', 'presets': [sanitize_preset_for_device(preset_item, permissions) for preset_item in get_ai_preset_store().get('presets', [])], 'active_preset_id': get_ai_preset_store().get('active_preset_id', '')})
+
+    data = request.get_json(silent=True) or {}
+    payload = dict(data)
+    payload['id'] = preset_id
+    response_permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    next_store = update_ai_preset_store_from_payload([payload], active_preset_id=preset_id, mode='upsert', permissions=response_permissions)
+    merged_record = get_ai_preset_by_id(preset_id) or {}
+    permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    return jsonify({
+        'status': 'success',
+        'preset': sanitize_preset_for_device(merged_record, permissions),
+        'active_preset_id': next_store.get('active_preset_id', ''),
+    })
+
+
+@app.route('/ai-presets/<preset_id>/resolve', methods=['POST'])
+def ai_preset_resolve(preset_id):
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    preset = get_ai_preset_by_id(preset_id)
+    if not preset:
+        return jsonify({'status': 'error', 'message': '预设不存在'}), 404
+    permissions = default_device_permissions(write_access=True) if is_local_request() else get_current_device_auth_context().get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    return jsonify({
+        'status': 'success',
+        'preset': sanitize_preset_for_device(preset, permissions),
+        'active_preset_id': get_ai_preset_store().get('active_preset_id', ''),
+    })
+
 @app.route('/probe_ai', methods=['POST'])
 def probe_ai():
-    if not is_request_allowed():
-        return abort(403)
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
     try:
         request_data = request.get_json(silent=True) or {}
         mode = (request_data.get('mode') or 'translation').lower()
-
+        runtime = resolve_ai_request_preset(request_data)
+        source_mode = str(runtime.get('source_mode') or 'manual')
+        source_preset_name = str(runtime.get('name') or runtime.get('id') or '').strip()
         if mode == 'thinking':
-            api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('thinking_api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
-            base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
-            model = request_data.get('model') or AI_TRANSLATION_SETTINGS.get('thinking_model') or AI_TRANSLATION_SETTINGS.get('model')
-            system_prompt = request_data.get('system_prompt') or ''
+            api_key = runtime.get('thinking', {}).get('api_key') or runtime.get('translation', {}).get('api_key')
+            base_url_raw = runtime.get('thinking', {}).get('base_url')
+            model = runtime.get('thinking', {}).get('model')
+            system_prompt = runtime.get('thinking', {}).get('system_prompt') or ''
         else:
-            api_key = request_data.get('api_key') or AI_TRANSLATION_SETTINGS.get('api_key')
-            base_url_raw = request_data.get('base_url') or AI_TRANSLATION_SETTINGS.get('base_url')
-            model = request_data.get('model') or AI_TRANSLATION_SETTINGS.get('model')
-            system_prompt = request_data.get('system_prompt') or ''
+            api_key = runtime.get('translation', {}).get('api_key')
+            base_url_raw = runtime.get('translation', {}).get('base_url')
+            model = runtime.get('translation', {}).get('model')
+            system_prompt = runtime.get('translation', {}).get('system_prompt') or ''
         compat_mode = parse_bool(request_data.get('compat_mode'), False)
 
         # 规范化 base_url，去掉用户误填的 /chat/completions 等尾巴
@@ -7884,7 +9464,10 @@ def probe_ai():
         base_url = _normalize_base_url(base_url_raw)
         if not api_key:
             target = '思考模型' if mode == 'thinking' else '翻译模型'
-            return jsonify({'status': 'error', 'message': f'未提供{target}的API密钥'})
+            if source_mode == 'preset':
+                preset_label = source_preset_name or '（未知预设）'
+                return jsonify({'status': 'error', 'message': f'当前预设 {preset_label} 未配置后端 {target} API 密钥'})
+            return jsonify({'status': 'error', 'message': f'当前 AI 设置未保存{target} API 密钥'})
         if not base_url:
             target = '思考模型' if mode == 'thinking' else '翻译模型'
             return jsonify({'status': 'error', 'message': f'未提供{target}的Base URL'})
@@ -7893,6 +9476,10 @@ def probe_ai():
             return jsonify({'status': 'error', 'message': f'未提供{target}的模型名'})
 
         client = build_openai_client(api_key=api_key, base_url=base_url)
+        expect_reasoning = bool(runtime.get('translation', {}).get('expect_reasoning', AI_TRANSLATION_SETTINGS.get('expect_reasoning', True)))
+        translation_provider = runtime.get('translation', {}).get('provider') or AI_TRANSLATION_SETTINGS.get('provider', '')
+        reasoning_cap = get_reasoning_control_capability(provider=translation_provider, base_url=base_url, model=model) if mode != 'thinking' else {'supported': True, 'message': '', 'provider': translation_provider}
+        reasoning_opts = build_reasoning_request_options(provider=translation_provider, base_url=base_url, model=model, expect_reasoning=expect_reasoning) if (mode != 'thinking' and reasoning_cap.get('supported')) else {}
         if compat_mode:
             probe_prompt = f"{system_prompt}\n\nping".strip() if system_prompt else 'ping'
             probe_messages = [
@@ -7906,7 +9493,8 @@ def probe_ai():
         probe_response = client.chat.completions.create(
             model=model,
             messages=probe_messages,
-            stream=True
+            stream=True,
+            **reasoning_opts
         )
         first_chunk = None
         for chunk in probe_response:
@@ -7920,6 +9508,11 @@ def probe_ai():
             'model': model,
             'probe': 'chat.completions.stream',
             'observed_chunk': first_chunk is not None,
+            'reasoning_control': {
+                'supported': bool(reasoning_cap.get('supported', False)),
+                'provider': reasoning_cap.get('provider', ''),
+                'message': str(reasoning_cap.get('message') or ''),
+            },
             'usage': {
                 'prompt_tokens': getattr(usage, 'prompt_tokens', None),
                 'completion_tokens': getattr(usage, 'completion_tokens', None),
@@ -7934,55 +9527,38 @@ def probe_ai():
 def translate_lyrics():
     try:
         # 获取请求数据
-        request_data = request.get_json()
+        request_data = request.get_json(silent=True) or {}
+        if not can_use_ai():
+            return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
         content = request_data.get('content', '')
-        api_key = request_data.get('api_key', '')
-        # 优先用前端传的 system_prompt，没有则用全局默认
-        system_prompt_input = request_data.get('system_prompt')
-        if isinstance(system_prompt_input, str) and not system_prompt_input.strip():
-            system_prompt = AI_TRANSLATION_SETTINGS['system_prompt']
-        elif system_prompt_input is None:
-            system_prompt = AI_TRANSLATION_SETTINGS['system_prompt']
-        else:
-            system_prompt = system_prompt_input
+        auth_context = get_current_device_auth_context()
+        runtime = resolve_ai_request_preset(request_data)
+        api_key = runtime.get('translation', {}).get('api_key', '')
+        if not api_key:
+            source_mode = str(runtime.get('source_mode') or 'manual')
+            preset_label = str(runtime.get('name') or runtime.get('id') or '').strip()
+            if source_mode == 'preset':
+                preset_label = preset_label or '（未知预设）'
+                return jsonify({'status': 'error', 'message': f'当前预设 {preset_label} 未配置后端 API 密钥'})
+            return jsonify({'status': 'error', 'message': '当前 AI 设置未保存 API 密钥'})
 
-        # 获取API配置参数，优先使用请求数据中的参数，否则使用全局默认值
-        provider = request_data.get('provider') or AI_TRANSLATION_SETTINGS['provider']
-        base_url = request_data.get('base_url') or AI_TRANSLATION_SETTINGS['base_url']
-        model = request_data.get('model') or AI_TRANSLATION_SETTINGS['model']
-        expect_reasoning = request_data.get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
-        strip_brackets = parse_bool(
-            request_data.get('strip_brackets'),
-            AI_TRANSLATION_SETTINGS.get('strip_brackets', False)
-        )
-        experimental_full_line_bracket_strip = parse_bool(
-            request_data.get('experimental_full_line_bracket_strip'),
-            AI_TRANSLATION_SETTINGS.get('experimental_full_line_bracket_strip', False)
-        )
-        experimental_bracket_line_as_subline = parse_bool(
-            request_data.get('experimental_bracket_line_as_subline'),
-            AI_TRANSLATION_SETTINGS.get('experimental_bracket_line_as_subline', False)
-        )
+        system_prompt = runtime.get('translation', {}).get('system_prompt', '')
+        provider = runtime.get('translation', {}).get('provider') or AI_TRANSLATION_SETTINGS['provider']
+        base_url = runtime.get('translation', {}).get('base_url') or AI_TRANSLATION_SETTINGS['base_url']
+        model = runtime.get('translation', {}).get('model') or AI_TRANSLATION_SETTINGS['model']
+        expect_reasoning = runtime.get('translation', {}).get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+        strip_brackets = parse_bool(runtime.get('translation', {}).get('strip_brackets'), AI_TRANSLATION_SETTINGS.get('strip_brackets', False))
+        experimental_full_line_bracket_strip = parse_bool(runtime.get('translation', {}).get('experimental_full_line_bracket_strip'), AI_TRANSLATION_SETTINGS.get('experimental_full_line_bracket_strip', False))
+        experimental_bracket_line_as_subline = parse_bool(runtime.get('translation', {}).get('experimental_bracket_line_as_subline'), AI_TRANSLATION_SETTINGS.get('experimental_bracket_line_as_subline', False))
 
-        compat_mode = parse_bool(request_data.get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
-        thinking_enabled = parse_bool(
-            request_data.get('thinking_enabled'),
-            AI_TRANSLATION_SETTINGS.get('thinking_enabled', True)
-        )
+        compat_mode = parse_bool(runtime.get('translation', {}).get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
+        thinking_enabled = parse_bool(runtime.get('thinking', {}).get('enabled'), AI_TRANSLATION_SETTINGS.get('thinking_enabled', True))
 
-        thinking_api_key = request_data.get('thinking_api_key')
-        if not thinking_api_key:
-            thinking_api_key = AI_TRANSLATION_SETTINGS.get('thinking_api_key') or api_key
-        thinking_provider = request_data.get('thinking_provider') or AI_TRANSLATION_SETTINGS.get('thinking_provider') or provider
-        thinking_base_url = request_data.get('thinking_base_url') or AI_TRANSLATION_SETTINGS.get('thinking_base_url') or base_url
-        thinking_model = request_data.get('thinking_model') or AI_TRANSLATION_SETTINGS.get('thinking_model') or model
-        thinking_prompt_input = request_data.get('thinking_system_prompt')
-        if isinstance(thinking_prompt_input, str) and not thinking_prompt_input.strip():
-            thinking_system_prompt = AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
-        elif thinking_prompt_input is None:
-            thinking_system_prompt = AI_TRANSLATION_SETTINGS.get('thinking_system_prompt') or ''
-        else:
-            thinking_system_prompt = thinking_prompt_input
+        thinking_api_key = runtime.get('thinking', {}).get('api_key') or api_key
+        thinking_provider = runtime.get('thinking', {}).get('provider') or provider
+        thinking_base_url = runtime.get('thinking', {}).get('base_url') or base_url
+        thinking_model = runtime.get('thinking', {}).get('model') or model
+        thinking_system_prompt = runtime.get('thinking', {}).get('system_prompt') or ''
 
         # 规范化 base_url，自动剔除多余路径
         def _normalize_base_url(u: str) -> str:
@@ -7997,19 +9573,57 @@ def translate_lyrics():
         base_url = _normalize_base_url(base_url)
         thinking_base_url = _normalize_base_url(thinking_base_url)
 
-        if not api_key:
-            return jsonify({'status': 'error', 'message': '请先设置API密钥'})
+        reasoning_cap = get_reasoning_control_capability(provider=provider, base_url=base_url, model=model)
 
         # 获取客户端信息用于日志
         client_ip = request.remote_addr
         user_agent = request.headers.get('User-Agent', 'Unknown')
         request_id = f"{int(time.time()*1000)}_{random.randint(1000, 9999)}"
+        audit_started_at = time.monotonic()
+
+        def _summarize_content(raw_text: str) -> Dict[str, Any]:
+            text = raw_text if isinstance(raw_text, str) else str(raw_text or '')
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            preview = '\n'.join(lines[:6])
+            preview = preview[:320]
+            sha = hashlib.sha256(text.encode('utf-8', errors='ignore')).hexdigest() if text else ''
+            return {
+                'content_preview': preview,
+                'content_length': len(text),
+                'line_count': len(lines),
+                'sha256': sha,
+            }
+
+        def _build_ai_usage_audit_base() -> Dict[str, Any]:
+            credential_id = str(auth_context.get('credential_id') or (auth_context.get('credential') or {}).get('credential_id') or '').strip()
+            if auth_context.get('is_system_admin'):
+                credential_id = 'system'
+            auth_type = str(auth_context.get('auth_type') or ('system' if auth_context.get('is_system_admin') else '')).strip()
+            return {
+                'request_id': request_id,
+                'event': 'ai_translate_lyrics',
+                'credential_id': credential_id,
+                'auth_type': auth_type,
+                'device_id': auth_context.get('device_id'),
+                'preset_id': str(runtime.get('id') or ''),
+                'provider': provider,
+                'base_url': base_url,
+                'model': model,
+                'thinking_enabled': bool(thinking_enabled),
+                'thinking_provider': thinking_provider,
+                'thinking_base_url': thinking_base_url,
+                'thinking_model': thinking_model,
+                'expect_reasoning': bool(expect_reasoning),
+                'compat_mode': bool(compat_mode),
+                'reasoning_control_supported': bool(reasoning_cap.get('supported', False)),
+                'reasoning_control_message': str(reasoning_cap.get('message') or ''),
+            }
         
         app.logger.info("="*50)
         app.logger.info(f"开始处理翻译请求 [ID: {request_id}]")
         app.logger.info(f"客户端: {client_ip}, User-Agent: {user_agent}")
         app.logger.info(f"原始歌词内容长度: {len(content)} 字符")
-        app.logger.info(f"API密钥: {api_key[:8]}...{api_key[-4:] if len(api_key) > 12 else '****'}")
+        app.logger.info(f"预设ID: {runtime.get('id', '')}, API密钥已由后端托管")
         app.logger.info(
             "预处理开关: strip_brackets=%s, experimental_full_line_bracket_strip=%s, experimental_bracket_line_as_subline=%s",
             strip_brackets,
@@ -8066,6 +9680,34 @@ def translate_lyrics():
             if not valid_items:
                 return jsonify({'status': 'error', 'message': '批量请求中没有可翻译的歌词项'})
 
+            audit_base = _build_ai_usage_audit_base()
+            json_files = [str(item.get('jsonFile') or '') for item in valid_items if str(item.get('jsonFile') or '').strip()]
+            json_files_preview = ', '.join(json_files[:12])
+            items_preview_lines = []
+            for item in valid_items[:20]:
+                item_json = str(item.get('jsonFile') or '')
+                item_preview = '\n'.join((item.get('lyrics') or [])[:3])
+                item_preview = item_preview.strip().replace('\r', '')
+                if item_preview:
+                    items_preview_lines.append(f"{item_json or item.get('id')}: {item_preview[:160]}")
+
+            audit_base.update({
+                'mode': 'batch',
+                'item_count': len(valid_items),
+                'json_files_preview': json_files_preview,
+                'items_preview': '\n'.join(items_preview_lines),
+                'content_preview': '\n'.join(items_preview_lines)[:600],
+                'items': [
+                    {
+                        'id': str(item.get('id') or ''),
+                        'jsonFile': str(item.get('jsonFile') or ''),
+                        'lyricsPath': str(item.get('lyricsPath') or ''),
+                        **_summarize_content('\n'.join(item.get('lyrics', []) or []))
+                    }
+                    for item in valid_items[:50]
+                ]
+            })
+
             batch_full_line_count = sum(
                 1
                 for item in valid_items
@@ -8100,6 +9742,7 @@ def translate_lyrics():
             )
 
             def generate_batch():
+                audit_payload = dict(audit_base)
                 try:
                     batch_blocks = []
                     has_any_sublines = False
@@ -8135,10 +9778,12 @@ def translate_lyrics():
                         yield f"thinking:{json.dumps({'summary': '批量模式默认建议关闭思考；当前已按请求开启。'})}\n"
 
                     client = build_openai_client(api_key=api_key, base_url=base_url)
+                    reasoning_opts = build_reasoning_request_options(provider=provider, base_url=base_url, model=model, expect_reasoning=bool(expect_reasoning))
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        stream=True
+                        stream=True,
+                        **reasoning_opts
                     )
 
                     grouped: Dict[str, Dict[str, str]] = {item['id']: {} for item in valid_items}
@@ -8242,14 +9887,35 @@ def translate_lyrics():
                             grouped.setdefault(current_id, {})[display_index] = translated_text
                     yield from emit_updates(True)
 
+                    audit_payload.update({
+                        'success': True,
+                        'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                    })
                 except Exception as e:
                     app.logger.error(f"批量翻译出错 [ID: {request_id}]: {str(e)}", exc_info=True)
                     yield f"content:{json.dumps({'status':'error','message':str(e)})}\n"
+                    audit_payload.update({
+                        'success': False,
+                        'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                        'error': str(e),
+                    })
+                finally:
+                    append_ai_usage_log(audit_payload)
 
             return StreamingResponse(generate_batch(), media_type='text/event-stream')
 
         if not content:
             return jsonify({'status': 'error', 'message': '未提供歌词内容'})
+
+        audit_base = _build_ai_usage_audit_base()
+        audit_base.update({
+            'mode': 'single',
+            'item_count': 1,
+            **_summarize_content(content),
+            'jsonFile': str(request_data.get('jsonFile') or ''),
+            'lyricsPath': str(request_data.get('lyricsPath') or ''),
+            'translationPath': str(request_data.get('translationPath') or ''),
+        })
 
         timestamps = extract_timestamps_from_content(content)
         lyrics_entries = extract_lyrics_entries_from_content(content)
@@ -8368,6 +10034,7 @@ def translate_lyrics():
 
         # 2. 调用AI服务进行翻译
         def generate():
+            audit_payload = dict(audit_base)
             try:
                 # 构建提示词
                 numbered_lyrics = '\n'.join(
@@ -8480,10 +10147,12 @@ def translate_lyrics():
                 api_start_time = time.time()
                 try:
                     client = build_openai_client(api_key=api_key, base_url=base_url)
+                    reasoning_opts = build_reasoning_request_options(provider=provider, base_url=base_url, model=model, expect_reasoning=bool(expect_reasoning))
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        stream=True
+                        stream=True,
+                        **reasoning_opts
                     )
                     api_call_success = True
                 except Exception as api_error:
@@ -8580,12 +10249,26 @@ def translate_lyrics():
                 error_duration = error_time - api_start_time
                 app.logger.error(f"AI翻译过程中出错 [ID: {request_id}]: {str(e)}, 总耗时: {error_duration:.2f}秒", exc_info=True)
                 yield f"content:翻译过程中出错: {str(e)}\n"
+                audit_payload.update({
+                    'success': False,
+                    'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                    'error': str(e),
+                })
             else:
                 # 记录翻译成功完成
                 total_duration = time.time() - api_start_time
                 app.logger.info(f"翻译成功完成 [ID: {request_id}], 总耗时: {total_duration:.2f}秒")
                 app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
                 app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}, compat_mode: {compat_mode}")
+                audit_payload.update({
+                    'success': True,
+                    'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                    'token_total': total_tokens,
+                    'reasoning_length': len(current_reasoning),
+                    'translation_length': len(full_translation),
+                })
+            finally:
+                append_ai_usage_log(audit_payload)
 
         return StreamingResponse(generate(), media_type='text/event-stream')
 
@@ -9764,8 +11447,13 @@ def is_local_request():
     security_config = get_security_config()
     if not security_config.get('security_enabled', True):
         return True
-        
+    
     return is_local_remote(remote)
+
+
+def is_loopback_request() -> bool:
+    """只判断请求是否来自回环地址。"""
+    return is_local_remote()
 
 PORT_STATUS_FILE = BASE_PATH / 'port_status.json'
 SECURITY_CONFIG_FILE = BASE_PATH / 'security_config.json'
@@ -9774,24 +11462,33 @@ TRUSTED_DEVICES_FILE = BASE_PATH / 'trusted_devices.json'
 # 安全配置默认值
 DEFAULT_SECURITY_CONFIG = {
     'security_enabled': True,
-    'password_hash': '',
-    'trusted_expire_days': 30
+    'system_password_hash': '',
+    'trusted_expire_days': 30,
+    'device_credentials': []
 }
 
 # 读取安全配置
 def get_security_config():
+    migrated = False
     if SECURITY_CONFIG_FILE.exists():
         try:
             with open(SECURITY_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
         except Exception:
-            pass
-    return DEFAULT_SECURITY_CONFIG
+            config = {}
+    else:
+        config = {}
+
+    normalized_config, migrated = normalize_security_config(config)
+    if migrated:
+        save_security_config(normalized_config)
+    return normalized_config
 
 # 保存安全配置
 def save_security_config(config):
+    normalized_config, _ = normalize_security_config(config)
     with open(SECURITY_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(config, f)
+        json.dump(normalized_config, f, ensure_ascii=False, indent=2)
 
 # 受信任设备数据结构和操作函数
 
@@ -9816,7 +11513,29 @@ def load_trusted_devices():
     if TRUSTED_DEVICES_FILE.exists():
         try:
             with open(TRUSTED_DEVICES_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                devices = json.load(f)
+                if not isinstance(devices, dict):
+                    return {}
+                normalized_devices = {}
+                for device_id, device_info in devices.items():
+                    info = device_info if isinstance(device_info, dict) else {}
+                    auth_type = str(info.get('auth_type') or '').strip().lower()
+                    system_admin = parse_bool(info.get('system_admin'), False) or auth_type == 'system' or str(info.get('credential_id') or '').strip() == 'legacy-admin'
+                    normalized_devices[str(device_id)] = {
+                        'created_at': str(info.get('created_at') or now_iso()),
+                        'last_seen': str(info.get('last_seen') or now_iso()),
+                        'ua_hash': str(info.get('ua_hash') or ''),
+                        'ip': str(info.get('ip') or ''),
+                        'credential_id': str(info.get('credential_id') or ''),
+                        'remark': str(info.get('remark') or ''),
+                        'expires_at': str(info.get('expires_at') or ''),
+                        'max_uses': coerce_int(info.get('max_uses')),
+                        'used_count': coerce_int(info.get('used_count'), 0) or 0,
+                        'auth_type': auth_type or ('system' if system_admin else ('credential' if str(info.get('credential_id') or '').strip() else '')),
+                        'system_admin': system_admin,
+                        'permissions': normalize_device_permissions(info.get('permissions')),
+                    }
+                return normalized_devices
         except Exception:
             pass
     return {}
@@ -9850,13 +11569,25 @@ def is_trusted_device(device_id):
     
     if not device_info:
         return False
-        
-    # 检查过期时间
+
     security_config = get_security_config()
+    resolved = resolve_trusted_device_auth_state(security_config, device_info)
+    if not resolved:
+        del trusted_devices[device_id]
+        save_trusted_devices(trusted_devices)
+        return False
+
+    permissions = resolved.get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS))
+    is_system_admin = bool(resolved.get('is_system_admin'))
+
+    # 检查过期时间
     expire_days = security_config.get('trusted_expire_days', 30)
     expire_seconds = expire_days * 24 * 3600
     
-    last_seen = datetime.fromisoformat(device_info['last_seen'])
+    try:
+        last_seen = datetime.fromisoformat(str(device_info.get('last_seen') or ''))
+    except Exception:
+        last_seen = datetime.now()
     if (datetime.now() - last_seen).total_seconds() > expire_seconds:
         # 自动删除过期设备
         del trusted_devices[device_id]
@@ -9864,11 +11595,15 @@ def is_trusted_device(device_id):
         return False
         
     # 更新最后访问时间
-    device_info['last_seen'] = datetime.now().isoformat()
+    device_info['last_seen'] = now_iso()
+    device_info['auth_type'] = 'system' if is_system_admin else 'credential'
+    device_info['system_admin'] = is_system_admin
+    device_info['credential_id'] = '' if is_system_admin else str(device_info.get('credential_id') or '')
+    device_info['permissions'] = permissions
     trusted_devices[device_id] = device_info
     save_trusted_devices(trusted_devices)
     
-    return True
+    return bool(is_system_admin or device_info.get('permissions', {}).get('write_access', False))
 
 def is_local_remote(remote: Optional[str] = None) -> bool:
     """检查请求是否来自本地回环地址"""
@@ -9984,6 +11719,33 @@ def require_unlocked_device(action: str):
     )
     return jsonify({'status': 'error', 'message': message}), 403
 
+
+def find_matching_device_credential(password: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], str]:
+    security_config = get_security_config()
+    system_password_hash = get_system_password_hash(security_config)
+    if system_password_hash and verify_password(password, system_password_hash):
+        return security_config, None, 'system'
+    for credential in security_config.get('device_credentials', []):
+        if not is_credential_usable(credential):
+            continue
+        if verify_password(password, credential.get('password_hash', '')):
+            return security_config, credential, 'credential'
+    return security_config, None, ''
+
+
+def update_security_credential_usage(credential_id: str) -> None:
+    security_config = get_security_config()
+    updated = False
+    for credential in security_config.get('device_credentials', []):
+        if credential.get('credential_id') == credential_id:
+            credential['used_count'] = coerce_int(credential.get('used_count'), 0) or 0
+            credential['used_count'] += 1
+            credential['updated_at'] = now_iso()
+            updated = True
+            break
+    if updated:
+        save_security_config(security_config)
+
 # 认证相关API端点
 @app.route('/auth/login', methods=['POST'])
 def auth_login():
@@ -9999,41 +11761,68 @@ def auth_login():
     password = data['password']
     
     # 验证密码
-    security_config = get_security_config()
-    password_hash = security_config.get('password_hash', '')
-    
-    if not password_hash:
-        return jsonify({'status': 'error', 'message': '系统未设置密码，请联系管理员'}), 401
-    
-    if not verify_password(password, password_hash):
-        # 记录失败的认证尝试
+    security_config, matched_credential, auth_type = find_matching_device_credential(password)
+    has_any_credential = bool(get_system_password_hash(security_config)) or any(is_credential_usable(item) for item in security_config.get('device_credentials', []))
+    if not matched_credential and auth_type != 'system':
+        if not has_any_credential:
+            return jsonify({'status': 'error', 'message': '系统未设置密码，请联系管理员'}), 401
         app.logger.warning(f"认证失败 - 设备ID: {device_id[:8]}..., IP: {request.remote_addr}, UA哈希: {hashlib.md5(request.headers.get('User-Agent', '').encode()).hexdigest()[:8]}")
         return jsonify({'status': 'error', 'message': '密码错误'}), 401
-    
+
     # 添加设备到受信任列表
     trusted_devices = load_trusted_devices()
     now = datetime.now().isoformat()
+    is_system_admin = auth_type == 'system'
+    permissions = system_admin_permissions() if is_system_admin else credential_permissions_snapshot(matched_credential)
+    next_used_count = (coerce_int((matched_credential or {}).get('used_count'), 0) or 0) + 1
     
     if device_id not in trusted_devices:
         trusted_devices[device_id] = {
             'created_at': now,
             'last_seen': now,
             'ua_hash': hashlib.md5(request.headers.get('User-Agent', '').encode()).hexdigest(),
-            'ip': request.remote_addr
+            'ip': request.remote_addr,
+            'credential_id': '' if is_system_admin else matched_credential.get('credential_id', ''),
+            'remark': '系统密码' if is_system_admin else matched_credential.get('remark', ''),
+            'expires_at': '' if is_system_admin else matched_credential.get('expires_at', ''),
+            'max_uses': None if is_system_admin else matched_credential.get('max_uses'),
+            'used_count': next_used_count,
+            'permissions': permissions,
+            'auth_type': 'system' if is_system_admin else 'credential',
+            'system_admin': is_system_admin,
         }
     else:
         # 更新最后访问时间
         trusted_devices[device_id]['last_seen'] = now
+        trusted_devices[device_id]['credential_id'] = '' if is_system_admin else matched_credential.get('credential_id', '')
+        trusted_devices[device_id]['remark'] = '系统密码' if is_system_admin else matched_credential.get('remark', '')
+        trusted_devices[device_id]['expires_at'] = '' if is_system_admin else matched_credential.get('expires_at', '')
+        trusted_devices[device_id]['max_uses'] = None if is_system_admin else matched_credential.get('max_uses')
+        trusted_devices[device_id]['used_count'] = next_used_count
+        trusted_devices[device_id]['permissions'] = permissions
+        trusted_devices[device_id]['auth_type'] = 'system' if is_system_admin else 'credential'
+        trusted_devices[device_id]['system_admin'] = is_system_admin
     
     save_trusted_devices(trusted_devices)
+    if matched_credential:
+        update_security_credential_usage(matched_credential['credential_id'])
     
     # 记录成功的认证
-    app.logger.info(f"认证成功 - 设备ID: {device_id[:8]}..., IP: {request.remote_addr}")
+    app.logger.info(f"认证成功 - 设备ID: {device_id[:8]}..., IP: {request.remote_addr}, 类型: {'system' if is_system_admin else 'credential'}")
     
     response = jsonify({
         'status': 'success',
-        'trusted': True,
-        'device_id': device_id[:8] + '...'  # 只返回部分ID用于显示
+        'trusted': bool(is_system_admin or permissions.get('write_access', False)),
+        'authenticated': True,
+        'device_id': device_id[:8] + '...',  # 只返回部分ID用于显示
+        'credential_id': '' if is_system_admin else matched_credential.get('credential_id', ''),
+        'remark': '系统密码' if is_system_admin else matched_credential.get('remark', ''),
+        'permissions': permissions,
+        'expires_at': '' if is_system_admin else matched_credential.get('expires_at', ''),
+        'max_uses': None if is_system_admin else matched_credential.get('max_uses'),
+        'used_count': next_used_count,
+        'auth_type': 'system' if is_system_admin else 'credential',
+        'is_system_admin': is_system_admin,
     })
     
     # 如果设置了新Cookie，需要合并响应
@@ -10066,23 +11855,36 @@ def auth_logout():
 def auth_status():
     """获取设备信任状态"""
     security_config = get_security_config()
-    device_id = request.cookies.get('FEW_DEVICE_ID')
     
-    trusted = False
-    if device_id and is_trusted_device(device_id):
-        trusted = True
+    context = get_current_device_auth_context()
+    system_password_set = bool(get_system_password_hash(security_config))
+    shared_credential_set = any(is_credential_usable(item) for item in security_config.get('device_credentials', []))
     
     return jsonify({
         'status': 'success',
-        'trusted': trusted,
+        'trusted': bool(context.get('trusted')),
+        'authenticated': bool(context.get('authenticated')),
         'security_enabled': security_config.get('security_enabled', True),
-        'has_password': bool(security_config.get('password_hash', ''))
+        'is_local': bool(context.get('is_local')),
+        'auth_type': context.get('auth_type', ''),
+        'is_system_admin': bool(context.get('is_system_admin')),
+        'has_system_password': system_password_set,
+        'has_shared_credentials': shared_credential_set,
+        'has_password': bool(system_password_set or shared_credential_set),
+        'credential_id': context.get('credential_id') or (context.get('credential') or {}).get('credential_id', ''),
+        'remark': context.get('remark') or (context.get('credential') or {}).get('remark', ''),
+        'permissions': context.get('permissions', dict(DEFAULT_DEVICE_PERMISSIONS)),
+        'expires_at': context.get('expires_at') or (context.get('credential') or {}).get('expires_at', ''),
+        'remaining_uses': (
+            max(0, (coerce_int(context.get('max_uses')) or 0) - (coerce_int(context.get('used_count'), 0) or 0))
+            if coerce_int(context.get('max_uses')) is not None else None
+        )
     })
 
 @app.route('/auth/set_password', methods=['POST'])
 def auth_set_password():
-    """设置密码（仅本机可操作）"""
-    if not is_local_request():
+    """设置系统密码（本机或系统管理员可操作）"""
+    if not can_manage_system():
         return abort(403)
     
     data = request.json
@@ -10090,10 +11892,26 @@ def auth_set_password():
         return jsonify({'status': 'error', 'message': '请输入密码'}), 400
     
     password = data['password']
-    
-    # 更新安全配置
+    permissions = system_admin_permissions()
+
     security_config = get_security_config()
-    security_config['password_hash'] = hash_password(password)
+    current_system_password_hash = get_system_password_hash(security_config)
+    current_password = str(data.get('current_password') or '').strip()
+    current_context = get_current_device_auth_context()
+    if not (is_loopback_request() or current_context.get('is_system_admin')) and current_system_password_hash:
+        if not current_password:
+            return jsonify({'status': 'error', 'message': '请输入当前系统密码'}), 400
+        if not verify_password(current_password, current_system_password_hash):
+            return jsonify({'status': 'error', 'message': '当前系统密码错误'}), 400
+
+    password_conflict = find_password_conflict(security_config, password, skip_system_password=True)
+    if password_conflict == 'system':
+        return jsonify({'status': 'error', 'message': '该密码已被系统密码占用，请使用新的唯一密码'}), 400
+    if password_conflict:
+        return jsonify({'status': 'error', 'message': '该密码已被共享凭据占用，请使用新的唯一密码'}), 400
+    
+    security_config['system_password_hash'] = hash_password(password)
+    security_config['password_hash'] = ''
     save_security_config(security_config)
     
     # 清除所有受信任设备（安全起见，修改密码后所有设备需要重新认证）
@@ -10101,12 +11919,269 @@ def auth_set_password():
     
     app.logger.info(f"密码已更新 - 操作IP: {request.remote_addr}")
     
-    return jsonify({'status': 'success', 'message': '密码设置成功'})
+    return jsonify({'status': 'success', 'message': '系统密码保存成功', 'credential_id': 'system', 'permissions': permissions})
+
+
+def serialize_security_credential(credential: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        'credential_id': credential.get('credential_id', ''),
+        'remark': credential.get('remark', ''),
+        'expires_at': credential.get('expires_at', ''),
+        'max_uses': credential.get('max_uses'),
+        'used_count': credential.get('used_count', 0),
+        'revoked': credential.get('revoked', False),
+        'usable': is_credential_usable(credential),
+        'status': get_credential_status(credential),
+        'permissions': normalize_device_permissions(credential.get('permissions')),
+        'created_at': credential.get('created_at', ''),
+        'updated_at': credential.get('updated_at', ''),
+        'has_password': bool(credential.get('password_hash')),
+    }
+
+
+@app.route('/auth/credentials', methods=['GET', 'POST'])
+def auth_credentials_collection():
+    if not can_manage_system():
+        return abort(403)
+
+    security_config = get_security_config()
+    if request.method == 'GET':
+        return jsonify({
+            'status': 'success',
+            'credentials': [serialize_security_credential(credential) for credential in security_config.get('device_credentials', [])],
+            'total': len(security_config.get('device_credentials', [])),
+        })
+
+    data = request.get_json(silent=True) or {}
+    password = str(data.get('password') or '').strip()
+    if not password:
+        return jsonify({'status': 'error', 'message': '请输入密码'}), 400
+
+    credential_id = str(data.get('credential_id') or f'cred_{uuid.uuid4().hex[:12]}').strip()
+    permissions = normalize_device_permissions(data.get('permissions'))
+    if not any(permissions.values()):
+        permissions = default_device_permissions(write_access=False)
+    password_conflict = find_password_conflict(security_config, password, exclude_credential_id=credential_id)
+    if password_conflict == 'system':
+        return jsonify({'status': 'error', 'message': '该密码已被系统密码占用，请使用新的唯一密码'}), 400
+    if password_conflict:
+        return jsonify({'status': 'error', 'message': '该密码已被共享凭据占用，请使用新的唯一密码'}), 400
+    credential = normalize_security_credential({
+        'credential_id': credential_id,
+        'password_hash': hash_password(password),
+        'remark': data.get('remark') or '',
+        'expires_at': data.get('expires_at') or '',
+        'max_uses': data.get('max_uses'),
+        'used_count': 0,
+        'revoked': False,
+        'permissions': permissions,
+    }, credential_id)
+
+    existing = [item for item in security_config.get('device_credentials', []) if item.get('credential_id') != credential_id]
+    existing.append(credential)
+    security_config['device_credentials'] = existing
+    security_config['password_hash'] = ''
+    save_security_config(security_config)
+    return jsonify({'status': 'success', 'credential': serialize_security_credential(credential)})
+
+
+@app.route('/auth/credentials/<credential_id>', methods=['PUT', 'DELETE'])
+def auth_credential_item(credential_id):
+    if not can_manage_system():
+        return abort(403)
+
+    security_config = get_security_config()
+    credentials = security_config.get('device_credentials', [])
+    target_index = next((idx for idx, item in enumerate(credentials) if item.get('credential_id') == credential_id), -1)
+    if target_index < 0:
+        return jsonify({'status': 'error', 'message': '凭据不存在'}), 404
+
+    if request.method == 'DELETE':
+        credentials[target_index]['revoked'] = True
+        credentials[target_index]['updated_at'] = now_iso()
+        save_security_config(security_config)
+        return jsonify({'status': 'success', 'credential': serialize_security_credential(credentials[target_index])})
+
+    data = request.get_json(silent=True) or {}
+    target = credentials[target_index]
+    if parse_bool(target.get('revoked'), False):
+        return jsonify({'status': 'error', 'message': '已吊销凭据不能编辑，请新建新的共享凭据'}), 400
+    if 'remark' in data:
+        target['remark'] = str(data.get('remark') or '').strip()
+    if 'expires_at' in data:
+        target['expires_at'] = str(data.get('expires_at') or '').strip()
+    if 'max_uses' in data:
+        target['max_uses'] = coerce_int(data.get('max_uses'))
+    if 'revoked' in data:
+        target['revoked'] = parse_bool(data.get('revoked'), target.get('revoked', False))
+    if 'permissions' in data:
+        target['permissions'] = normalize_device_permissions(data.get('permissions'))
+    if data.get('password'):
+        password = str(data.get('password'))
+        password_conflict = find_password_conflict(security_config, password, exclude_credential_id=credential_id)
+        if password_conflict == 'system':
+            return jsonify({'status': 'error', 'message': '该密码已被系统密码占用，请使用新的唯一密码'}), 400
+        if password_conflict:
+            return jsonify({'status': 'error', 'message': '该密码已被共享凭据占用，请使用新的唯一密码'}), 400
+        target['password_hash'] = hash_password(password)
+    target['updated_at'] = now_iso()
+    credentials[target_index] = normalize_security_credential(target, credential_id)
+    security_config['device_credentials'] = credentials
+    security_config['password_hash'] = ''
+    save_security_config(security_config)
+    return jsonify({'status': 'success', 'credential': serialize_security_credential(credentials[target_index])})
+
+
+def iter_ai_usage_events(days: int = 7) -> List[Dict[str, Any]]:
+    safe_days = max(1, min(int(days or 7), 30))
+    cutoff = datetime.now() - timedelta(days=safe_days - 1)
+    events: List[Dict[str, Any]] = []
+    try:
+        for path in sorted(AI_USAGE_LOG_DIR.glob('ai-usage-*.jsonl'), reverse=True):
+            try:
+                date_part = path.stem.replace('ai-usage-', '').strip()
+                file_dt = datetime.strptime(date_part, '%Y-%m-%d')
+                if file_dt.date() < cutoff.date():
+                    continue
+            except Exception:
+                pass
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+                        if isinstance(obj, dict):
+                            events.append(obj)
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return events
+
+
+@app.route('/admin/ai-usage/summary', methods=['GET'])
+def admin_ai_usage_summary():
+    if not can_manage_system():
+        return abort(403)
+    days = coerce_int(request.args.get('days'), 7) or 7
+    events = iter_ai_usage_events(days=days)
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for ev in events:
+        if str(ev.get('event') or '') != 'ai_translate_lyrics':
+            continue
+        credential_id = str(ev.get('credential_id') or 'unknown')
+        bucket = grouped.setdefault(credential_id, {
+            'credential_id': credential_id,
+            'total': 0,
+            'success': 0,
+            'failure': 0,
+            'last_ts': 0,
+            'models': {},
+        })
+        bucket['total'] += 1
+        if ev.get('success') is True:
+            bucket['success'] += 1
+        elif ev.get('success') is False:
+            bucket['failure'] += 1
+        ts = coerce_int(ev.get('ts'), 0) or 0
+        if ts > bucket['last_ts']:
+            bucket['last_ts'] = ts
+        model = str(ev.get('model') or '')
+        if model:
+            bucket['models'][model] = bucket['models'].get(model, 0) + 1
+    summary = sorted(grouped.values(), key=lambda x: (x.get('total', 0), x.get('last_ts', 0)), reverse=True)
+    return jsonify({'status': 'success', 'days': days, 'summary': summary, 'total_events': len(events)})
+
+
+@app.route('/admin/ai-usage/recent', methods=['GET'])
+def admin_ai_usage_recent():
+    if not can_manage_system():
+        return abort(403)
+    days = coerce_int(request.args.get('days'), 7) or 7
+    limit = max(1, min(coerce_int(request.args.get('limit'), 200) or 200, 1000))
+    credential_id = str(request.args.get('credential_id') or '').strip()
+    success_raw = request.args.get('success')
+    q = str(request.args.get('q') or '').strip().lower()
+
+    want_success: Optional[bool] = None
+    if success_raw is not None and str(success_raw).strip() != '':
+        want_success = parse_bool(success_raw, False)
+
+    events = iter_ai_usage_events(days=days)
+    filtered: List[Dict[str, Any]] = []
+    for ev in events:
+        if str(ev.get('event') or '') != 'ai_translate_lyrics':
+            continue
+        if credential_id and str(ev.get('credential_id') or '') != credential_id:
+            continue
+        if want_success is not None and ev.get('success') is not want_success:
+            continue
+        if q:
+            hay = ' '.join([
+                str(ev.get('request_id') or ''),
+                str(ev.get('model') or ''),
+                str(ev.get('provider') or ''),
+                str(ev.get('preset_id') or ''),
+                str(ev.get('jsonFile') or ''),
+                str(ev.get('lyricsPath') or ''),
+                str(ev.get('content_preview') or ''),
+                str(ev.get('json_files_preview') or ''),
+                str(ev.get('items_preview') or ''),
+                json.dumps(ev.get('items') or [], ensure_ascii=False) if isinstance(ev.get('items'), list) else '',
+            ]).lower()
+            if q not in hay:
+                continue
+        filtered.append(ev)
+
+    filtered.sort(key=lambda x: coerce_int(x.get('ts'), 0) or 0, reverse=True)
+    return jsonify({'status': 'success', 'days': days, 'events': filtered[:limit], 'total': len(filtered)})
+
+
+@app.route('/admin/ai-usage/export', methods=['GET'])
+def admin_ai_usage_export():
+    if not can_manage_system():
+        return abort(403)
+    days = coerce_int(request.args.get('days'), 7) or 7
+    export_format = str(request.args.get('format') or 'jsonl').strip().lower()
+    events = iter_ai_usage_events(days=days)
+    events.sort(key=lambda x: coerce_int(x.get('ts'), 0) or 0)
+
+    if export_format == 'csv':
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            'ts', 'request_id', 'credential_id', 'auth_type', 'preset_id',
+            'provider', 'base_url', 'model', 'thinking_enabled', 'thinking_model',
+            'expect_reasoning', 'mode', 'item_count', 'success', 'duration_ms',
+            'content_length', 'line_count', 'sha256', 'content_preview', 'error'
+        ])
+        for ev in events:
+            writer.writerow([
+                ev.get('ts'), ev.get('request_id'), ev.get('credential_id'), ev.get('auth_type'), ev.get('preset_id'),
+                ev.get('provider'), ev.get('base_url'), ev.get('model'), ev.get('thinking_enabled'), ev.get('thinking_model'),
+                ev.get('expect_reasoning'), ev.get('mode'), ev.get('item_count'), ev.get('success'), ev.get('duration_ms'),
+                ev.get('content_length'), ev.get('line_count'), ev.get('sha256'), ev.get('content_preview'), ev.get('error')
+            ])
+        resp = make_response(output.getvalue())
+        resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        resp.headers['Content-Disposition'] = f'attachment; filename="ai-usage-{days}d.csv"'
+        return resp
+
+    text = '\n'.join(json.dumps(ev, ensure_ascii=False) for ev in events) + ('\n' if events else '')
+    resp = make_response(text)
+    resp.headers['Content-Type'] = 'application/x-ndjson; charset=utf-8'
+    resp.headers['Content-Disposition'] = f'attachment; filename="ai-usage-{days}d.jsonl"'
+    return resp
 
 @app.route('/auth/trusted', methods=['GET'])
 def auth_list_trusted():
-    """查看受信任设备列表（仅本机可操作）"""
-    if not is_local_request():
+    """查看受信任设备列表（本机或系统管理员可操作）"""
+    if not can_manage_system():
         return abort(403)
     
     trusted_devices = load_trusted_devices()
@@ -10114,12 +12189,24 @@ def auth_list_trusted():
     # 格式化设备信息，隐藏完整ID
     formatted_devices = []
     for device_id, info in trusted_devices.items():
+        credential = get_device_credential_by_id(get_security_config(), str(info.get('credential_id') or ''))
+        auth_type = str(info.get('auth_type') or '').strip().lower()
+        if not auth_type:
+            auth_type = 'system' if parse_bool(info.get('system_admin'), False) or str(info.get('credential_id') or '').strip() == 'legacy-admin' else ('credential' if str(info.get('credential_id') or '').strip() else '')
         formatted_devices.append({
             'device_id': device_id[:8] + '...',
             'created_at': info.get('created_at', ''),
             'last_seen': info.get('last_seen', ''),
             'ip': info.get('ip', ''),
-            'ua_hash': info.get('ua_hash', '')[:8] + '...'
+            'ua_hash': info.get('ua_hash', '')[:8] + '...',
+            'credential_id': info.get('credential_id', ''),
+            'remark': info.get('remark', '') or (credential or {}).get('remark', ''),
+            'expires_at': info.get('expires_at', '') or (credential or {}).get('expires_at', ''),
+            'used_count': info.get('used_count', 0),
+            'max_uses': info.get('max_uses'),
+            'auth_type': auth_type,
+            'system_admin': bool(parse_bool(info.get('system_admin'), False) or auth_type == 'system'),
+            'permissions': normalize_device_permissions(info.get('permissions')),
         })
     
     return jsonify({
@@ -10130,8 +12217,8 @@ def auth_list_trusted():
 
 @app.route('/auth/revoke', methods=['POST'])
 def auth_revoke_device():
-    """吊销指定设备（仅本机可操作）"""
-    if not is_local_request():
+    """吊销指定设备（本机或系统管理员可操作）"""
+    if not can_manage_system():
         return abort(403)
     
     data = request.json
@@ -10161,8 +12248,8 @@ def auth_revoke_device():
 
 @app.route('/auth/revoke_all', methods=['POST'])
 def auth_revoke_all():
-    """吊销所有设备（仅本机可操作）"""
-    if not is_local_request():
+    """吊销所有设备（本机或系统管理员可操作）"""
+    if not can_manage_system():
         return abort(403)
     
     trusted_devices = load_trusted_devices()
@@ -10203,7 +12290,7 @@ def api_get_security_status():
 
 @app.route('/toggle_security', methods=['POST'])
 def api_toggle_security():
-    if not is_local_request():
+    if not can_manage_system():
         return abort(403)
     
     try:
@@ -10226,7 +12313,7 @@ def api_toggle_security():
 
 @app.route('/switch_port', methods=['POST'])
 def api_switch_port():
-    if not is_local_request():
+    if not can_manage_system():
         return abort(403)
     locked_response = require_unlocked_device('切换随机端口')
     if locked_response:
@@ -10253,7 +12340,7 @@ def api_switch_port():
 
 @app.route('/restore_port', methods=['POST'])
 def api_restore_port():
-    if not is_local_request():
+    if not can_manage_system():
         return abort(403)
     locked_response = require_unlocked_device('恢复端口')
     if locked_response:
