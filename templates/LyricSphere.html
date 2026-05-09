@@ -831,6 +831,18 @@
             overflow-x: hidden;
         }
 
+        .lyrics-search-modal-content {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            box-sizing: border-box;
+        }
+
+        .lyrics-search-modal-content .lyrics-search-grid {
+            flex: 1;
+            min-height: 0;
+        }
+
         .lyrics-search-grid {
             display: grid;
             grid-template-columns: 1fr 1fr 1.3fr;
@@ -851,9 +863,31 @@
             min-width: 0;
         }
 
+        .lyrics-search-file-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 6px 10px;
+            font-size: 0.95em;
+        }
+
+        .lyrics-search-file-value {
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        .lyrics-search-toolbar {
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
         .lyrics-search-status {
             font-size: 0.9em;
             color: var(--field-help-text);
+        }
+
+        .lyrics-search-status-msg {
+            margin-top: auto;
         }
 
         .lyrics-search-results {
@@ -864,6 +898,71 @@
             overflow-y: auto;
             background: rgba(0, 0, 0, 0.02);
             color: var(--text-color);
+        }
+
+        .lyrics-search-placeholder {
+            padding: 16px 12px;
+            text-align: center;
+            color: var(--field-help-text);
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+
+        .lyrics-search-placeholder--error {
+            color: var(--status-color-error, #d9534f);
+        }
+
+        .lyrics-search-card {
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--modal-bg);
+            cursor: pointer;
+            transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+            text-align: left;
+        }
+
+        button.lyrics-search-card {
+            font: inherit;
+            width: 100%;
+            box-sizing: border-box;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .lyrics-search-card:last-child {
+            margin-bottom: 0;
+        }
+
+        .lyrics-search-card:hover {
+            background: rgba(77, 171, 247, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .lyrics-search-card.is-selected {
+            border-color: rgba(77, 171, 247, 0.65);
+            background: rgba(77, 171, 247, 0.14);
+            box-shadow: 0 0 0 1px rgba(77, 171, 247, 0.2);
+        }
+
+        .lyrics-search-card-title {
+            font-weight: 600;
+            margin: 0 0 4px 0;
+            font-size: 0.98em;
+        }
+
+        .lyrics-search-card-meta {
+            font-size: 0.85em;
+            color: var(--field-help-text);
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        .lyrics-search-card-source {
+            font-size: 0.8em;
+            opacity: 0.9;
+            margin-top: 6px;
         }
 
         .lyrics-search-item {
@@ -3578,11 +3677,14 @@
     </div>
 
     <div id="lyricsSearchModal" class="modal">
-        <div class="modal-content" style="width: 92%; height: 86%;">
+        <div class="modal-content lyrics-search-modal-content" style="width: 92%; height: 86%;">
             <h2 data-i18n="lyricsSearch.title">搜索歌词</h2>
             <div class="lyrics-search-grid">
-                <div class="lyrics-search-panel">
-                    <div data-i18n="lyricsSearch.currentFile">当前文件名：</div><span id="lyricsSearchFileName" data-i18n="lyricsSearch.notSelectedText">未选择</span></div>
+                <div class="lyrics-search-panel lyrics-search-panel--form">
+                    <div class="lyrics-search-file-row">
+                        <span data-i18n="lyricsSearch.currentFile">当前文件名：</span>
+                        <span id="lyricsSearchFileName" class="lyrics-search-file-value" data-i18n="lyricsSearch.notSelectedText">未选择</span>
+                    </div>
                     <div>
                         <label data-i18n="lyricsSearch.keyword">关键词：</label>
                         <input type="text" id="lyricsSearchKeyword" class="file-path-input" data-i18n-placeholder="lyricsSearch.keywordPlaceholder" placeholder="歌曲名 歌手名">
@@ -3603,26 +3705,26 @@
                         <label data-i18n="lyricsSearch.artistRegex">艺术家名正则（匹配文件名）：</label>
                         <input type="text" id="lyricsSearchArtistRegex" class="file-path-input" data-i18n-placeholder="lyricsSearch.artistRegexPlaceholder" placeholder="例如: - (.+)$">
                     </div>
-                    <div class="editor-buttons">
-                        <button data-i18n="lyricsSearch.parseFromFile">从文件名解析</button>
-                        <button data-i18n="lyricsSearch.autoMatch">自动匹配</button>
-                        <button data-i18n="lyricsSearch.searchList">搜索列表</button>
-                        <button onclick="clearLyricsSearchInputs()" data-i18n="lyrics.clear">清空</button>
+                    <div class="editor-buttons lyrics-search-toolbar">
+                        <button type="button" id="lyricsSearchBtnParse" data-i18n="lyricsSearch.parseFromFile">从文件名解析</button>
+                        <button type="button" id="lyricsSearchBtnAutoMatch" data-i18n="lyricsSearch.autoMatch">自动匹配</button>
+                        <button type="button" id="lyricsSearchBtnSearchList" data-i18n="lyricsSearch.searchList">搜索列表</button>
+                        <button type="button" id="lyricsSearchBtnClear" data-i18n="lyrics.clear">清空</button>
                     </div>
-                    <div id="lyricsSearchStatus" class="status-message status-info" style="display: block;"><span data-i18n="lyricsSearch.hintText">可根据文件名自动匹配，也可手动搜索。</span></div>
+                    <div id="lyricsSearchStatus" class="status-message status-info lyrics-search-status-msg" style="display: block;"></div>
                 </div>
-                <div class="lyrics-search-panel">
+                <div class="lyrics-search-panel lyrics-search-panel--results">
                     <div class="lyrics-search-result-header" data-i18n="lyricsSearch.results">搜索结果</div>
-                    <div id="lyricsSearchResults" class="lyrics-search-results"></div>
+                    <div id="lyricsSearchResults" class="lyrics-search-results" role="listbox" aria-label="lyrics search results"></div>
                 </div>
-                <div class="lyrics-search-panel">
+                <div class="lyrics-search-panel lyrics-search-panel--preview">
                     <div class="lyrics-search-result-header" data-i18n="lyricsSearch.lyricsContent">歌词内容（LYS，可编辑）</div>
                     <div id="lyricsSearchLyricsEditor" class="lyrics-search-editor"></div>
                     <div class="lyrics-search-result-header" data-i18n="lyricsSearch.translationContent">翻译内容（LRC，可编辑）</div>
                     <div id="lyricsSearchTranslationEditor" class="lyrics-search-editor"></div>
-                    <div class="editor-buttons">
-                        <button data-i18n="lyricsSearch.applyBtn">应用到编辑器</button>
-                        <button data-i18n="lyricsSearch.closeBtn">关闭</button>
+                    <div class="editor-buttons lyrics-search-toolbar">
+                        <button type="button" id="lyricsSearchBtnApply" data-i18n="lyricsSearch.applyBtn">应用到编辑器</button>
+                        <button type="button" id="lyricsSearchBtnClose" data-i18n="lyricsSearch.closeBtn">关闭</button>
                     </div>
                 </div>
             </div>
@@ -5106,14 +5208,14 @@
                 'lyricsSearch.parsedFromFile': '已从文件名解析歌曲信息',
                 'lyricsSearch.parseFailed': '未能从文件名解析完整信息',
                 'lyricsSearch.matching': '正在匹配歌词...',
-                'lyricsSearch.matchFailed': '匹配失败：',
+                'lyricsSearch.matchFailed': '匹配失败：{msg}',
                 'lyricsSearch.matchComplete': '匹配完成，可点击应用到编辑器',
                 'lyricsSearch.searching': '正在搜索歌词...',
                 'lyricsSearch.searchFormatError': '搜索失败：返回格式异常',
                 'lyricsSearch.searchComplete': '搜索完成，找到 {count} 个结果',
-                'lyricsSearch.searchFailed': '搜索失败：',
+                'lyricsSearch.searchFailed': '搜索失败：{msg}',
                 'lyricsSearch.fetching': '正在获取歌词...',
-                'lyricsSearch.fetchFailed': '获取失败：',
+                'lyricsSearch.fetchFailed': '获取失败：{msg}',
                 'lyricsSearch.fetchComplete': '获取完成，可点击应用到编辑器',
                 'lyricsSearch.applied': '已应用到编辑器，可点击保存',
                 'lyricsSearch.resultItem': '{index}. {title} - {artist} ({source})',
@@ -5121,6 +5223,12 @@
                 'lyricsSearch.emptyResults': '返回了 {count} 条，但渲染为空，请反馈',
                 'lyricsSearch.unknownSource': '未知来源',
                 'lyricsSearch.unknownError': '未知错误',
+                'lyricsSearch.parsePartial': '未能从文件名解析完整信息，已保留当前输入。可手动填写或仅用关键词搜索。',
+                'lyricsSearch.prefillFromSong': '已用当前歌曲的标题与艺术家填充搜索字段（可直接搜索或继续修改）。',
+                'lyricsSearch.resultsLoading': '正在搜索，请稍候…',
+                'lyricsSearch.resultsEmpty': '暂无结果，请调整关键词后重试。',
+                'lyricsSearch.resultsHint': '点击一条结果，在右侧预览歌词与翻译。',
+                'lyricsSearch.fetchingDetail': '正在拉取该条歌词详情…',
 
                 // === 路径修改补充 ===
                 'musicPath.uploadBtn': '📤 上传文件',
@@ -6243,6 +6351,12 @@
                 'lyricsSearch.emptyResults': 'Returned {count} results but rendered empty',
                 'lyricsSearch.unknownSource': 'Unknown source',
                 'lyricsSearch.unknownError': 'Unknown error',
+                'lyricsSearch.parsePartial': 'Could not parse full title and artist from the filename; your current inputs were kept. Fill manually or search by keyword only.',
+                'lyricsSearch.prefillFromSong': 'Filled search fields from the current song metadata (edit as needed).',
+                'lyricsSearch.resultsLoading': 'Searching…',
+                'lyricsSearch.resultsEmpty': 'No results. Try a different keyword.',
+                'lyricsSearch.resultsHint': 'Click a result to preview lyrics and translation on the right.',
+                'lyricsSearch.fetchingDetail': 'Fetching lyrics for this result…',
                 // === Image path supplementary ===
                 'imagePath.albumCoverTitle': 'Album Cover',
                 'imagePath.backgroundTitle': 'Background Image/Video',
@@ -8788,6 +8902,16 @@
             if (monaco && monaco.editor) {
                 monaco.editor.setTheme(monacoTheme)
             }
+            bindLyricsSearchPreviewApplyGate()
+        }
+
+        function bindLyricsSearchPreviewApplyGate() {
+            if (lyricsSearchPreviewApplyGateBound) return
+            if (!lyricsSearchMonacoEditor || !translationSearchMonacoEditor) return
+            lyricsSearchPreviewApplyGateBound = true
+            const scheduleRefresh = () => requestAnimationFrame(() => updateLyricsSearchActionButtons())
+            lyricsSearchMonacoEditor.onDidChangeModelContent(scheduleRefresh)
+            translationSearchMonacoEditor.onDidChangeModelContent(scheduleRefresh)
         }
 
         function setSearchLyricsContent(value) {
@@ -8812,6 +8936,10 @@
         function getSearchTranslationContent() {
             if (translationSearchMonacoEditor) return translationSearchMonacoEditor.getValue()
             return pendingSearchTranslationText || ''
+        }
+
+        function hasLyricsSearchApplicablePreview() {
+            return Boolean(getSearchLyricsContent().trim() || getSearchTranslationContent().trim())
         }
 
         function getLyricsContent() {
@@ -10469,6 +10597,7 @@
             applyBatchWorkbenchSettingsToUI()
             syncBatchWbSettingsSummary()
             syncBatchWbHeaderSummary()
+            initLyricsSearchModalEvents()
         })
 
         function viewFile(type, path) {
@@ -10611,24 +10740,143 @@
         }
 
         let latestLyricsSearchResult = null
+        let lyricsSearchModalEventsBound = false
+        let lyricsSearchPreviewApplyGateBound = false
+        const lyricsSearchFlow = {
+            isSearching: false,
+            isMatching: false,
+            isFetchingLyrics: false,
+            results: [],
+            selectedIndex: -1
+        }
         const LYRICS_SEARCH_REGEX_KEYS = {
             title: 'lyricsSearchTitleRegex',
             artist: 'lyricsSearchArtistRegex'
         }
 
-        function openLyricsSearchModal() {
+        function initLyricsSearchModalEvents() {
+            if (lyricsSearchModalEventsBound) return
+            lyricsSearchModalEventsBound = true
+            const parseBtn = document.getElementById('lyricsSearchBtnParse')
+            if (parseBtn) {
+                parseBtn.addEventListener('click', () => applySearchNameFromFile(false))
+            }
+            const autoBtn = document.getElementById('lyricsSearchBtnAutoMatch')
+            if (autoBtn) {
+                autoBtn.addEventListener('click', () => {
+                    const title = document.getElementById('lyricsSearchTitle').value.trim()
+                    const artist = document.getElementById('lyricsSearchArtist').value.trim()
+                    if (title && artist) {
+                        performLyricsMatch(title, artist)
+                        return
+                    }
+                    applySearchNameFromFile(true)
+                })
+            }
+            const searchBtn = document.getElementById('lyricsSearchBtnSearchList')
+            if (searchBtn) {
+                searchBtn.addEventListener('click', () => performLyricsSearch())
+            }
+            const clearBtn = document.getElementById('lyricsSearchBtnClear')
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => clearLyricsSearchInputs())
+            }
+            const applyBtn = document.getElementById('lyricsSearchBtnApply')
+            if (applyBtn) {
+                applyBtn.addEventListener('click', () => applyLyricsSearchResult())
+            }
+            const closeBtn = document.getElementById('lyricsSearchBtnClose')
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => closeLyricsSearchModal())
+            }
+            const kwInput = document.getElementById('lyricsSearchKeyword')
+            if (kwInput) {
+                kwInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault()
+                        performLyricsSearch()
+                    }
+                })
+            }
+        }
+
+        function updateLyricsSearchActionButtons() {
+            const busy = lyricsSearchFlow.isSearching || lyricsSearchFlow.isMatching || lyricsSearchFlow.isFetchingLyrics
+            const parseBtn = document.getElementById('lyricsSearchBtnParse')
+            const autoBtn = document.getElementById('lyricsSearchBtnAutoMatch')
+            const searchBtn = document.getElementById('lyricsSearchBtnSearchList')
+            const clearBtn = document.getElementById('lyricsSearchBtnClear')
+            const applyBtn = document.getElementById('lyricsSearchBtnApply')
+            ;[parseBtn, autoBtn, searchBtn, clearBtn].forEach(btn => {
+                if (btn) btn.disabled = busy
+            })
+            if (applyBtn) {
+                applyBtn.disabled = busy || !hasLyricsSearchApplicablePreview()
+            }
+        }
+
+        function fillLyricsSearchResultsHint() {
+            const resultsEl = document.getElementById('lyricsSearchResults')
+            if (!resultsEl) return
+            resultsEl.innerHTML = ''
+            const div = document.createElement('div')
+            div.className = 'lyrics-search-placeholder'
+            div.textContent = t('lyricsSearch.resultsHint')
+            resultsEl.appendChild(div)
+        }
+
+        function fillLyricsSearchFieldsFromSongSummary() {
+            if (!currentJsonFile) return false
+            const summary = songSummaryCache.get(currentJsonFile)
+            if (!summary) return false
+            const title = String(summary.title || '').trim()
+            const artist = getSummaryArtist(summary)
+            const titleEl = document.getElementById('lyricsSearchTitle')
+            const artistEl = document.getElementById('lyricsSearchArtist')
+            const kwEl = document.getElementById('lyricsSearchKeyword')
+            if (titleEl) titleEl.value = title
+            if (artistEl) artistEl.value = artist
+            if (kwEl) {
+                const parts = [title, artist].filter(Boolean)
+                kwEl.value = parts.join(' ')
+            }
+            return Boolean(title || artist)
+        }
+
+        async function openLyricsSearchModal() {
             const modal = document.getElementById('lyricsSearchModal')
             if (!modal) return
-            modal.style.display = 'block'
             latestLyricsSearchResult = null
-            document.getElementById('lyricsSearchResults').innerHTML = ''
+            lyricsSearchFlow.results = []
+            lyricsSearchFlow.selectedIndex = -1
+            lyricsSearchFlow.isSearching = false
+            lyricsSearchFlow.isMatching = false
+            lyricsSearchFlow.isFetchingLyrics = false
+
+            fillLyricsSearchResultsHint()
             setLyricsSearchPreview('', '')
+
             const currentName = document.getElementById('currentFileName').textContent.trim()
-            document.getElementById('lyricsSearchFileName').textContent = currentName || t('lyricsSearch.notSelectedText')
+            const nameEl = document.getElementById('lyricsSearchFileName')
+            if (nameEl) nameEl.textContent = currentName || t('lyricsSearch.notSelectedText')
+
             loadLyricsSearchRegexCache()
-            ensureLyricsSearchEditors()
-            applySearchNameFromFile(false)
-            performLyricsSearch()
+            const filledFromSummary = fillLyricsSearchFieldsFromSongSummary()
+            await ensureLyricsSearchEditors()
+            requestAnimationFrame(() => {
+                try {
+                    if (lyricsSearchMonacoEditor) lyricsSearchMonacoEditor.layout()
+                    if (translationSearchMonacoEditor) translationSearchMonacoEditor.layout()
+                } catch (e) {}
+            })
+
+            modal.style.display = 'block'
+            if (filledFromSummary) {
+                setLyricsSearchStatus('info', t('lyricsSearch.prefillFromSong'))
+            } else {
+                setLyricsSearchStatus('info', t('lyricsSearch.hintText'))
+            }
+            updateLyricsSearchActionButtons()
         }
 
         function closeLyricsSearchModal() {
@@ -10636,6 +10884,14 @@
             if (modal) {
                 modal.style.display = 'none'
             }
+            latestLyricsSearchResult = null
+            lyricsSearchFlow.results = []
+            lyricsSearchFlow.selectedIndex = -1
+            lyricsSearchFlow.isSearching = false
+            lyricsSearchFlow.isMatching = false
+            lyricsSearchFlow.isFetchingLyrics = false
+            setLyricsSearchPreview('', '')
+            updateLyricsSearchActionButtons()
         }
 
         function lockPageScrollForModal() {
@@ -10680,24 +10936,31 @@
             window.scrollTo(0, scrollY);
         }
 
-        function setLyricsSearchStatus(text) {
+        function setLyricsSearchStatus(type, text) {
             const statusEl = document.getElementById('lyricsSearchStatus')
             if (!statusEl) return
-            const safeText = escapeHtml(text)
-            if (/^正在/.test(text)) {
+            const display = text == null ? '' : String(text)
+            const safeText = escapeHtml(display)
+            if (type === 'loading') {
                 statusEl.innerHTML = `<a href="#" class="btn-shine">${safeText}</a>`
             } else {
-                statusEl.textContent = text
+                statusEl.textContent = display
             }
             statusEl.style.display = 'block'
             statusEl.classList.remove('status-error', 'status-success', 'status-info')
-            if (/失败|错误/.test(text)) {
+            if (type === 'error') {
                 statusEl.classList.add('status-error')
-            } else if (/完成|成功|找到/.test(text)) {
+            } else if (type === 'success') {
                 statusEl.classList.add('status-success')
             } else {
                 statusEl.classList.add('status-info')
             }
+        }
+
+        function formatFetchError(error) {
+            if (error == null) return ''
+            if (typeof error === 'string') return error
+            return error.message || String(error)
         }
 
         function escapeHtml(value) {
@@ -10725,7 +10988,13 @@
             document.getElementById('lyricsSearchTitleRegex').value = ''
             document.getElementById('lyricsSearchArtistRegex').value = ''
             persistLyricsSearchRegexCache()
-            setLyricsSearchStatus(t('lyricsSearch.cleared'))
+            latestLyricsSearchResult = null
+            lyricsSearchFlow.results = []
+            lyricsSearchFlow.selectedIndex = -1
+            setLyricsSearchPreview('', '')
+            fillLyricsSearchResultsHint()
+            setLyricsSearchStatus('success', t('lyricsSearch.cleared'))
+            updateLyricsSearchActionButtons()
         }
 
         function normalizeSearchFileName(rawName) {
@@ -10736,7 +11005,7 @@
         function applySearchNameFromFile(autoMatch = false) {
             const fileName = normalizeSearchFileName(document.getElementById('currentFileName').textContent.trim())
             if (!fileName) {
-                setLyricsSearchStatus(t('lyricsSearch.noFilename'))
+                setLyricsSearchStatus('error', t('lyricsSearch.noFilename'))
                 return
             }
             let title = document.getElementById('lyricsSearchTitle').value.trim()
@@ -10765,18 +11034,23 @@
             if (!title && !artist && fileName.includes(' - ')) {
                 const parts = fileName.split(' - ')
                 title = parts[0].trim()
-                artist = parts.slice(1).join(' - ').trim()
+                let rest = parts.slice(1).join(' - ').trim()
+                rest = rest.replace(/\s*_\s*/g, ' ').replace(/\s+/g, ' ').trim()
+                artist = rest
             }
             document.getElementById('lyricsSearchTitle').value = title
             document.getElementById('lyricsSearchArtist').value = artist
+            const kwParts = [title, artist].filter(Boolean)
+            if (kwParts.length) {
+                document.getElementById('lyricsSearchKeyword').value = kwParts.join(' ')
+            }
             if (title && artist) {
-                document.getElementById('lyricsSearchKeyword').value = `${title} ${artist}`
-                setLyricsSearchStatus(t('lyricsSearch.parsedFromFile'))
+                setLyricsSearchStatus('success', t('lyricsSearch.parsedFromFile'))
                 if (autoMatch) {
                     performLyricsMatch(title, artist)
                 }
             } else {
-                setLyricsSearchStatus(t('lyricsSearch.parseFailed'))
+                setLyricsSearchStatus('info', t('lyricsSearch.parsePartial'))
             }
         }
 
@@ -10822,73 +11096,183 @@
         }
 
         function performLyricsMatch(title, artist) {
-            setLyricsSearchStatus(t('lyricsSearch.matching'))
+            lyricsSearchFlow.isMatching = true
+            updateLyricsSearchActionButtons()
+            setLyricsSearchStatus('loading', t('lyricsSearch.matching'))
             const params = new URLSearchParams({ title, artist })
             fetch(`/lddc/match_lyrics?${params.toString()}`)
-                .then(response => response.json())
+                .then(async response => {
+                    const textBody = await response.text()
+                    let data = null
+                    try {
+                        data = textBody ? JSON.parse(textBody) : null
+                    } catch (e) {
+                        throw new Error(textBody || `HTTP ${response.status}`)
+                    }
+                    if (!response.ok) {
+                        throw new Error((data && data.message) || textBody || `HTTP ${response.status}`)
+                    }
+                    return data
+                })
                 .then(data => {
                     if (data.status !== 'success') {
-                        setLyricsSearchStatus(t('lyricsSearch.matchFailed', {msg: data.message || t('lyricsSearch.unknownError')}))
+                        setLyricsSearchStatus('error', t('lyricsSearch.matchFailed', { msg: data.message || t('lyricsSearch.unknownError') }))
                         return
                     }
                     latestLyricsSearchResult = data
                     setLyricsSearchPreview(data.lyrics_lys || '', data.translation_lrc || '')
-                    setLyricsSearchStatus(t('lyricsSearch.matchComplete'))
+                    setLyricsSearchStatus('success', t('lyricsSearch.matchComplete'))
                 })
                 .catch(error => {
-                    setLyricsSearchStatus(t('lyricsSearch.matchFailed', {msg: error}))
+                    setLyricsSearchStatus('error', t('lyricsSearch.matchFailed', { msg: formatFetchError(error) }))
                 })
+                .finally(() => {
+                    lyricsSearchFlow.isMatching = false
+                    updateLyricsSearchActionButtons()
+                })
+        }
+
+        function normalizeLddcSearchPayload(data) {
+            if (data == null || typeof data !== 'object') {
+                return { errorMessage: t('lyricsSearch.searchFormatError'), results: [] }
+            }
+            if (data.status === 'error') {
+                return { errorMessage: data.message || t('lyricsSearch.unknownError'), results: [] }
+            }
+            const raw = data.results
+            if (Array.isArray(raw)) {
+                return { errorMessage: null, results: raw }
+            }
+            if (raw && typeof raw === 'object' && Array.isArray(raw.items)) {
+                return { errorMessage: null, results: raw.items }
+            }
+            if (Array.isArray(data)) {
+                return { errorMessage: null, results: data }
+            }
+            console.warn('[lyricsSearch] unexpected /lddc/search payload', data)
+            return { errorMessage: null, results: [] }
+        }
+
+        function highlightLyricsSearchResultCards() {
+            const container = document.getElementById('lyricsSearchResults')
+            if (!container) return
+            container.querySelectorAll('.lyrics-search-card').forEach((el, i) => {
+                el.classList.toggle('is-selected', i === lyricsSearchFlow.selectedIndex)
+            })
         }
 
         function renderLyricsSearchResults(results) {
             const container = document.getElementById('lyricsSearchResults')
+            if (!container) return
             container.innerHTML = ''
+            lyricsSearchFlow.results = Array.isArray(results) ? results : []
             if (!results || results.length === 0) {
-                container.textContent = t('status.noResults')
+                const empty = document.createElement('div')
+                empty.className = 'lyrics-search-placeholder'
+                empty.textContent = t('lyricsSearch.resultsEmpty')
+                container.appendChild(empty)
                 return
             }
             try {
                 results.forEach((item, index) => {
-                    const div = document.createElement('div')
-                    div.className = 'lyrics-search-item'
-                    const artistText = Array.isArray(item.artist) ? item.artist.join(', ') : (item.artist || '')
-                    div.textContent = `${index + 1}. ${item.title} - ${artistText} (${item.source || t('lyricsSearch.unknownSource')})`
-                    div.addEventListener('click', () => fetchLyricsById(item.song_info_json))
-                    container.appendChild(div)
+                    const card = document.createElement('button')
+                    card.type = 'button'
+                    card.className = 'lyrics-search-card'
+                    card.setAttribute('role', 'option')
+                    const titleText = item.title != null ? String(item.title) : ''
+                    const artistText = Array.isArray(item.artist) ? item.artist.filter(Boolean).join(', ') : (item.artist != null ? String(item.artist) : '')
+                    const sourceText = item.source != null ? String(item.source) : t('lyricsSearch.unknownSource')
+                    const titleEl = document.createElement('div')
+                    titleEl.className = 'lyrics-search-card-title'
+                    titleEl.textContent = titleText || t('lyricsSearch.unknownError')
+                    const metaEl = document.createElement('div')
+                    metaEl.className = 'lyrics-search-card-meta'
+                    metaEl.textContent = artistText
+                    const srcEl = document.createElement('div')
+                    srcEl.className = 'lyrics-search-card-source'
+                    srcEl.textContent = sourceText
+                    card.appendChild(titleEl)
+                    card.appendChild(metaEl)
+                    card.appendChild(srcEl)
+                    card.addEventListener('click', () => {
+                        if (!item.song_info_json) {
+                            alert(t('alert.invalidSongInfo'))
+                            return
+                        }
+                        lyricsSearchFlow.selectedIndex = index
+                        highlightLyricsSearchResultCards()
+                        fetchLyricsById(item.song_info_json)
+                    })
+                    container.appendChild(card)
                 })
+                highlightLyricsSearchResultCards()
             } catch (error) {
-                container.textContent = t('lyricsSearch.renderFailed') + error
+                container.innerHTML = ''
+                const err = document.createElement('div')
+                err.className = 'lyrics-search-placeholder lyrics-search-placeholder--error'
+                err.textContent = t('lyricsSearch.renderFailed') + formatFetchError(error)
+                container.appendChild(err)
             }
         }
 
         function performLyricsKeywordSearch(keyword) {
-            setLyricsSearchStatus(t('lyricsSearch.searching'))
+            lyricsSearchFlow.isSearching = true
+            lyricsSearchFlow.selectedIndex = -1
+            updateLyricsSearchActionButtons()
+            setLyricsSearchStatus('loading', t('lyricsSearch.searching'))
+            const loading = document.createElement('div')
+            loading.className = 'lyrics-search-placeholder'
+            loading.textContent = t('lyricsSearch.resultsLoading')
+            const resultsEl = document.getElementById('lyricsSearchResults')
+            if (resultsEl) {
+                resultsEl.innerHTML = ''
+                resultsEl.appendChild(loading)
+            }
             fetch(`/lddc/search?keyword=${encodeURIComponent(keyword)}`)
                 .then(async response => {
-                    if (!response.ok) {
-                        const text = await response.text()
-                        throw new Error(text || `HTTP ${response.status}`)
+                    const textBody = await response.text()
+                    let data = null
+                    try {
+                        data = textBody ? JSON.parse(textBody) : null
+                    } catch (e) {
+                        throw new Error(textBody || `HTTP ${response.status}`)
                     }
-                    return response.json()
+                    if (!response.ok) {
+                        throw new Error((data && data.message) || textBody || `HTTP ${response.status}`)
+                    }
+                    return data
                 })
                 .then(data => {
                     window.lastLddcSearch = data
-                    const results = Array.isArray(data)
-                        ? data
-                        : (data.results || (data.status === 'success' ? [] : []))
-                    if (!Array.isArray(results)) {
-                        setLyricsSearchStatus(t('lyricsSearch.searchFormatError'))
+                    const { errorMessage, results } = normalizeLddcSearchPayload(data)
+                    if (errorMessage) {
+                        if (resultsEl) {
+                            resultsEl.innerHTML = ''
+                            const errBox = document.createElement('div')
+                            errBox.className = 'lyrics-search-placeholder lyrics-search-placeholder--error'
+                            errBox.textContent = errorMessage
+                            resultsEl.appendChild(errBox)
+                        }
+                        setLyricsSearchStatus('error', errorMessage)
                         return
                     }
                     renderLyricsSearchResults(results)
-                    if (results.length === 0 && data && data.results && Array.isArray(data.results)) {
-                        const container = document.getElementById('lyricsSearchResults')
-                        container.textContent = t('lyricsSearch.emptyResults', {count: data.results.length})
-                    }
-                    setLyricsSearchStatus(t('lyricsSearch.searchComplete', {count: results.length}))
+                    setLyricsSearchStatus('success', t('lyricsSearch.searchComplete', { count: results.length }))
                 })
                 .catch(error => {
-                    setLyricsSearchStatus(t('lyricsSearch.searchFailed', {msg: error}))
+                    const msg = formatFetchError(error)
+                    if (resultsEl) {
+                        resultsEl.innerHTML = ''
+                        const errBox = document.createElement('div')
+                        errBox.className = 'lyrics-search-placeholder lyrics-search-placeholder--error'
+                        errBox.textContent = t('lyricsSearch.searchFailed', { msg })
+                        resultsEl.appendChild(errBox)
+                    }
+                    setLyricsSearchStatus('error', t('lyricsSearch.searchFailed', { msg }))
+                })
+                .finally(() => {
+                    lyricsSearchFlow.isSearching = false
+                    updateLyricsSearchActionButtons()
                 })
         }
 
@@ -10897,38 +11281,57 @@
                 alert(t('alert.invalidSongInfo'))
                 return
             }
-            setLyricsSearchStatus(t('lyricsSearch.fetching'))
+            lyricsSearchFlow.isFetchingLyrics = true
+            updateLyricsSearchActionButtons()
+            setLyricsSearchStatus('loading', t('lyricsSearch.fetchingDetail'))
             fetch('/lddc/get_lyrics_by_id', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ song_info_json: songInfoJson })
             })
-                .then(response => response.json())
+                .then(async response => {
+                    const textBody = await response.text()
+                    let data = null
+                    try {
+                        data = textBody ? JSON.parse(textBody) : null
+                    } catch (e) {
+                        throw new Error(textBody || `HTTP ${response.status}`)
+                    }
+                    if (!response.ok) {
+                        throw new Error((data && data.message) || textBody || `HTTP ${response.status}`)
+                    }
+                    return data
+                })
                 .then(data => {
                     if (data.status !== 'success') {
-                        setLyricsSearchStatus(t('lyricsSearch.fetchFailed', {msg: data.message || t('lyricsSearch.unknownError')}))
+                        setLyricsSearchStatus('error', t('lyricsSearch.fetchFailed', { msg: data.message || t('lyricsSearch.unknownError') }))
                         return
                     }
                     latestLyricsSearchResult = data
                     setLyricsSearchPreview(data.lyrics_lys || '', data.translation_lrc || '')
-                    setLyricsSearchStatus(t('lyricsSearch.fetchComplete'))
+                    setLyricsSearchStatus('success', t('lyricsSearch.fetchComplete'))
                 })
                 .catch(error => {
-                    setLyricsSearchStatus(t('lyricsSearch.fetchFailed', {msg: error}))
+                    setLyricsSearchStatus('error', t('lyricsSearch.fetchFailed', { msg: formatFetchError(error) }))
+                })
+                .finally(() => {
+                    lyricsSearchFlow.isFetchingLyrics = false
+                    updateLyricsSearchActionButtons()
                 })
         }
 
         function applyLyricsSearchResult() {
-            const lyricsText = getSearchLyricsContent()
-            const translationText = getSearchTranslationContent()
-            if (!lyricsText && !translationText) {
+            if (!hasLyricsSearchApplicablePreview()) {
                 alert(t('alert.noLyricsToApply'))
                 return
             }
+            const lyricsText = getSearchLyricsContent()
+            const translationText = getSearchTranslationContent()
             setLyricsContent(lyricsText)
             setTranslationContent(translationText)
             updateFontFamilyNotice(lyricsText)
-            setLyricsSearchStatus(t('lyricsSearch.applied'))
+            setLyricsSearchStatus('success', t('lyricsSearch.applied'))
+            updateLyricsSearchActionButtons()
         }
 
         async function copyTTMLForAMLL() {
