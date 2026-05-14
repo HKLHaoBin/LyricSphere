@@ -7058,6 +7058,14 @@ _song_search_index_revision: int = 0
 SONG_SEARCH_INDEX_VERSION = 1
 SONG_SEARCH_INDEX_FILE = BASE_PATH / '.cache' / 'song_search_index.json'
 
+# Artist basename index: updated only while holding _song_search_index_lock (same critical
+# section as song_search_index rows) to avoid deadlock and keep the two structures consistent.
+ARTIST_PLAYLIST_INDEX_VERSION = 1
+ARTIST_PLAYLIST_INDEX_FILE = BASE_PATH / '.cache' / 'artist_playlist_index.json'
+_artist_playlist_index_revision: int = 0
+_artist_playlist_index: Dict[str, Set[str]] = {}
+_artist_playlist_file_to_keys: Dict[str, Set[str]] = {}
+
 
 def _song_search_json_paths() -> List[Path]:
     return [p for p in collect_static_json_file_paths() if p.name.lower() != 'artists.json']
@@ -7175,20 +7183,28 @@ def _persist_song_search_index() -> None:
         raise
 
 
-def _apply_single_path_to_index_locked(path: Path) -> None:
+def _apply_single_path_to_index_locked(path: Path, *, skip_artist_reconcile: bool = False) -> None:
     fn = path.name
+    old_row = _song_search_index.get(fn)
+    old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
     if fn.lower() == 'artists.json':
         _song_search_index.pop(fn, None)
+        if not skip_artist_reconcile:
+            _artist_index_reconcile_file_locked(fn, old_summary, None)
         return
     try:
         mtime = float(path.stat().st_mtime)
     except OSError as exc:
         app.logger.warning('song search index: stat failed %s: %s', path, exc)
         _song_search_index.pop(fn, None)
+        if not skip_artist_reconcile:
+            _artist_index_reconcile_file_locked(fn, old_summary, None)
         return
     built = _build_song_summary_from_static_json(path)
     if not built:
         _song_search_index.pop(fn, None)
+        if not skip_artist_reconcile:
+            _artist_index_reconcile_file_locked(fn, old_summary, None)
         return
     pool = _search_pool_from_summary(built)
     _song_search_index[fn] = {
@@ -7197,13 +7213,21 @@ def _apply_single_path_to_index_locked(path: Path) -> None:
         'pool': pool,
         'pool_compact': _compact_search_pool(pool),
     }
+    new_row = _song_search_index.get(fn)
+    new_summary = new_row.get('summary') if isinstance(new_row, dict) else None
+    if not skip_artist_reconcile:
+        _artist_index_reconcile_file_locked(fn, old_summary, new_summary)
 
 
 def _rebuild_song_search_index_full_locked() -> None:
     _song_search_index.clear()
+    _artist_playlist_index.clear()
+    _artist_playlist_file_to_keys.clear()
     for path in _song_search_json_paths():
-        _apply_single_path_to_index_locked(path)
+        _apply_single_path_to_index_locked(path, skip_artist_reconcile=True)
+    _rebuild_artist_playlist_from_song_index_locked()
     _persist_song_search_index()
+    _persist_artist_playlist_index_locked()
 
 
 def rebuild_song_search_index_full() -> None:
@@ -7223,10 +7247,13 @@ def upsert_song_search_index_for_path(path: Path) -> None:
     with _song_search_index_lock:
         if not path.is_file():
             if _song_search_index.pop(path.name, None) is not None:
+                _artist_index_remove_file_locked(path.name)
                 _persist_song_search_index()
+                _persist_artist_playlist_index_locked()
             return
         _apply_single_path_to_index_locked(path)
         _persist_song_search_index()
+        _persist_artist_playlist_index_locked()
 
 
 def remove_song_search_index_entry(filename: str) -> None:
@@ -7235,7 +7262,9 @@ def remove_song_search_index_entry(filename: str) -> None:
     with _song_search_index_lock:
         if _song_search_index.pop(key, None) is None:
             return
+        _artist_index_remove_file_locked(key)
         _persist_song_search_index()
+        _persist_artist_playlist_index_locked()
 
 
 def _sync_song_search_index_with_disk_locked() -> bool:
@@ -7245,6 +7274,7 @@ def _sync_song_search_index_with_disk_locked() -> bool:
     valid = {p.name for p in paths}
     for fn in list(_song_search_index.keys()):
         if fn not in valid:
+            _artist_index_remove_file_locked(fn)
             del _song_search_index[fn]
             changed = True
     for path in paths:
@@ -7285,13 +7315,11 @@ def init_song_search_index_on_startup() -> None:
                 _song_search_index.update(entries_map)
                 if _sync_song_search_index_with_disk_locked():
                     _persist_song_search_index()
+                    _persist_artist_playlist_index_locked()
             else:
                 _rebuild_song_search_index_full_locked()
     except Exception:
         app.logger.exception('song search index: startup init failed')
-
-
-init_song_search_index_on_startup()
 
 
 def _parse_library_search_keywords(query: str) -> List[str]:
@@ -7330,7 +7358,24 @@ def _normalize_artist_name_for_match(value: Optional[Any]) -> str:
     return trimmed
 
 
-def _summary_has_normalized_artist(summary: Dict[str, Any], target_norm: str) -> bool:
+_COMPOSITE_ARTIST_SEP_RE = re.compile(
+    r'\s*[,，、;；/|]\s*|\s*&\s*|(?i)\b(?:feat\.?|ft\.?|vs\.?)\b\s*'
+)
+
+
+def _expand_composite_artist_string(value: Any) -> List[str]:
+    """Split composite display strings into individual artist tokens (trimmed, non-empty)."""
+    text = str(value or '').strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in _COMPOSITE_ARTIST_SEP_RE.split(text)]
+    return [p for p in parts if p]
+
+
+def _artist_keys_from_summary_for_index(summary: Optional[Dict[str, Any]]) -> Set[str]:
+    """Normalized artist keys for index buckets (one file may map to multiple keys)."""
+    if not summary or not isinstance(summary, dict):
+        return set()
     artists_raw = summary.get('artists')
     names: List[str]
     if isinstance(artists_raw, list):
@@ -7341,30 +7386,181 @@ def _summary_has_normalized_artist(summary: Dict[str, Any], target_norm: str) ->
         names = [str(artists_raw)]
     if not names:
         names = [UNKNOWN_ARTIST_SENTINEL]
+    expanded: List[str] = []
     for n in names:
-        if _normalize_artist_name_for_match(n) == target_norm:
-            return True
-    return False
+        expanded.extend(_expand_composite_artist_string(n))
+    if not expanded:
+        expanded = [UNKNOWN_ARTIST_SENTINEL]
+    return {_normalize_artist_name_for_match(n) for n in expanded}
 
 
-def _run_artist_filter_ordered_summaries(
-    artist_query: str, sort_type: str, sort_asc: bool
-) -> List[Dict[str, Any]]:
-    """Filter in-memory song search index rows by artist (summary only; no full JSON reads)."""
-    target = _normalize_artist_name_for_match(artist_query)
-    if not str(artist_query or '').strip() and target == UNKNOWN_ARTIST_SENTINEL:
-        return []
-    with _song_search_index_lock:
-        rows = list(_song_search_index.values())
-    summaries: List[Dict[str, Any]] = []
-    for entry in rows:
-        summ = entry.get('summary')
-        if not isinstance(summ, dict):
+def _artist_index_remove_file_locked(fn: str) -> None:
+    """Caller must hold _song_search_index_lock."""
+    keys = _artist_playlist_file_to_keys.pop(fn, None)
+    if not keys:
+        return
+    for ak in keys:
+        bucket = _artist_playlist_index.get(ak)
+        if bucket:
+            bucket.discard(fn)
+            if not bucket:
+                del _artist_playlist_index[ak]
+
+
+def _artist_index_add_file_locked(fn: str, summary: Dict[str, Any]) -> None:
+    """Caller must hold _song_search_index_lock."""
+    keys = _artist_keys_from_summary_for_index(summary)
+    if not keys:
+        return
+    _artist_playlist_file_to_keys[fn] = set(keys)
+    for ak in keys:
+        _artist_playlist_index.setdefault(ak, set()).add(fn)
+
+
+def _artist_index_reconcile_file_locked(fn: str, old_summary: Optional[Dict[str, Any]], new_summary: Optional[Dict[str, Any]]) -> None:
+    """Sync artist buckets for one JSON basename. Caller must hold _song_search_index_lock."""
+    _artist_index_remove_file_locked(fn)
+    if new_summary and isinstance(new_summary, dict):
+        _artist_index_add_file_locked(fn, new_summary)
+
+
+def _bump_artist_playlist_index_revision_locked() -> None:
+    global _artist_playlist_index_revision
+    try:
+        cur = int(_artist_playlist_index_revision)
+    except (TypeError, ValueError):
+        cur = 0
+    _artist_playlist_index_revision = cur + 1
+
+
+def _persist_artist_playlist_index_locked() -> None:
+    """Atomic persist for artist index. Caller must hold _song_search_index_lock."""
+    cache_dir = ARTIST_PLAYLIST_INDEX_FILE.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _bump_artist_playlist_index_revision_locked()
+    buckets_out: Dict[str, List[str]] = {}
+    for ak, fset in _artist_playlist_index.items():
+        buckets_out[ak] = sorted(fset)
+    file_keys_out: Dict[str, List[str]] = {
+        fn: sorted(keys) for fn, keys in _artist_playlist_file_to_keys.items()
+    }
+    payload = {
+        'version': ARTIST_PLAYLIST_INDEX_VERSION,
+        'revision': int(_artist_playlist_index_revision),
+        'songSearchRevision': int(_song_search_index_revision),
+        'updatedAt': datetime.utcnow().isoformat() + 'Z',
+        'buckets': buckets_out,
+        'fileToKeys': file_keys_out,
+    }
+    fd, tmp_path = tempfile.mkstemp(prefix='artist_playlist_index.', suffix='.tmp', dir=str(cache_dir))
+    tmp_file = Path(tmp_path)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as tmp_fp:
+            json.dump(payload, tmp_fp, ensure_ascii=False)
+        os.replace(str(tmp_file), str(ARTIST_PLAYLIST_INDEX_FILE))
+    except Exception:
+        tmp_file.unlink(missing_ok=True)
+        raise
+
+
+def _load_artist_playlist_index_from_disk() -> Optional[Tuple[Dict[str, Set[str]], Dict[str, Set[str]], int, int]]:
+    """Return (buckets, file_to_keys, file_artist_revision, paired_song_revision) or None."""
+    path = ARTIST_PLAYLIST_INDEX_FILE
+    if not path.is_file():
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as exc:
+        app.logger.warning('artist playlist index: load failed %s: %s', path, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get('version') != ARTIST_PLAYLIST_INDEX_VERSION:
+        return None
+    raw_buckets = data.get('buckets')
+    raw_ftk = data.get('fileToKeys')
+    if not isinstance(raw_buckets, dict) or not isinstance(raw_ftk, dict):
+        return None
+    try:
+        file_artist_rev = int(data.get('revision', 0))
+    except (TypeError, ValueError):
+        file_artist_rev = 0
+    try:
+        paired_song_rev = int(data.get('songSearchRevision', 0))
+    except (TypeError, ValueError):
+        paired_song_rev = 0
+    buckets: Dict[str, Set[str]] = {}
+    for ak, lst in raw_buckets.items():
+        if not isinstance(ak, str) or not isinstance(lst, list):
             continue
-        if _summary_has_normalized_artist(summ, target):
-            summaries.append(summ)
-    _sort_search_summaries_inplace(summaries, sort_type, sort_asc)
-    return summaries
+        good: Set[str] = set()
+        for fn in lst:
+            if isinstance(fn, str) and fn.lower().endswith('.json') and fn.lower() != 'artists.json':
+                good.add(fn)
+        if good:
+            buckets[ak] = good
+    file_to_keys: Dict[str, Set[str]] = {}
+    for fn, lst in raw_ftk.items():
+        if not isinstance(fn, str) or not isinstance(lst, list):
+            continue
+        keys = {k for k in lst if isinstance(k, str)}
+        if keys:
+            file_to_keys[fn] = keys
+    return buckets, file_to_keys, file_artist_rev, paired_song_rev
+
+
+def _rebuild_artist_playlist_from_song_index_locked() -> None:
+    """Rebuild in-memory artist buckets from _song_search_index. Caller holds _song_search_index_lock."""
+    _artist_playlist_index.clear()
+    _artist_playlist_file_to_keys.clear()
+    for fn, row in _song_search_index.items():
+        if not isinstance(row, dict):
+            continue
+        summ = row.get('summary')
+        if isinstance(summ, dict):
+            _artist_index_add_file_locked(fn, summ)
+
+
+def rebuild_artist_playlist_index_full() -> None:
+    with _song_search_index_lock:
+        _rebuild_artist_playlist_from_song_index_locked()
+        _persist_artist_playlist_index_locked()
+
+
+def init_artist_playlist_index_on_startup() -> None:
+    """Load .cache/artist_playlist_index.json or rebuild from song index. Call after init_song_search_index_on_startup."""
+    global _artist_playlist_index_revision
+    if not _song_search_index_should_initialize():
+        return
+    try:
+        with _song_search_index_lock:
+            loaded = _load_artist_playlist_index_from_disk()
+            song_rev = int(_song_search_index_revision)
+            if loaded is not None:
+                buckets, file_to_keys, artist_rev, paired = loaded
+                if paired == song_rev:
+                    _artist_playlist_index_revision = artist_rev
+                    _artist_playlist_index.clear()
+                    _artist_playlist_file_to_keys.clear()
+                    for ak, s in buckets.items():
+                        _artist_playlist_index[ak] = set(s)
+                    for fn, ks in file_to_keys.items():
+                        _artist_playlist_file_to_keys[fn] = set(ks)
+                    if _song_search_index:
+                        indexed_fns = set(_artist_playlist_file_to_keys.keys())
+                        if indexed_fns != set(_song_search_index.keys()):
+                            _rebuild_artist_playlist_from_song_index_locked()
+                            _persist_artist_playlist_index_locked()
+                    return
+            _rebuild_artist_playlist_from_song_index_locked()
+            _persist_artist_playlist_index_locked()
+    except Exception:
+        app.logger.exception('artist playlist index: startup init failed')
+
+
+init_song_search_index_on_startup()
+init_artist_playlist_index_on_startup()
 
 
 def _sort_search_summaries_inplace(summaries: List[Dict[str, Any]], sort_type: str, sort_asc: bool) -> None:
@@ -7652,9 +7848,28 @@ def batch_song_summaries():
     return _no_store(jsonify(body))
 
 
+@app.route('/songs/artists')
+def list_artists_index_summary():
+    """Lightweight artist list from static index: revision + [{key, count}] sorted by name."""
+    if not is_request_allowed():
+        return abort(403)
+
+    def _no_store(resp):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+
+    with _song_search_index_lock:
+        rev = int(_artist_playlist_index_revision)
+        items = [{'key': ak, 'count': len(v)} for ak, v in _artist_playlist_index.items()]
+    items.sort(key=lambda r: (r['key'].casefold(), r['key']))
+    return _no_store(jsonify({'status': 'success', 'revision': rev, 'artists': items}))
+
+
 @app.route('/songs/artist')
 def list_songs_by_artist():
-    """Paginated songs for one artist; uses persisted search index summaries (no per-request full JSON scan)."""
+    """Paginated songs for one artist; filenames from artist index, summaries from song search index."""
     if not is_request_allowed():
         return abort(403)
 
@@ -7692,11 +7907,32 @@ def list_songs_by_artist():
     page_size = coerce_int(request.args.get('pageSize'), 50) or 50
     page_size = max(1, min(page_size, 50))
 
-    ordered = _run_artist_filter_ordered_summaries(raw_artist, sort_type, sort_asc)
-    total = len(ordered)
+    target_norm = _normalize_artist_name_for_match(raw_artist)
+    summaries: List[Dict[str, Any]] = []
+    with _song_search_index_lock:
+        fns = sorted(_artist_playlist_index.get(target_norm, set()))
+        for fn in fns:
+            row = _song_search_index.get(fn)
+            summ = row.get('summary') if isinstance(row, dict) else None
+            if isinstance(summ, dict):
+                summaries.append(summ)
+                continue
+            try:
+                _, path = _resolve_existing_static_json_filename(fn)
+            except ValueError:
+                continue
+            if path.name.lower() == 'artists.json':
+                continue
+            if not path.is_file():
+                continue
+            built = _build_song_summary_from_static_json(path)
+            if built:
+                summaries.append(built)
+    _sort_search_summaries_inplace(summaries, sort_type, sort_asc)
+    total = len(summaries)
     total_pages = math.ceil(total / page_size) if total > 0 and page_size > 0 else 0
     offset = (page - 1) * page_size
-    slice_songs = ordered[offset:offset + page_size]
+    slice_songs = summaries[offset:offset + page_size]
     has_more = total_pages > 0 and page < total_pages
     next_page = page + 1 if has_more else None
     payload = {
@@ -7797,6 +8033,23 @@ def internal_rebuild_song_search_index():
         with _song_search_index_lock:
             count = len(_song_search_index)
         return jsonify({'status': 'success', 'entries': count})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
+
+
+@app.route('/internal/rebuild_artist_playlist_index', methods=['POST'])
+def internal_rebuild_artist_playlist_index():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('重建艺术家索引')
+    if locked_response:
+        return locked_response
+    try:
+        rebuild_artist_playlist_index_full()
+        with _song_search_index_lock:
+            keys = len(_artist_playlist_index)
+            rev = int(_artist_playlist_index_revision)
+        return jsonify({'status': 'success', 'artists': keys, 'revision': rev})
     except Exception as exc:
         return jsonify({'status': 'error', 'message': str(exc)}), 500
 
@@ -13785,6 +14038,8 @@ def is_request_allowed():
     if request.path == '/songs/summary/batch' and request.method == 'POST':
         return True
     if request.path == '/songs/artist':
+        return True
+    if request.path == '/songs/artists':
         return True
     # 允许远程快速导入 static.zip
     if request.path == '/import_static':
