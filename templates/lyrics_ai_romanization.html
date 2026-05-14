@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="romanWb.pageTitle">AI 罗马音工作台</title>
+    <link rel="stylesheet" href="/LyricSphere.css">
+</head>
+<body class="roman-wb-shell">
+    <header class="roman-wb-top">
+        <div class="roman-wb-top-row">
+            <h1 data-i18n="romanWb.headerTitle">AI 罗马音工作台</h1>
+            <div class="batch-wb-header-status">
+                <span id="romanWbStatusBadge" class="batch-wb-status-badge idle" data-i18n="romanWb.badgeIdle">就绪</span>
+                <div class="batch-wb-header-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <span id="romanWbProgressBar" style="width:0%"></span>
+                </div>
+            </div>
+        </div>
+        <p class="roman-wb-meta" id="romanWbSourceInfo" data-i18n="romanWb.loadingSource">正在读取来源…</p>
+        <ul class="status-progress roman-wb-stages" id="romanWbStageList">
+            <li class="status-progress__item status-progress__item--pending" data-stage="parse_source">
+                <span class="status-progress__label" data-i18n="romanWb.stage.parseSource">解析源歌词</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.parseSourceDesc">构建编号输入与对齐目标</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="send_request">
+                <span class="status-progress__label" data-i18n="romanWb.stage.sendRequest">发送模型请求</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.sendRequestDesc">建立连接并下发提示词</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="receive_stream">
+                <span class="status-progress__label" data-i18n="romanWb.stage.receiveStream">接收模型输出</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.receiveStreamDesc">流式接收原始文本</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="validating">
+                <span class="status-progress__label" data-i18n="romanWb.stage.validating">校验 token 对齐</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.validatingDesc">解析输出并核对每行 token 数</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="assembling">
+                <span class="status-progress__label" data-i18n="romanWb.stage.assembling">组装最终结果</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.assemblingDesc">生成 LYS 或 LRC 成品</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="done">
+                <span class="status-progress__label" data-i18n="romanWb.stage.done">完成</span>
+                <span class="status-progress__desc" data-i18n="romanWb.stage.doneDesc">校验通过，可复制结果</span>
+            </li>
+        </ul>
+        <div class="roman-wb-kpi" id="romanWbKpi" aria-live="polite">
+            <span><strong data-i18n="romanWb.kpiLines">行数</strong> <span id="romanWbKpiLinesVal">—</span></span>
+            <span><strong data-i18n="romanWb.kpiSourceFmt">源格式</strong> <span id="romanWbKpiSourceFmtVal">—</span></span>
+            <span><strong data-i18n="romanWb.kpiTargetFmt">目标格式</strong> <span id="romanWbKpiTargetFmtVal">—</span></span>
+            <span><strong data-i18n="romanWb.kpiChars">已接收字符</strong> <span id="romanWbKpiCharsVal">0</span></span>
+            <span><strong data-i18n="romanWb.kpiLinesDetected">已识别编号行</strong> <span id="romanWbKpiLinesDetectedVal">0</span></span>
+            <span><strong data-i18n="romanWb.kpiValidation">校验</strong> <span id="romanWbKpiValidationVal">—</span></span>
+        </div>
+    </header>
+
+    <div class="roman-wb-toolbar">
+        <label><span data-i18n="romanWb.outputFormat">输出格式</span>
+            <select id="romanWbTargetFormat" class="file-path-input">
+                <option value="lys" data-i18n="romanWb.optionLys">LYS（逐字回填时间戳）</option>
+                <option value="lrc" data-i18n="romanWb.optionLrc">LRC（行首时间 + 空格分隔）</option>
+            </select>
+        </label>
+        <span id="romanWbLysHint" style="font-size:0.85rem;color:var(--text-secondary,#9aa3b2);"></span>
+        <button type="button" class="lyrics-action-btn save-btn" id="romanWbRunBtn" data-i18n="romanWb.run">生成罗马音</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbStopBtn" disabled data-i18n="romanWb.stop">停止</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbRegenBtn" data-i18n="romanWb.regenerate">重新生成</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbClearBtn" data-i18n="romanWb.clear">清空视图</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbCopyPromptBtn" data-i18n="romanWb.copyPrompt">复制提示词</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbCopyResultBtn" disabled data-i18n="romanWb.copyResult">复制结果</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbWeaveBackgroundBtn" disabled data-i18n="romanWb.weaveBackground">插入到背景歌词</button>
+    </div>
+
+    <div class="roman-wb-grid">
+        <div class="roman-wb-col">
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardSourceMeta">会话与来源</h3>
+                <p class="roman-wb-card-sub" id="romanWbSessionSummary"></p>
+            </div>
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardNumbered">编号输入预览</h3>
+                <pre id="romanWbNumberedPre" class="batch-wb-pre roman-wb-stream"></pre>
+            </div>
+        </div>
+        <div class="roman-wb-col">
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardManualInput">手动输入模型结果</h3>
+                <p class="roman-wb-card-sub" data-i18n="romanWb.manualInputHint">粘贴外部 AI 返回的编号行文本；不调用本地模型，仅做校验与时间戳装配。</p>
+                <textarea id="romanWbManualInput" class="roman-wb-manual-input" rows="10" data-i18n-placeholder="romanWb.manualInputPlaceholder" placeholder="在此粘贴模型输出…"></textarea>
+                <button type="button" class="lyrics-action-btn save-btn" id="romanWbManualAssembleBtn" data-i18n="romanWb.manualAssemble">手动装配</button>
+            </div>
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardStream">模型原始输出（流式）</h3>
+                <pre id="romanWbRawPre" class="roman-wb-stream"></pre>
+            </div>
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardReasoning">思维链（若模型提供）</h3>
+                <pre id="romanWbReasoningPre" class="roman-wb-stream roman-wb-reasoning"></pre>
+            </div>
+        </div>
+        <div class="roman-wb-col">
+            <div class="roman-wb-card">
+                <h3 data-i18n="romanWb.cardValidation">校验状态</h3>
+                <div id="romanWbValidationLine" class="roman-wb-validation">等待校验</div>
+            </div>
+            <div class="roman-wb-card roman-wb-final-wrap">
+                <h3 data-i18n="romanWb.cardFinal">最终结果</h3>
+                <p class="roman-wb-card-sub" data-i18n="romanWb.finalHint">以下为只读预览；复制仍使用下方隐藏缓冲区以保持换行一致。</p>
+                <pre id="romanWbFinalPre" class="batch-wb-pre roman-wb-final-pre"></pre>
+                <textarea id="romanWbFinalCopySource" class="roman-wb-copy-source" readonly aria-hidden="true"></textarea>
+                <p id="romanWbTrustHint" class="roman-wb-trust-hint"></p>
+            </div>
+            <div class="roman-wb-card roman-wb-background-wrap">
+                <h3 data-i18n="romanWb.cardBackgroundResult">背景歌词编织结果</h3>
+                <p class="roman-wb-card-sub" data-i18n="romanWb.backgroundResultHint">在每条非背景歌词行下规范或插入 [6] 行（仅 LYS）：原行不改动；[6] 行与上一行时间戳对齐，罗马单元之间带空格。不修改上方「最终结果」。</p>
+                <pre id="romanWbBackgroundPre" class="batch-wb-pre roman-wb-final-pre"></pre>
+                <textarea id="romanWbBackgroundCopySource" class="roman-wb-copy-source" readonly aria-hidden="true"></textarea>
+                <button type="button" class="lyrics-action-btn path-update-btn" id="romanWbCopyBackgroundBtn" disabled data-i18n="romanWb.copyBackgroundResult">复制背景歌词结果</button>
+            </div>
+            <div class="roman-wb-card" id="romanWbErrorsCard" style="display:none;">
+                <h3 data-i18n="romanWb.cardErrors">错误详情</h3>
+                <p id="romanWbRepairHint" class="roman-wb-card-sub" style="display:none;" data-i18n="romanWb.repairReadyHint"></p>
+                <pre id="romanWbErrors" class="roman-wb-errors-panel"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="/LyricSphere-js/LyricSphere-i18n.js"></script>
+    <script src="/LyricSphere-js/LyricSphere-appearance.js"></script>
+    <script src="/LyricSphere-js/LyricSphere-ai-romanization.js"></script>
+</body>
+</html>

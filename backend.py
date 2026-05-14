@@ -1634,6 +1634,33 @@ def _normalize_relative_path(value: str) -> str:
     return '/'.join(segments)
 
 
+def _url_path_for_local_filesystem(url_or_path: str) -> str:
+    """
+    Path used to map a URL string onto local static files.
+
+    urllib.parse treats '#' as starting a fragment, so parsed.path drops the
+    rest of a filename like 'track#1.lrc'. For http(s), take everything from
+    the first '/' after the authority through end of string, then strip only
+    a '?query' suffix. For other strings, strip query only and keep '#'.
+    """
+    raw = str(url_or_path or '').strip().replace('\\', '/')
+    if not raw:
+        return ''
+    lower = raw.lower()
+    if lower.startswith('http://') or lower.startswith('https://'):
+        idx = raw.find('://')
+        authority_and_rest = raw[idx + 3:]
+        slash = authority_and_rest.find('/')
+        if slash < 0:
+            path_q = '/'
+        else:
+            path_q = authority_and_rest[slash:]
+        if '?' in path_q:
+            path_q = path_q.split('?', 1)[0]
+        return path_q
+    return raw.split('?', 1)[0]
+
+
 def extract_resource_relative(value: str, resource: str) -> str:
     if resource not in RESOURCE_DIRECTORIES:
         raise ValueError(f'未知资源类型: {resource}')
@@ -1641,7 +1668,12 @@ def extract_resource_relative(value: str, resource: str) -> str:
         raise ValueError('路径不能为空')
 
     parsed = urlparse(str(value))
-    candidate = parsed.path if parsed.scheme else str(value)
+    if parsed.scheme in ('http', 'https'):
+        candidate = _url_path_for_local_filesystem(str(value))
+    elif parsed.scheme:
+        candidate = parsed.path or ''
+    else:
+        candidate = str(value)
     candidate = unquote(candidate.replace('\\', '/')).lstrip('/')
 
     prefix = f"{resource}/"
@@ -1692,7 +1724,10 @@ def _extract_single_song_relative(value: Optional[str]) -> Optional[str]:
 
     normalized = cleaned.replace('\\', '/').strip()
     parsed = urlparse(normalized)
-    candidate = parsed.path if parsed.scheme else normalized
+    if parsed.scheme in ('http', 'https'):
+        candidate = _url_path_for_local_filesystem(normalized)
+    else:
+        candidate = parsed.path if parsed.scheme else normalized
     candidate = candidate.strip()
     if not candidate:
         return None
@@ -1720,7 +1755,7 @@ def _extract_single_song_relative(value: Optional[str]) -> Optional[str]:
     if not relative:
         return None
 
-    relative = relative.split('?', 1)[0].split('#', 1)[0].strip()
+    relative = relative.split('?', 1)[0].strip()
     if not relative:
         return None
 
@@ -2341,6 +2376,84 @@ AI_TRANSLATION_SETTINGS = {
 
 AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
 
+ROMANIZATION_DEFAULT_PROMPT_INDEXED = (
+    '你是歌词罗马音助手。用户每行格式为：行号 N. 后紧跟若干「[k]原文片段」，k 为从 1 开始的 token 编号（与输入完全一致）。\n'
+    '你必须输出完全相同的结构：保留每个 [k] 编号，只把编号后的原文替换为对应罗马音（如日语 Hepburn）；不得翻译含义；不得添加说明。\n'
+    '硬性规则：\n'
+    '1. 行号 N 与输入一致，不得增删行、不得改顺序。\n'
+    '2. 每行必须包含与输入相同的一组 [k] 编号，k 从 1 连续到该行 token 总数；不得跳号、不得重复、不得新增或删除编号。\n'
+    '3. 不要输出 markdown、前言或后记；只输出编号行。\n'
+    '4. 除 [k] 与罗马音文本外，不要在行内插入其它标记。'
+)
+
+ROMANIZATION_DEFAULT_PROMPT_SEPARATOR = (
+    '你是歌词罗马音助手（兼容模式：分隔符分节）。用户每行以行号 N. 开头，之后为若干「分节」，分节之间由用户消息中说明的分隔符连接；'
+    '每行末尾是否保留分隔符须与输入一致。\n'
+    '你必须保持相同的行号、分节数量与分隔符用法：只将各分节内的原文替换为对应罗马音（如日语 Hepburn）；不得翻译含义；不得添加说明。\n'
+    '硬性规则：\n'
+    '1. 行号 N 与输入一致，不得增删行、不得改顺序。\n'
+    '2. 每行的分节数量、分隔符位置与行尾分隔规则必须与输入一致。\n'
+    '3. 不要输出 markdown、前言或后记；只输出编号行。\n'
+    '4. 不要使用 [k] 编号协议；除约定分隔符与罗马音文本外，不要在行内插入其它标记。'
+)
+
+ROMANIZATION_DEFAULTS: Dict[str, Any] = {
+    'system_prompt': ROMANIZATION_DEFAULT_PROMPT_INDEXED,
+    'alignment_mode': 'indexed_tokens',
+    'separator': ';',
+    'strict_token_count': True,
+    'require_trailing_separator': True,
+}
+
+
+def _default_romanization_system_prompt_for_mode(mode: str) -> str:
+    if _normalize_romanization_alignment_mode(mode) == 'separator_tokens':
+        return ROMANIZATION_DEFAULT_PROMPT_SEPARATOR
+    return ROMANIZATION_DEFAULT_PROMPT_INDEXED
+
+
+def _is_non_custom_romanization_system_prompt(user_sp: Any) -> bool:
+    """Empty or exactly either built-in default (treat as non-custom for mode switching)."""
+    s = str(user_sp or '').strip()
+    if not s:
+        return True
+    if s == str(ROMANIZATION_DEFAULT_PROMPT_INDEXED).strip():
+        return True
+    if s == str(ROMANIZATION_DEFAULT_PROMPT_SEPARATOR).strip():
+        return True
+    return False
+
+
+def _resolve_romanization_system_prompt_for_mode(user_raw: Any, mode: str) -> str:
+    if _is_non_custom_romanization_system_prompt(user_raw):
+        return _default_romanization_system_prompt_for_mode(mode)
+    return str(user_raw or '').strip()
+
+
+def _normalize_romanization_alignment_mode(raw: Any) -> str:
+    s = str(raw or '').strip().lower().replace('-', '_')
+    if s in ('indexed_tokens', 'indexed', 'token_indexed'):
+        return 'indexed_tokens'
+    if s in ('separator_tokens', 'separator', 'legacy'):
+        return 'separator_tokens'
+    return str(ROMANIZATION_DEFAULTS.get('alignment_mode') or 'indexed_tokens')
+
+
+def coalesce_romanization_settings(raw: Any) -> Dict[str, Any]:
+    r = raw if isinstance(raw, dict) else {}
+    mode = _normalize_romanization_alignment_mode(r.get('alignment_mode'))
+    sep = str(r.get('separator') or '').strip() or str(ROMANIZATION_DEFAULTS['separator'])
+    sep = sep[:8] or str(ROMANIZATION_DEFAULTS['separator'])
+    sp = _resolve_romanization_system_prompt_for_mode(r.get('system_prompt'), mode)
+    return {
+        'system_prompt': sp,
+        'alignment_mode': mode,
+        'separator': sep,
+        'strict_token_count': parse_bool(r.get('strict_token_count'), bool(ROMANIZATION_DEFAULTS['strict_token_count'])),
+        'require_trailing_separator': parse_bool(r.get('require_trailing_separator'), bool(ROMANIZATION_DEFAULTS['require_trailing_separator'])),
+    }
+
+
 AI_PRESETS_FILE = BASE_PATH / 'ai_presets.json'
 AI_PRESET_STORE_VERSION = 1
 DEFAULT_AI_PRESET_ID = 'default'
@@ -2595,6 +2708,7 @@ def build_ai_public_payload_from_settings(settings: Dict[str, Any]) -> Dict[str,
             'always_override': parse_bool(batch.get('always_override'), False),
             'extra_prompt': batch.get('extra_prompt', ''),
         },
+        'romanization': coalesce_romanization_settings(settings.get('romanization')),
     }
 
 
@@ -2647,6 +2761,7 @@ def materialize_ai_settings_from_preset(preset: Dict[str, Any]) -> Dict[str, Any
             'api_key': str((secret_payload.get('thinking') or {}).get('api_key') or '').strip(),
         },
         'batch': public_payload.get('batch', {}) if isinstance(public_payload.get('batch'), dict) else {},
+        'romanization': public_payload.get('romanization', {}) if isinstance(public_payload.get('romanization'), dict) else {},
     }
     return normalize_ai_settings_state(source_state)
 
@@ -2724,6 +2839,7 @@ def normalize_ai_preset_record(raw_preset: Any, fallback_id: Optional[str] = Non
         'translation': {**public_payload['translation'], 'api_key': secret_payload['translation']['api_key']},
         'thinking': {**public_payload['thinking'], 'api_key': secret_payload['thinking']['api_key']},
         'batch': public_payload['batch'],
+        'romanization': dict(public_payload.get('romanization', {})),
     }
 
 
@@ -2732,6 +2848,7 @@ def flatten_ai_preset_record(preset: Dict[str, Any], include_secrets: bool = Fal
     translation = dict(public_payload.get('translation', {}))
     thinking = dict(public_payload.get('thinking', {}))
     batch = dict(public_payload.get('batch', {}))
+    romanization = dict(public_payload.get('romanization', {}))
     if include_secrets:
         secret_payload = preset.get('secret_payload', {}) if isinstance(preset.get('secret_payload'), dict) else {}
         translation['api_key'] = str((secret_payload.get('translation') or {}).get('api_key') or '')
@@ -2746,6 +2863,7 @@ def flatten_ai_preset_record(preset: Dict[str, Any], include_secrets: bool = Fal
         'translation': translation,
         'thinking': thinking,
         'batch': batch,
+        'romanization': romanization,
     }
 
 
@@ -2805,6 +2923,7 @@ def load_ai_preset_store() -> Dict[str, Any]:
                 'always_override': False,
                 'extra_prompt': '',
             },
+            'romanization': dict(ROMANIZATION_DEFAULTS),
             'secret_payload': {
                 'translation': {'api_key': ''},
                 'thinking': {'api_key': ''},
@@ -2913,10 +3032,38 @@ def normalize_ai_settings_state(raw_state: Any, fallback_state: Optional[Dict[st
         'extra_prompt': pick_text('extra_prompt', state_batch, 'extra_prompt', fallback_batch, ''),
     }
 
+    state_roman = state.get('romanization') if isinstance(state.get('romanization'), dict) else {}
+    fallback_roman = fallback.get('romanization') if isinstance(fallback.get('romanization'), dict) else {}
+    roman_sep = pick_text('romanization_separator', state_roman, 'separator', fallback_roman, ROMANIZATION_DEFAULTS['separator']).strip()
+    if not roman_sep:
+        roman_sep = str(ROMANIZATION_DEFAULTS['separator'])
+    roman_align_raw = pick_text(
+        'romanization_alignment_mode', state_roman, 'alignment_mode', fallback_roman,
+        str(ROMANIZATION_DEFAULTS.get('alignment_mode') or 'indexed_tokens')
+    )
+    roman_mode_norm = _normalize_romanization_alignment_mode(roman_align_raw)
+    romanization = {
+        'system_prompt': pick_text(
+            'romanization_system_prompt', state_roman, 'system_prompt', fallback_roman,
+            _default_romanization_system_prompt_for_mode(roman_mode_norm),
+        ),
+        'alignment_mode': roman_mode_norm,
+        'separator': roman_sep[:8],
+        'strict_token_count': pick_bool('romanization_strict_token_count', state_roman, 'strict_token_count', fallback_roman, parse_bool(fallback_roman.get('strict_token_count'), True)),
+        'require_trailing_separator': pick_bool(
+            'romanization_require_trailing_separator', state_roman, 'require_trailing_separator', fallback_roman,
+            parse_bool(fallback_roman.get('require_trailing_separator'), True)
+        ),
+    }
+    romanization['system_prompt'] = _resolve_romanization_system_prompt_for_mode(
+        romanization.get('system_prompt'), romanization.get('alignment_mode')
+    )
+
     return {
         'translation': translation,
         'thinking': thinking,
         'batch': batch,
+        'romanization': romanization,
     }
 
 
@@ -2937,7 +3084,7 @@ def load_ai_settings_store() -> Dict[str, Any]:
     # - new file stores meta fields (source_mode/source_preset_id) + nested settings
     if isinstance(store.get('settings'), dict):
         raw_settings = store.get('settings')
-    elif any(key in store for key in ('translation', 'thinking', 'batch', 'provider', 'base_url', 'model', 'api_key')):
+    elif any(key in store for key in ('translation', 'thinking', 'batch', 'romanization', 'provider', 'base_url', 'model', 'api_key')):
         raw_settings = store
     else:
         raw_settings = {}
@@ -3099,9 +3246,11 @@ def update_ai_preset_store_from_payload(
         translation = dict(public_payload.get('translation', {}))
         thinking = dict(public_payload.get('thinking', {}))
         batch = dict(public_payload.get('batch', {}))
+        romanization = dict(coalesce_romanization_settings(public_payload.get('romanization')))
         raw_translation = raw_preset.get('translation') if isinstance(raw_preset.get('translation'), dict) else {}
         raw_thinking = raw_preset.get('thinking') if isinstance(raw_preset.get('thinking'), dict) else {}
         raw_batch = raw_preset.get('batch') if isinstance(raw_preset.get('batch'), dict) else {}
+        raw_roman = raw_preset.get('romanization') if isinstance(raw_preset.get('romanization'), dict) else {}
 
         if should_update_field('ai_view_provider'):
             if 'provider' in raw_preset or has_nested_key(raw_translation, 'provider'):
@@ -3125,6 +3274,27 @@ def update_ai_preset_store_from_payload(
                 thinking['system_prompt'] = str(raw_preset.get('thinking_system_prompt', raw_thinking.get('system_prompt')) or '')
             if 'extra_prompt' in raw_preset or has_nested_key(raw_batch, 'extra_prompt'):
                 batch['extra_prompt'] = str(raw_preset.get('extra_prompt', raw_batch.get('extra_prompt')) or '')
+            if 'romanization_system_prompt' in raw_preset or has_nested_key(raw_roman, 'system_prompt'):
+                romanization['system_prompt'] = str(
+                    raw_preset.get('romanization_system_prompt', raw_roman.get('system_prompt')) or ''
+                )
+            if 'romanization_separator' in raw_preset or has_nested_key(raw_roman, 'separator'):
+                sep = str(raw_preset.get('romanization_separator', raw_roman.get('separator')) or '').strip()[:8]
+                romanization['separator'] = sep or str(ROMANIZATION_DEFAULTS['separator'])
+            if 'romanization_strict_token_count' in raw_preset or has_nested_key(raw_roman, 'strict_token_count'):
+                romanization['strict_token_count'] = parse_bool(
+                    raw_preset.get('romanization_strict_token_count', raw_roman.get('strict_token_count')),
+                    romanization.get('strict_token_count', True)
+                )
+            if 'romanization_require_trailing_separator' in raw_preset or has_nested_key(raw_roman, 'require_trailing_separator'):
+                romanization['require_trailing_separator'] = parse_bool(
+                    raw_preset.get('romanization_require_trailing_separator', raw_roman.get('require_trailing_separator')),
+                    romanization.get('require_trailing_separator', True)
+                )
+            if 'romanization_alignment_mode' in raw_preset or has_nested_key(raw_roman, 'alignment_mode'):
+                romanization['alignment_mode'] = _normalize_romanization_alignment_mode(
+                    raw_preset.get('romanization_alignment_mode', raw_roman.get('alignment_mode'))
+                )
 
         if 'expect_reasoning' in raw_preset or has_nested_key(raw_translation, 'expect_reasoning'):
             translation['expect_reasoning'] = parse_bool(
@@ -3181,14 +3351,17 @@ def update_ai_preset_store_from_payload(
             if thinking_secret:
                 merged.setdefault('secret_payload', {}).setdefault('thinking', {})['api_key'] = thinking_secret
 
+        romanization = dict(coalesce_romanization_settings(romanization))
         merged['public_payload'] = build_ai_public_payload_from_settings({
             'translation': translation,
             'thinking': thinking,
             'batch': batch,
+            'romanization': romanization,
         })
         merged['translation'] = {**merged['public_payload']['translation'], 'api_key': merged.get('secret_payload', {}).get('translation', {}).get('api_key', '')}
         merged['thinking'] = {**merged['public_payload']['thinking'], 'api_key': merged.get('secret_payload', {}).get('thinking', {}).get('api_key', '')}
         merged['batch'] = merged['public_payload']['batch']
+        merged['romanization'] = merged['public_payload']['romanization']
         merged['updated_at'] = now_iso()
         return merged
 
@@ -3225,6 +3398,7 @@ def update_ai_preset_store_from_payload(
         translation = flat.get('translation') if isinstance(flat.get('translation'), dict) else {}
         thinking = flat.get('thinking') if isinstance(flat.get('thinking'), dict) else {}
         batch = flat.get('batch') if isinstance(flat.get('batch'), dict) else {}
+        roman = flat.get('romanization') if isinstance(flat.get('romanization'), dict) else {}
         payload = {
             'id': str(flat.get('id') or ''),
             'name': str(flat.get('name') or ''),
@@ -3253,7 +3427,14 @@ def update_ai_preset_store_from_payload(
                 'only_empty': parse_bool(batch.get('only_empty'), True),
                 'always_override': parse_bool(batch.get('always_override'), False),
                 'extra_prompt': str(batch.get('extra_prompt') or ''),
-            }
+            },
+            'romanization': {
+                'system_prompt': str(roman.get('system_prompt') or ''),
+                'alignment_mode': _normalize_romanization_alignment_mode(roman.get('alignment_mode')),
+                'separator': str(roman.get('separator') or ''),
+                'strict_token_count': parse_bool(roman.get('strict_token_count'), True),
+                'require_trailing_separator': parse_bool(roman.get('require_trailing_separator'), True),
+            },
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
@@ -3416,6 +3597,8 @@ def sanitize_preset_for_device(preset: Dict[str, Any], permissions: Optional[Dic
         flat['translation']['system_prompt'] = ''
         flat['thinking']['system_prompt'] = ''
         flat['batch']['extra_prompt'] = ''
+        if isinstance(flat.get('romanization'), dict):
+            flat['romanization']['system_prompt'] = ''
     return flat
 
 
@@ -4017,7 +4200,10 @@ def _extract_lyrics_windows_from_meta(
         return []
     try:
         parsed = urlparse(str(lyrics_url))
-        lyric_rel = parsed.path.lstrip('/')
+        if parsed.scheme in ('http', 'https'):
+            lyric_rel = _url_path_for_local_filesystem(str(lyrics_url)).lstrip('/')
+        else:
+            lyric_rel = parsed.path.lstrip('/')
         if not lyric_rel:
             return []
         lyrics_path = STATIC_DIR / lyric_rel
@@ -4176,6 +4362,71 @@ def qe_dump_lys(doc: Dict[str, Any]) -> str:
             buf.append(f"{text}({ts})" if ts else text)
         out_lines.append("".join(buf))
     return "\n".join(out_lines)
+
+
+_BACKGROUND_WEAVE_TAGS = frozenset({'[6]', '[7]', '[8]'})
+
+
+def _lys_prefix_is_background_style(prefix: str) -> bool:
+    return str(prefix or '').strip() in _BACKGROUND_WEAVE_TAGS
+
+
+def _normalize_weave_background_prefix(raw: Any) -> str:
+    s = str(raw or '').strip()
+    if not s:
+        return '[6]'
+    m = re.fullmatch(r'\[(\d+)\]', s)
+    if not m:
+        return '[6]'
+    n = int(m.group(1))
+    if 1 <= n <= 9:
+        return f'[{n}]'
+    return '[6]'
+
+
+def _weave_roman_lys_as_background(roman_lys_text: str, background_prefix: str = '[6]') -> Tuple[str, List[str]]:
+    """
+    Idempotent LYS helper aligned with roman assembly:
+    - If a non-background line is already followed by a companion [6]/[7]/[8] line with matching
+      timestamps, only normalize inter-token spaces on that background line.
+    - Otherwise insert (or replace a mismatched background follower) using the main line's timings
+      and token texts, with mandatory spaces between units on the background line.
+    Meta lines and lines without tokens are left unchanged.
+    """
+    bg = _normalize_weave_background_prefix(background_prefix)
+    try:
+        doc = qe_parse_lys(roman_lys_text or '')
+    except Exception as exc:
+        return '', [f'解析 LYS 失败: {exc}']
+    lines: List[Dict[str, Any]] = list(doc.get('lines', []) or [])
+    doc['lines'] = lines
+    work_indices = [
+        i for i, line in enumerate(lines)
+        if not line.get('is_meta')
+        and not _lys_prefix_is_background_style(str(line.get('prefix') or ''))
+        and (line.get('tokens') or [])
+    ]
+    for i in sorted(work_indices, reverse=True):
+        line = lines[i]
+        tokens = line.get('tokens') or []
+        nxt_i = i + 1
+        if nxt_i < len(lines):
+            nxt = lines[nxt_i]
+            if _lys_prefix_is_background_style(str(nxt.get('prefix') or '')):
+                if _lyric_line_tokens_ts_match(line, nxt):
+                    ntoks = nxt.get('tokens') or []
+                    spaced = _roman_token_texts_with_spaces([str(t.get('text', '')) for t in ntoks])
+                    for j, tok in enumerate(ntoks):
+                        tok['text'] = spaced[j] if j < len(spaced) else str(tok.get('text', ''))
+                    continue
+                lines[nxt_i] = _build_lys_roman_background_line(
+                    line, bg, [str(t.get('text', '')) for t in tokens]
+                )
+                continue
+        lines.insert(i + 1, _build_lys_roman_background_line(
+            line, bg, [str(t.get('text', '')) for t in tokens]
+        ))
+    return qe_dump_lys(doc), []
 
 
 class MoveError(Exception):
@@ -4662,6 +4913,39 @@ def index():
         amll_player_base_url=get_amll_web_player_base_url()
     )
 
+
+@app.route('/ai-romanization-workbench')
+def ai_romanization_workbench():
+    return render_template('lyrics_ai_romanization.html')
+
+
+@app.route('/LyricSphere.css')
+def lyric_sphere_css():
+    """Serve LyricSphere stylesheet from templates (paired with LyricSphere.html)."""
+    return send_from_directory(BASE_PATH / 'templates', 'LyricSphere.css', mimetype='text/css')
+
+
+_LYRIC_SPHERE_JS_ALLOWLIST = frozenset({
+    'LyricSphere-i18n.js',
+    'LyricSphere-runtime.js',
+    'LyricSphere-cloud-player.js',
+    'LyricSphere-library.js',
+    'LyricSphere-appearance.js',
+    'LyricSphere-lyrics-workbench.js',
+    'LyricSphere-ai-presets.js',
+    'LyricSphere-ai-romanization.js',
+    'LyricSphere-admin-shell.js',
+})
+
+
+@app.route('/LyricSphere-js/<filename>')
+def lyric_sphere_js_module(filename: str):
+    """Serve split LyricSphere front-end scripts from templates with a fixed allowlist."""
+    if filename not in _LYRIC_SPHERE_JS_ALLOWLIST:
+        raise HTTPException(status_code=404)
+    return send_from_directory(BASE_PATH / 'templates', filename, mimetype='application/javascript')
+
+
 @app.route('/favicon.ico')
 def favicon():
     """Serve a fallback favicon so browsers avoid repeated 404 requests."""
@@ -5080,6 +5364,7 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
             shutil.copy2(json_path, backup_path)
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2)
+        upsert_song_search_index_for_path(json_path)
 
     try:
         with open(lyrics_path, 'r', encoding='utf-8') as f:
@@ -5505,6 +5790,9 @@ def quick_editor_save():
     with open(lyrics_path, 'w', encoding='utf-8') as f:
         f.write(qe_dump_lys(doc))
 
+    for jp in find_related_json(str(lyrics_path)):
+        upsert_song_search_index_for_path(Path(jp))
+
     try:
         lyrics_relative = resource_relative_from_path(lyrics_path, 'songs')
         lyrics_url = build_public_url('songs', lyrics_relative)
@@ -5734,6 +6022,24 @@ def delete_json():
 
             # 删除JSON文件
             json_path.unlink()
+            deleted_name = json_path.name
+            try:
+                remove_song_search_index_entry(deleted_name)
+            except Exception as exc:
+                app.logger.error(
+                    'song search index: remove after delete failed for %s: %s',
+                    deleted_name,
+                    exc,
+                    exc_info=True,
+                )
+                return jsonify({
+                    'status': 'error',
+                    'message': (
+                        '歌曲 JSON 已删除，但搜索索引更新失败；请稍后重试或调用 '
+                        'POST /internal/rebuild_song_search_index 修复索引。'
+                        f' 详情: {exc}'
+                    ),
+                }), 500
 
         return jsonify({'status': 'success'})
     except Exception as e:
@@ -6023,6 +6329,8 @@ def import_static_bundle():
     if not imported_jsons:
         return jsonify({'status': 'error', 'message': '压缩包中未发现 JSON 文件'}), 400
 
+    rebuild_song_search_index_full()
+
     message = f'导入完成。JSON: {len(imported_jsons)} 个，资源文件: {imported_assets} 个'
     if renamed_files:
         message += f'，重名处理: {len(renamed_files)} 个'
@@ -6051,6 +6359,12 @@ def restore_file():
             restore_path = (STATIC_DIR / original_name).resolve()
             restore_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup_path, restore_path)
+            if restore_path.suffix.lower() == '.json' and restore_path.name.lower() != 'artists.json':
+                try:
+                    restore_path.resolve().relative_to(STATIC_DIR.resolve())
+                    upsert_song_search_index_for_path(restore_path)
+                except ValueError:
+                    pass
         else:
             target_path = resolve_resource_path(file_path, 'static')
             if not target_path.exists():
@@ -6074,6 +6388,13 @@ def restore_file():
                 file_backups.sort(reverse=True)
                 latest_backup = file_backups[0]
                 shutil.copy2(latest_backup, file)  # 恢复文件
+                try:
+                    fp = Path(file).resolve()
+                    if fp.suffix.lower() == '.json' and fp.name.lower() != 'artists.json':
+                        fp.relative_to(STATIC_DIR.resolve())
+                        upsert_song_search_index_for_path(fp)
+                except ValueError:
+                    pass
 
                 # 清理旧备份保持7个版本
                 for old_backup in file_backups[7:]:
@@ -6159,6 +6480,7 @@ def update_json():
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data['content'], f, ensure_ascii=False, indent=2)
 
+        upsert_song_search_index_for_path(file_path)
         return jsonify({'status': 'success', 'filename': filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -6292,6 +6614,8 @@ def save_lyrics():
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content_to_write)
             app.logger.info(f"保存文件成功: {file_path}")
+            for jp in find_related_json(str(file_path)):
+                upsert_song_search_index_for_path(Path(jp))
             return jsonify({'status': 'success'})
         except Exception as e:
             app.logger.error(f"保存文件失败: {file_path}, 错误: {str(e)}, 权限: {oct(file_path.parent.stat().st_mode)[-3:] if file_path.parent.exists() else 'N/A'}")
@@ -6323,7 +6647,10 @@ def find_related_json(lyrics_path):
         if not field_value or field_value == '!':
             return False
         parsed = urlparse(str(field_value))
-        candidate = parsed.path if parsed.scheme else str(field_value)
+        if parsed.scheme in ('http', 'https'):
+            candidate = _url_path_for_local_filesystem(str(field_value))
+        else:
+            candidate = parsed.path if parsed.scheme else str(field_value)
         candidate = unquote(candidate.replace('\\', '/')).strip()
         if not candidate:
             return False
@@ -6336,7 +6663,7 @@ def find_related_json(lyrics_path):
             lower_candidate = candidate.lower()
         if lower_candidate.startswith('songs/'):
             candidate = candidate[len('songs/'):].lstrip('/')
-        candidate = candidate.split('?', 1)[0].split('#', 1)[0].strip()
+        candidate = candidate.split('?', 1)[0].strip()
         if not candidate:
             return False
         try:
@@ -6474,6 +6801,8 @@ def update_file_path():
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(json_data, f, ensure_ascii=False, indent=2)
 
+        upsert_song_search_index_for_path(json_path)
+
         # 在更新路径后添加文件创建逻辑（仅对本地路径执行）
         if normalized_new_path and not is_url:
             new_local_path = SONGS_DIR / normalized_new_path
@@ -6509,6 +6838,7 @@ def create_json():
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data['content'], f, ensure_ascii=False, indent=2)
 
+        upsert_song_search_index_for_path(file_path)
         return jsonify({'status': 'success', 'filename': filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -6568,6 +6898,10 @@ def rename_json():
         if str(old_path).lower() != str(new_path).lower():
             old_path.unlink()
 
+        if old_path.name.lower() != new_path.name.lower():
+            remove_song_search_index_entry(old_path.name)
+        upsert_song_search_index_for_path(new_path)
+
         return jsonify({'status': 'success', 'filename': new_filename})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
@@ -6595,139 +6929,876 @@ def check_lyrics():
     })
 
 
-@app.route('/songs/summary')
-def list_song_summaries():
-    """返回精简的歌曲列表信息，避免前端批量读取静态资源。"""
+def collect_static_json_file_paths() -> List[Path]:
+    """在 static 目录内罗列 json 文件路径，多策略容错，兼容 Windows（不读取文件内容）。"""
+
+    collected: Dict[str, Path] = {}
+
+    def add_paths(paths: Iterable[Path], label: str) -> None:
+        for p in paths:
+            try:
+                if not p.exists() or not p.is_file():
+                    continue
+                if not p.name.lower().endswith('.json'):
+                    continue
+                collected[p.name] = p
+            except OSError as exc:
+                app.logger.warning("%s 路径检查失败 %s: %s", label, p, exc)
+
+    try:
+        add_paths(STATIC_DIR.glob('*.json'), 'glob')
+    except OSError as exc:
+        app.logger.warning("glob static/*.json 失败，进入降级：%s", exc)
+
+    try:
+        with os.scandir(STATIC_DIR) as it:
+            for entry in it:
+                try:
+                    if entry.is_file() and entry.name.lower().endswith('.json'):
+                        add_paths([Path(entry.path)], 'scandir')
+                except OSError as exc:
+                    app.logger.warning("scandir 处理 %s 失败: %s", entry.name, exc)
+    except OSError as exc:
+        app.logger.warning("scandir static 失败：%s", exc)
+
+    try:
+        if os.name == 'nt':
+            cmd = ['cmd', '/c', 'dir', '/b', '*.json']
+            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
+        else:
+            cmd = ['find', '.', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-print']
+            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
+
+        if proc.stdout:
+            lines = proc.stdout.splitlines()
+            parsed: List[Path] = []
+            for line in lines:
+                name = line.strip()
+                if not name:
+                    continue
+                if os.name != 'nt' and name.startswith('./'):
+                    name = name[2:]
+                parsed.append(STATIC_DIR / name)
+            add_paths(parsed, 'fallback-cmd')
+
+        if proc.returncode != 0:
+            app.logger.warning("fallback 命令 %s 返回码 %s, stderr=%s", cmd[0], proc.returncode, proc.stderr.strip())
+    except FileNotFoundError:
+        app.logger.warning("fallback 命令不可用（%s），跳过", 'cmd/dir' if os.name == 'nt' else 'find')
+    except Exception as exc:
+        app.logger.warning("fallback 命令列举 static/*.json 异常：%s", exc)
+
+    return list(collected.values())
+
+
+def _build_song_summary_from_static_json(file: Path) -> Optional[Dict[str, Any]]:
+    """从 static 下单个 JSON 文件构建歌曲摘要；失败返回 None。"""
+    try:
+        raw_data = json.loads(file.read_text(encoding='utf-8'))
+    except Exception as exc:
+        app.logger.warning("读取 JSON 失败，已跳过 %s: %s", file.name, exc)
+        return None
+
+    if not isinstance(raw_data, dict):
+        app.logger.warning("JSON 非对象，已跳过 %s", file.name)
+        return None
+
+    meta = raw_data.get('meta') or {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    lyrics_path, translation_path, roman_path, _ = parse_meta_lyrics(meta.get('lyrics'))
+
+    artists_raw = meta.get('artists', [])
+    if isinstance(artists_raw, list):
+        artists_list = artists_raw
+    elif isinstance(artists_raw, str):
+        artists_list = [artists_raw]
+    else:
+        artists_list = []
+
+    try:
+        has_duet, has_background = analyze_lyrics_tags(lyrics_path)
+    except Exception as exc:
+        app.logger.warning("检测歌词标签失败，已跳过标签标记 %s: %s", lyrics_path, exc)
+        has_duet = False
+        has_background = False
+
+    try:
+        mtime_val = file.stat().st_mtime
+    except OSError:
+        mtime_val = 0.0
+
+    song_value = str(raw_data.get('song', '')).strip()
+    return {
+        'filename': file.name,
+        'title': meta.get('title', ''),
+        'artists': artists_list,
+        'lyricsPath': lyrics_path,
+        'translationPath': translation_path,
+        'romanPath': roman_path,
+        'metaLyrics': meta.get('lyrics', ''),
+        'song': song_value,
+        'albumImgSrc': meta.get('albumImgSrc', ''),
+        'album': str(meta.get('album', '') or '').strip(),
+        'backgroundImage': meta.get('Background-image', ''),
+        'dynamicCoverSrc': meta.get('dynamicCoverSrc', ''),
+        'dynamicCoverPoster': meta.get('dynamicCoverPoster', ''),
+        'hasDuet': has_duet,
+        'hasBackgroundVocals': has_background,
+        'hasAudio': has_valid_audio(song_value),
+        'mtime': mtime_val,
+    }
+
+
+_song_search_index_lock = threading.Lock()
+_song_search_index: Dict[str, Dict[str, Any]] = {}
+_song_search_index_revision: int = 0
+
+SONG_SEARCH_INDEX_VERSION = 1
+SONG_SEARCH_INDEX_FILE = BASE_PATH / '.cache' / 'song_search_index.json'
+
+
+def _song_search_json_paths() -> List[Path]:
+    return [p for p in collect_static_json_file_paths() if p.name.lower() != 'artists.json']
+
+
+def _compact_search_pool(pool: str) -> str:
+    return re.sub(r'[\s,，\-_]+', '', pool or '')
+
+
+def _search_tag_tokens_from_summary(summary: Dict[str, Any]) -> str:
+    """Match LyricSphere-library tag search strings (zh + en) without importing i18n."""
+    tags_zh: List[str] = []
+    tags_en: List[str] = []
+    lp = str(summary.get('lyricsPath') or '').strip()
+    has_lyrics = bool(lp and lp != '!')
+    if not has_lyrics:
+        tags_zh.extend(['纯音乐', '无歌词'])
+        tags_en.append('instrumental')
+    if not summary.get('hasAudio'):
+        tags_zh.append('无音源')
+        tags_en.append('no audio')
+    if summary.get('hasDuet'):
+        tags_zh.extend(['对唱', '包含对唱歌词'])
+        tags_en.append('duet')
+    if summary.get('hasBackgroundVocals'):
+        tags_zh.append('包含背景歌词')
+        tags_en.append('background vocals')
+    return ' '.join(tags_zh + tags_en).lower()
+
+
+def _search_pool_from_summary(summary: Dict[str, Any]) -> str:
+    filename = str(summary.get('filename') or '')
+    stem = re.sub(r'\.json$', '', filename, flags=re.I).lower()
+    title = str(summary.get('title') or '').strip().lower()
+    album = str(summary.get('album') or '').strip().lower()
+    artists = summary.get('artists') or []
+    if isinstance(artists, list):
+        artists_s = ' '.join(str(a).strip().lower() for a in artists if str(a).strip())
+    else:
+        artists_s = str(artists).strip().lower()
+    song_val = str(summary.get('song') or '').strip().lower()
+    tags = _search_tag_tokens_from_summary(summary)
+    parts = [title, album, artists_s, filename.lower(), stem, song_val, tags]
+    return ' '.join(p for p in parts if p)
+
+
+def _load_song_search_index_from_disk() -> Optional[Tuple[Dict[str, Dict[str, Any]], int]]:
+    """Return (entries map, revision) or None to trigger a full rebuild. Legacy files omit revision (treated as 0)."""
+    path = SONG_SEARCH_INDEX_FILE
+    if not path.is_file():
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as exc:
+        app.logger.warning('song search index: load failed %s: %s', path, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get('version') != SONG_SEARCH_INDEX_VERSION:
+        return None
+    raw_entries = data.get('entries')
+    if not isinstance(raw_entries, dict):
+        return None
+    raw_rev = data.get('revision', 0)
+    try:
+        file_revision = int(raw_rev)
+    except (TypeError, ValueError):
+        file_revision = 0
+    out: Dict[str, Dict[str, Any]] = {}
+    for key, row in raw_entries.items():
+        if not isinstance(key, str) or not isinstance(row, dict):
+            continue
+        if not isinstance(row.get('summary'), dict):
+            continue
+        if 'pool' not in row or 'pool_compact' not in row:
+            continue
+        try:
+            row['mtime'] = float(row.get('mtime', 0.0))
+        except (TypeError, ValueError):
+            row['mtime'] = 0.0
+        out[key] = row
+    return out, file_revision
+
+
+def _bump_song_search_index_revision_locked() -> None:
+    """Increment content revision before persisting. Caller must hold _song_search_index_lock."""
+    global _song_search_index_revision
+    try:
+        cur = int(_song_search_index_revision)
+    except (TypeError, ValueError):
+        cur = 0
+    _song_search_index_revision = cur + 1
+
+
+def _persist_song_search_index() -> None:
+    """Serialize index to disk atomically. Caller must hold _song_search_index_lock."""
+    cache_dir = SONG_SEARCH_INDEX_FILE.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _bump_song_search_index_revision_locked()
+    payload = {
+        'version': SONG_SEARCH_INDEX_VERSION,
+        'revision': int(_song_search_index_revision),
+        'updatedAt': datetime.utcnow().isoformat() + 'Z',
+        'entries': dict(_song_search_index),
+    }
+    fd, tmp_path = tempfile.mkstemp(prefix='song_search_index.', suffix='.tmp', dir=str(cache_dir))
+    tmp_file = Path(tmp_path)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as tmp_fp:
+            json.dump(payload, tmp_fp, ensure_ascii=False)
+        os.replace(str(tmp_file), str(SONG_SEARCH_INDEX_FILE))
+    except Exception:
+        tmp_file.unlink(missing_ok=True)
+        raise
+
+
+def _apply_single_path_to_index_locked(path: Path) -> None:
+    fn = path.name
+    if fn.lower() == 'artists.json':
+        _song_search_index.pop(fn, None)
+        return
+    try:
+        mtime = float(path.stat().st_mtime)
+    except OSError as exc:
+        app.logger.warning('song search index: stat failed %s: %s', path, exc)
+        _song_search_index.pop(fn, None)
+        return
+    built = _build_song_summary_from_static_json(path)
+    if not built:
+        _song_search_index.pop(fn, None)
+        return
+    pool = _search_pool_from_summary(built)
+    _song_search_index[fn] = {
+        'mtime': mtime,
+        'summary': built,
+        'pool': pool,
+        'pool_compact': _compact_search_pool(pool),
+    }
+
+
+def _rebuild_song_search_index_full_locked() -> None:
+    _song_search_index.clear()
+    for path in _song_search_json_paths():
+        _apply_single_path_to_index_locked(path)
+    _persist_song_search_index()
+
+
+def rebuild_song_search_index_full() -> None:
+    with _song_search_index_lock:
+        _rebuild_song_search_index_full_locked()
+
+
+def upsert_song_search_index_for_path(path: Path) -> None:
+    """Refresh one row for a static-dir song JSON and persist. Drops entry if file is gone."""
+    path = path.resolve()
+    if path.suffix.lower() != '.json' or path.name.lower() == 'artists.json':
+        return
+    try:
+        path.relative_to(STATIC_DIR.resolve())
+    except ValueError:
+        return
+    with _song_search_index_lock:
+        if not path.is_file():
+            if _song_search_index.pop(path.name, None) is not None:
+                _persist_song_search_index()
+            return
+        _apply_single_path_to_index_locked(path)
+        _persist_song_search_index()
+
+
+def remove_song_search_index_entry(filename: str) -> None:
+    """Remove index row by JSON basename (e.g. foo.json)."""
+    key = Path(str(filename)).name
+    with _song_search_index_lock:
+        if _song_search_index.pop(key, None) is None:
+            return
+        _persist_song_search_index()
+
+
+def _sync_song_search_index_with_disk_locked() -> bool:
+    """Prune stale keys and refresh rows whose mtime is newer than cached. Caller holds lock."""
+    changed = False
+    paths = _song_search_json_paths()
+    valid = {p.name for p in paths}
+    for fn in list(_song_search_index.keys()):
+        if fn not in valid:
+            del _song_search_index[fn]
+            changed = True
+    for path in paths:
+        fn = path.name
+        try:
+            mtime = float(path.stat().st_mtime)
+        except OSError as exc:
+            app.logger.warning('song search index: stat failed %s: %s', path, exc)
+            continue
+        cached = _song_search_index.get(fn)
+        if cached and float(cached.get('mtime', 0.0)) >= mtime:
+            continue
+        _apply_single_path_to_index_locked(path)
+        changed = True
+    return changed
+
+
+def _song_search_index_should_initialize() -> bool:
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        return True
+    if not getattr(app, 'debug', False):
+        return True
+    return False
+
+
+def init_song_search_index_on_startup() -> None:
+    """Load persisted index or rebuild. Skips werkzeug reloader parent (mirrors start_ws_server_once)."""
+    global _song_search_index_revision
+    if not _song_search_index_should_initialize():
+        return
+    try:
+        with _song_search_index_lock:
+            loaded = _load_song_search_index_from_disk()
+            if loaded is not None:
+                entries_map, file_revision = loaded
+                _song_search_index_revision = file_revision
+                _song_search_index.clear()
+                _song_search_index.update(entries_map)
+                if _sync_song_search_index_with_disk_locked():
+                    _persist_song_search_index()
+            else:
+                _rebuild_song_search_index_full_locked()
+    except Exception:
+        app.logger.exception('song search index: startup init failed')
+
+
+init_song_search_index_on_startup()
+
+
+def _parse_library_search_keywords(query: str) -> List[str]:
+    normalized = (query or '').replace('，', ',')
+    return list(dict.fromkeys([p.strip().lower() for p in normalized.split(',') if p.strip()]))
+
+
+def _parse_library_fuzzy_chars(query: str) -> List[str]:
+    raw = re.sub(r'[,，\s\-_]+', '', (query or '').lower())
+    return list(dict.fromkeys([c for c in raw if c]))
+
+
+def _library_list_display_name_for_sort(summary: Dict[str, Any]) -> str:
+    """Same ordering key as LyricSphere-library getSummaryDisplayNameForList (getSummaryDisplayName): title else stem."""
+    if not summary:
+        return ''
+    title = str(summary.get('title') or '').strip()
+    if title:
+        return title.lower()
+    fn = str(summary.get('filename') or '')
+    return re.sub(r'\.json$', '', fn, flags=re.I).lower()
+
+
+# Match lyric-sphere-v2 normalizeArtistName / songHasArtist for server-side artist routes.
+UNKNOWN_ARTIST_SENTINEL = '__unknown_artist__'
+UNKNOWN_ARTIST_LEGACY_FALLBACK = 'Unknown artist'
+
+
+def _normalize_artist_name_for_match(value: Optional[Any]) -> str:
+    """Mirror lyric-sphere-v2 normalizeArtistName for artist filter and /songs/artist."""
+    trimmed = str(value or '').strip()
+    if not trimmed:
+        return UNKNOWN_ARTIST_SENTINEL
+    if trimmed == UNKNOWN_ARTIST_LEGACY_FALLBACK:
+        return UNKNOWN_ARTIST_SENTINEL
+    return trimmed
+
+
+def _summary_has_normalized_artist(summary: Dict[str, Any], target_norm: str) -> bool:
+    artists_raw = summary.get('artists')
+    names: List[str]
+    if isinstance(artists_raw, list):
+        names = [str(a) for a in artists_raw] if artists_raw else []
+    elif artists_raw is None or artists_raw == '':
+        names = []
+    else:
+        names = [str(artists_raw)]
+    if not names:
+        names = [UNKNOWN_ARTIST_SENTINEL]
+    for n in names:
+        if _normalize_artist_name_for_match(n) == target_norm:
+            return True
+    return False
+
+
+def _run_artist_filter_ordered_summaries(
+    artist_query: str, sort_type: str, sort_asc: bool
+) -> List[Dict[str, Any]]:
+    """Filter in-memory song search index rows by artist (summary only; no full JSON reads)."""
+    target = _normalize_artist_name_for_match(artist_query)
+    if not str(artist_query or '').strip() and target == UNKNOWN_ARTIST_SENTINEL:
+        return []
+    with _song_search_index_lock:
+        rows = list(_song_search_index.values())
+    summaries: List[Dict[str, Any]] = []
+    for entry in rows:
+        summ = entry.get('summary')
+        if not isinstance(summ, dict):
+            continue
+        if _summary_has_normalized_artist(summ, target):
+            summaries.append(summ)
+    _sort_search_summaries_inplace(summaries, sort_type, sort_asc)
+    return summaries
+
+
+def _sort_search_summaries_inplace(summaries: List[Dict[str, Any]], sort_type: str, sort_asc: bool) -> None:
+    """Align browse list ordering: name uses _library_list_display_name_for_sort; time = mtime then filename."""
+    st = (sort_type or 'time').strip().lower()
+    if st not in ('time', 'name'):
+        st = 'time'
+    if st == 'name':
+
+        def name_key(s: Dict[str, Any]) -> Tuple[str, str]:
+            return (_library_list_display_name_for_sort(s), str(s.get('filename') or '').lower())
+
+        summaries.sort(key=name_key, reverse=not sort_asc)
+        return
+
+    def time_key(s: Dict[str, Any]) -> Tuple[float, str]:
+        fn = str(s.get('filename') or '')
+        return (float(s.get('mtime') or 0.0), fn.lower())
+
+    summaries.sort(key=time_key, reverse=not sort_asc)
+
+
+def _run_library_search_ordered_summaries(
+    query: str, fuzzy: bool, sort_type: str = 'time', sort_asc: bool = False
+) -> List[Dict[str, Any]]:
+    if fuzzy:
+        tokens = _parse_library_fuzzy_chars(query)
+        if not tokens:
+            return []
+
+        def row_match(entry: Dict[str, Any]) -> bool:
+            pc = entry['pool_compact']
+            return all(ch in pc for ch in tokens)
+    else:
+        tokens = _parse_library_search_keywords(query)
+        if not tokens:
+            return []
+
+        def row_match(entry: Dict[str, Any]) -> bool:
+            pool = entry['pool']
+            return all(kw in pool for kw in tokens)
+
+    with _song_search_index_lock:
+        rows = list(_song_search_index.values())
+    summaries: List[Dict[str, Any]] = []
+    for entry in rows:
+        if not row_match(entry):
+            continue
+        summaries.append(entry['summary'])
+    _sort_search_summaries_inplace(summaries, sort_type, sort_asc)
+    return summaries
+
+
+def _snapshot_query_sort_params() -> Tuple[str, bool]:
+    sort_type = (request.args.get('sortType') or 'time').strip().lower()
+    if sort_type not in ('time', 'name'):
+        sort_type = 'time'
+    sort_asc_raw = (request.args.get('sortAsc') or '0').strip().lower()
+    sort_asc = sort_asc_raw in ('1', 'true', 'yes', 'on')
+    return sort_type, sort_asc
+
+
+@app.route('/songs/snapshot')
+def songs_library_snapshot():
+    """Full in-memory library snapshot from the song search index (revision bumps on index writes)."""
     if not is_request_allowed():
         return abort(403)
-    # 只读列表不要求解锁
 
-    def collect_static_json_files() -> List[Path]:
-        """在 static 目录内罗列 json 文件，多策略容错，兼容 Windows。"""
+    def _no_store(resp):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
 
-        collected: Dict[str, Path] = {}
+    meta_raw = (request.args.get('meta') or '').strip().lower()
+    meta_only = meta_raw in ('1', 'true', 'yes', 'on')
+    sort_type, sort_asc = _snapshot_query_sort_params()
 
-        def add_paths(paths: Iterable[Path], label: str) -> None:
-            for p in paths:
-                try:
-                    if not p.exists() or not p.is_file():
-                        continue
-                    if not p.name.lower().endswith('.json'):
-                        continue
-                    collected[p.name] = p
-                except OSError as exc:
-                    app.logger.warning("%s 路径检查失败 %s: %s", label, p, exc)
+    with _song_search_index_lock:
+        rev = int(_song_search_index_revision)
+        total = len(_song_search_index)
+    if meta_only:
+        return _no_store(jsonify({'status': 'success', 'revision': rev, 'total': total}))
 
-        # 策略1：正常 glob（可能部分缺失）
-        try:
-            add_paths(STATIC_DIR.glob('*.json'), 'glob')
-        except OSError as exc:
-            app.logger.warning("glob static/*.json 失败，进入降级：%s", exc)
+    with _song_search_index_lock:
+        summaries = [
+            entry['summary']
+            for entry in _song_search_index.values()
+            if isinstance(entry.get('summary'), dict)
+        ]
+    _sort_search_summaries_inplace(summaries, sort_type, sort_asc)
+    payload = {
+        'status': 'success',
+        'revision': rev,
+        'total': len(summaries),
+        'sortType': sort_type,
+        'sortAsc': sort_asc,
+        'songs': summaries,
+    }
+    return _no_store(jsonify(payload))
 
-        # 策略2：os.scandir，逐条捕获错误，尽量拉齐缺漏
-        try:
-            with os.scandir(STATIC_DIR) as it:
-                for entry in it:
-                    try:
-                        if entry.is_file() and entry.name.lower().endswith('.json'):
-                            add_paths([Path(entry.path)], 'scandir')
-                    except OSError as exc:
-                        app.logger.warning("scandir 处理 %s 失败: %s", entry.name, exc)
-        except OSError as exc:
-            app.logger.warning("scandir static 失败：%s", exc)
 
-        # 策略3：平台命令兜底（Windows/Posix 区分）
-        try:
-            if os.name == 'nt':
-                cmd = ['cmd', '/c', 'dir', '/b', '*.json']
-                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
-            else:
-                cmd = ['find', '.', '-maxdepth', '1', '-type', 'f', '-name', '*.json', '-print']
-                proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(STATIC_DIR))
+@app.route('/songs/summary')
+def list_song_summaries():
+    """返回精简的歌曲列表信息，避免前端批量读取静态资源。支持按 mtime 分页与单曲查询。"""
+    if not is_request_allowed():
+        return abort(403)
 
-            if proc.stdout:
-                lines = proc.stdout.splitlines()
-                parsed: List[Path] = []
-                for line in lines:
-                    name = line.strip()
-                    if not name:
-                        continue
-                    if os.name != 'nt' and name.startswith('./'):
-                        name = name[2:]
-                    parsed.append(STATIC_DIR / name)
-                add_paths(parsed, 'fallback-cmd')
-
-            if proc.returncode != 0:
-                app.logger.warning("fallback 命令 %s 返回码 %s, stderr=%s", cmd[0], proc.returncode, proc.stderr.strip())
-        except FileNotFoundError:
-            app.logger.warning("fallback 命令不可用（%s），跳过", 'cmd/dir' if os.name == 'nt' else 'find')
-        except Exception as exc:
-            app.logger.warning("fallback 命令列举 static/*.json 异常：%s", exc)
-
-        return list(collected.values())
-
-    summaries: List[Dict[str, Any]] = []
-    for file in collect_static_json_files():
-        if file.name == 'artists.json':
-            continue
-
-        try:
-            raw_data = json.loads(file.read_text(encoding='utf-8'))
-        except Exception as exc:
-            app.logger.warning("读取 JSON 失败，已跳过 %s: %s", file.name, exc)
-            continue
-
-        if not isinstance(raw_data, dict):
-            continue
-
-        meta = raw_data.get('meta') or {}
-        if not isinstance(meta, dict):
-            meta = {}
-
-        lyrics_path, translation_path, roman_path, _ = parse_meta_lyrics(meta.get('lyrics'))
-
-        artists_raw = meta.get('artists', [])
-        if isinstance(artists_raw, list):
-            artists_list = artists_raw
-        elif isinstance(artists_raw, str):
-            artists_list = [artists_raw]
-        else:
-            artists_list = []
-
-        try:
-            has_duet, has_background = analyze_lyrics_tags(lyrics_path)
-        except Exception as exc:
-            app.logger.warning("检测歌词标签失败，已跳过标签标记 %s: %s", lyrics_path, exc)
-            has_duet = False
-            has_background = False
-
-        song_value = str(raw_data.get('song', '')).strip()
-        summary = {
-            'filename': file.name,
-            'title': meta.get('title', ''),
-            'artists': artists_list,
-            'lyricsPath': lyrics_path,
-            'translationPath': translation_path,
-            'romanPath': roman_path,
-            'metaLyrics': meta.get('lyrics', ''),
-            'song': song_value,
-            'albumImgSrc': meta.get('albumImgSrc', ''),
-            'backgroundImage': meta.get('Background-image', ''),
-            'dynamicCoverSrc': meta.get('dynamicCoverSrc', ''),
-            'dynamicCoverPoster': meta.get('dynamicCoverPoster', ''),
-            'hasDuet': has_duet,
-            'hasBackgroundVocals': has_background,
-            'hasAudio': has_valid_audio(song_value),
-            'mtime': file.stat().st_mtime
+    def _paging_payload(
+        songs: List[Dict[str, Any]],
+        page: int,
+        page_size: int,
+        total: int,
+        revision: int,
+    ) -> Dict[str, Any]:
+        total_pages = math.ceil(total / page_size) if total > 0 and page_size > 0 else 0
+        has_more = total_pages > 0 and page < total_pages
+        next_page = page + 1 if has_more else None
+        return {
+            'status': 'success',
+            'songs': songs,
+            'page': page,
+            'pageSize': page_size,
+            'total': total,
+            'totalPages': total_pages,
+            'hasMore': has_more,
+            'nextPage': next_page,
+            'loaded': len(songs),
+            'revision': int(revision),
         }
-        summaries.append(summary)
 
-    summaries.sort(key=lambda item: item.get('mtime', 0), reverse=True)
-    response = jsonify({'status': 'success', 'songs': summaries})
+    raw_single = (request.args.get('filename') or '').strip()
+    if raw_single:
+        def _single_error(message: str, status_code: int = 404):
+            resp = jsonify({
+                'status': 'error',
+                'message': message,
+                'songs': [],
+                'page': 1,
+                'pageSize': 50,
+                'total': 0,
+                'totalPages': 0,
+                'hasMore': False,
+                'nextPage': None,
+                'loaded': 0,
+            })
+            resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+            resp.headers['Pragma'] = 'no-cache'
+            resp.headers['Expires'] = '0'
+            return resp, status_code
+
+        try:
+            _, single_path = _resolve_existing_static_json_filename(raw_single)
+        except ValueError:
+            return _single_error('Invalid or disallowed song JSON filename', 400)
+
+        if not single_path.is_file():
+            return _single_error('Song JSON file not found', 404)
+
+        if single_path.name.lower() == 'artists.json':
+            return _single_error('Not a song metadata file', 400)
+
+        with _song_search_index_lock:
+            rev = int(_song_search_index_revision)
+            cached = _song_search_index.get(single_path.name)
+        if cached and isinstance(cached.get('summary'), dict):
+            summary = cached['summary']
+        else:
+            summary = _build_song_summary_from_static_json(single_path)
+        if not summary:
+            return _single_error('Failed to read or parse song JSON', 422)
+
+        payload = _paging_payload([summary], 1, 50, 1, rev)
+        response = jsonify(payload)
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
+    page = max(1, coerce_int(request.args.get('page'), 1) or 1)
+    page_size = coerce_int(request.args.get('pageSize'), 50) or 50
+    page_size = max(1, min(page_size, 50))
+
+    with _song_search_index_lock:
+        rev = int(_song_search_index_revision)
+        rows = list(_song_search_index.values())
+    summaries_full: List[Dict[str, Any]] = []
+    for entry in rows:
+        s = entry.get('summary')
+        if isinstance(s, dict):
+            summaries_full.append(s)
+    _sort_search_summaries_inplace(summaries_full, 'time', False)
+    total = len(summaries_full)
+    page_size_eff = page_size
+    total_pages = math.ceil(total / page_size_eff) if total > 0 and page_size_eff > 0 else 0
+    offset = (page - 1) * page_size_eff
+    summaries = summaries_full[offset:offset + page_size_eff]
+
+    has_more = total_pages > 0 and page < total_pages
+    next_page = page + 1 if has_more else None
+    payload = {
+        'status': 'success',
+        'revision': rev,
+        'songs': summaries,
+        'page': page,
+        'pageSize': page_size_eff,
+        'total': total,
+        'totalPages': total_pages,
+        'hasMore': has_more,
+        'nextPage': next_page,
+        'loaded': len(summaries),
+    }
+    response = jsonify(payload)
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
+
+
+@app.route('/songs/summary/batch', methods=['POST'])
+def batch_song_summaries():
+    """Resolve up to 50 song summaries in one request; order matches input (null slots skipped)."""
+    if not is_request_allowed():
+        return abort(403)
+
+    def _no_store(resp):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _no_store(jsonify({'status': 'error', 'message': 'JSON body required'})), 400
+    raw_list = payload.get('filenames')
+    if not isinstance(raw_list, list):
+        return _no_store(jsonify({'status': 'error', 'message': 'filenames must be an array'})), 400
+
+    truncated = len(raw_list) > 50
+    capped = raw_list[:50]
+    songs_out: List[Optional[Dict[str, Any]]] = []
+    errors_out: List[Optional[str]] = []
+
+    for idx, raw in enumerate(capped):
+        label = f'[{idx}]'
+        if not isinstance(raw, str):
+            songs_out.append(None)
+            errors_out.append(f'{label} filename must be a string')
+            continue
+        name = raw.strip()
+        if not name:
+            songs_out.append(None)
+            errors_out.append(f'{label} empty filename')
+            continue
+        try:
+            _, path = _resolve_existing_static_json_filename(name)
+        except ValueError:
+            songs_out.append(None)
+            errors_out.append(f'{label} invalid or disallowed filename')
+            continue
+        if path.name.lower() == 'artists.json':
+            songs_out.append(None)
+            errors_out.append(f'{label} not a song metadata file')
+            continue
+        if not path.is_file():
+            songs_out.append(None)
+            errors_out.append(f'{label} file not found')
+            continue
+        built = _build_song_summary_from_static_json(path)
+        if not built:
+            songs_out.append(None)
+            errors_out.append(f'{label} failed to read or parse JSON')
+            continue
+        songs_out.append(built)
+        errors_out.append(None)
+
+    body: Dict[str, Any] = {
+        'status': 'success',
+        'songs': songs_out,
+        'errors': errors_out,
+        'requested': len(raw_list),
+        'returned': len(capped),
+        'truncated': truncated,
+    }
+    return _no_store(jsonify(body))
+
+
+@app.route('/songs/artist')
+def list_songs_by_artist():
+    """Paginated songs for one artist; uses persisted search index summaries (no per-request full JSON scan)."""
+    if not is_request_allowed():
+        return abort(403)
+
+    def _no_store(resp):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+
+    raw_artist = (request.args.get('artist') or '').strip()
+    if not raw_artist:
+        payload = {
+            'status': 'success',
+            'artist': '',
+            'sortType': 'time',
+            'sortAsc': False,
+            'page': 1,
+            'pageSize': 50,
+            'total': 0,
+            'totalPages': 0,
+            'hasMore': False,
+            'nextPage': None,
+            'loaded': 0,
+            'songs': [],
+        }
+        return _no_store(jsonify(payload))
+
+    sort_type = (request.args.get('sortType') or 'time').strip().lower()
+    if sort_type not in ('time', 'name'):
+        sort_type = 'time'
+    sort_asc_raw = (request.args.get('sortAsc') or '0').strip().lower()
+    sort_asc = sort_asc_raw in ('1', 'true', 'yes', 'on')
+
+    page = max(1, coerce_int(request.args.get('page'), 1) or 1)
+    page_size = coerce_int(request.args.get('pageSize'), 50) or 50
+    page_size = max(1, min(page_size, 50))
+
+    ordered = _run_artist_filter_ordered_summaries(raw_artist, sort_type, sort_asc)
+    total = len(ordered)
+    total_pages = math.ceil(total / page_size) if total > 0 and page_size > 0 else 0
+    offset = (page - 1) * page_size
+    slice_songs = ordered[offset:offset + page_size]
+    has_more = total_pages > 0 and page < total_pages
+    next_page = page + 1 if has_more else None
+    payload = {
+        'status': 'success',
+        'artist': raw_artist,
+        'sortType': sort_type,
+        'sortAsc': sort_asc,
+        'page': page,
+        'pageSize': page_size,
+        'total': total,
+        'totalPages': total_pages,
+        'hasMore': has_more,
+        'nextPage': next_page,
+        'loaded': len(slice_songs),
+        'songs': slice_songs,
+    }
+    return _no_store(jsonify(payload))
+
+
+@app.route('/songs/search')
+def search_song_library():
+    """Full-library song search with pagination; separate from browse list /songs/summary."""
+    if not is_request_allowed():
+        return abort(403)
+
+    raw_q = (request.args.get('q') or '').strip()
+    fuzzy_arg = (request.args.get('fuzzy') or '').strip().lower()
+    fuzzy = fuzzy_arg in ('1', 'true', 'yes', 'on')
+
+    sort_type = (request.args.get('sortType') or 'time').strip().lower()
+    if sort_type not in ('time', 'name'):
+        sort_type = 'time'
+    sort_asc_raw = (request.args.get('sortAsc') or '0').strip().lower()
+    sort_asc = sort_asc_raw in ('1', 'true', 'yes', 'on')
+
+    page = max(1, coerce_int(request.args.get('page'), 1) or 1)
+    page_size = coerce_int(request.args.get('pageSize'), 50) or 50
+    page_size = max(1, min(page_size, 50))
+
+    def _no_store(resp):
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+
+    if not raw_q:
+        payload = {
+            'status': 'success',
+            'query': '',
+            'fuzzy': fuzzy,
+            'sortType': sort_type,
+            'sortAsc': sort_asc,
+            'page': 1,
+            'pageSize': page_size,
+            'total': 0,
+            'totalPages': 0,
+            'hasMore': False,
+            'nextPage': None,
+            'loaded': 0,
+            'songs': [],
+        }
+        return _no_store(jsonify(payload))
+
+    ordered = _run_library_search_ordered_summaries(raw_q, fuzzy, sort_type, sort_asc)
+    total = len(ordered)
+    total_pages = math.ceil(total / page_size) if total > 0 and page_size > 0 else 0
+    offset = (page - 1) * page_size
+    slice_songs = ordered[offset:offset + page_size]
+    has_more = total_pages > 0 and page < total_pages
+    next_page = page + 1 if has_more else None
+    payload = {
+        'status': 'success',
+        'query': raw_q,
+        'fuzzy': fuzzy,
+        'sortType': sort_type,
+        'sortAsc': sort_asc,
+        'page': page,
+        'pageSize': page_size,
+        'total': total,
+        'totalPages': total_pages,
+        'hasMore': has_more,
+        'nextPage': next_page,
+        'loaded': len(slice_songs),
+        'songs': slice_songs,
+    }
+    return _no_store(jsonify(payload))
+
+
+@app.route('/internal/rebuild_song_search_index', methods=['POST'])
+def internal_rebuild_song_search_index():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('重建歌曲搜索索引')
+    if locked_response:
+        return locked_response
+    try:
+        rebuild_song_search_index_full()
+        with _song_search_index_lock:
+            count = len(_song_search_index)
+        return jsonify({'status': 'success', 'entries': count})
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 
 @app.route('/get_backups', methods=['POST'])
@@ -7276,13 +8347,77 @@ class TTMLLine:
         # 返回元组(元组(str, str或None), 元组(str, str或None)或None)
         return self.__raw(), (self.__bg_line.__raw() if self.__bg_line else None)
 
-def ttml_to_lys(input_path, songs_dir):
-    """主转换函数"""
+
+def ttml_text_to_lys_parts(ttml_text: str) -> Tuple[bool, List[str], List[str], str]:
+    """解析 TTML 字符串，返回 LYS 行列表与可选翻译行（与写盘版语义一致）。"""
     TTMLLine.have_duet = False
     TTMLLine.have_bg = False
     TTMLLine.have_ts = False
     TTMLLine.have_pair = 0
+    if not (ttml_text or '').strip():
+        return False, [], [], 'TTML 内容为空'
+    try:
+        sanitized_ttml = sanitize_ttml_content(ttml_text)
+    except Exception as exc:
+        app.logger.error("TTML 白名单过滤失败（字符串）: %s", exc)
+        return False, [], [], f'TTML 白名单过滤失败: {exc}'
 
+    try:
+        dom: Document = xml.dom.minidom.parseString(sanitized_ttml)
+        tt: Document = dom.documentElement
+        body_elements = tt.getElementsByTagName('body')
+        head_elements = tt.getElementsByTagName('head')
+        if not body_elements or not head_elements:
+            return False, [], [], 'TTML 缺少 body 或 head'
+        body: Element = body_elements[0]
+        head: Element = head_elements[0]
+        div_elements = body.getElementsByTagName('div')
+        metadata_elements = head.getElementsByTagName('metadata')
+        if not div_elements or not metadata_elements:
+            return False, [], [], 'TTML 缺少 div 或 metadata'
+        div: Element = div_elements[0]
+        metadata: Element = metadata_elements[0]
+        p_elements: NodeList[Element] = div.getElementsByTagName('p')
+        if not p_elements or len(p_elements) == 0:
+            return False, [], [], 'TTML 缺少歌词行'
+        agent_elements: NodeList[Element] = metadata.getElementsByTagName('ttm:agent')
+        for meta in agent_elements:
+            if meta.getAttribute('xml:id') != 'v1':
+                TTMLLine.have_duet = True
+        lines: list[TTMLLine] = []
+        for p in p_elements:
+            try:
+                lines.append(TTMLLine(p))
+            except Exception as e:
+                app.logger.error(f"处理TTML行时出错: {type(e).__name__}: {e!s}，已跳过")
+                continue
+        lys_parts: List[str] = []
+        trans_parts: List[str] = []
+        for main_line, bg_line in [line.to_str() for line in lines]:
+            if main_line and main_line[0]:
+                lys_parts.append(main_line[0])
+            if main_line and main_line[1]:
+                trans_parts.append(main_line[1])
+            if bg_line:
+                if bg_line[0]:
+                    lys_parts.append(bg_line[0])
+        if not lys_parts:
+            return False, [], [], '未生成任何 LYS 行'
+        return True, lys_parts, trans_parts, ''
+    except Exception as e:
+        app.logger.error("无法解析TTML字符串: %s", e, exc_info=True)
+        return False, [], [], str(e)
+
+
+def ttml_text_to_lys_content(ttml_text: str) -> Tuple[bool, Optional[str], str]:
+    ok, lys_parts, _trans, msg = ttml_text_to_lys_parts(ttml_text)
+    if not ok:
+        return False, None, msg
+    return True, "\n".join(lys_parts), ''
+
+
+def ttml_to_lys(input_path, songs_dir):
+    """主转换函数"""
     lyric_path = ''
     trans_path = ''
     try:
@@ -7293,111 +8428,28 @@ def ttml_to_lys(input_path, songs_dir):
             app.logger.error(f"读取TTML文件失败: {input_path}. 错误: {exc}")
             return False, None, None
 
-        try:
-            sanitized_ttml = sanitize_ttml_content(raw_ttml)
-        except Exception as exc:
-            app.logger.error(f"TTML 白名单过滤失败: {input_path}. 错误: {exc}")
+        ok, lys_parts, trans_parts, _err = ttml_text_to_lys_parts(raw_ttml)
+        if not ok or not lys_parts:
             return False, None, None
 
-        # 解析净化后的 XML
-        dom: Document = xml.dom.minidom.parseString(sanitized_ttml)
-        tt: Document = dom.documentElement  # 获取根元素
+        os.makedirs(songs_dir, exist_ok=True)
+        base_name = os.path.splitext(input_path)[0]
+        lyric_path = os.path.join(songs_dir, f"{os.path.basename(base_name)}.lys")
+        with open(lyric_path, 'w', encoding='utf8') as lyric_file:
+            lyric_file.write("\n".join(lys_parts) + "\n")
 
-        # 获取tt中的body/head元素
-        body_elements = tt.getElementsByTagName('body')
-        head_elements = tt.getElementsByTagName('head')
-        
-        if not body_elements or not head_elements:
-            app.logger.error(f"TTML文件格式错误: {input_path}. 找不到必要的body或head元素")
-            return False, None, None
-            
-        body: Element = body_elements[0]
-        head: Element = head_elements[0]
-
-        if body and head:
-            # 获取body/head中的<div>/<metadata>子元素
-            div_elements = body.getElementsByTagName('div')
-            metadata_elements = head.getElementsByTagName('metadata')
-            
-            if not div_elements or not metadata_elements:
-                app.logger.error(f"TTML文件格式错误: {input_path}. 找不到必要的div或metadata元素")
-                return False, None, None
-                
-            div: Element = div_elements[0]
-            metadata: Element = metadata_elements[0]
-
-            # 获取div中的所有<p>子元素
-            p_elements: NodeList[Element] = div.getElementsByTagName('p')
-            if not p_elements or len(p_elements) == 0:
-                app.logger.error(f"TTML文件格式错误: {input_path}. 找不到任何p元素")
-                return False, None, None
-                
-            agent_elements: NodeList[Element] = metadata.getElementsByTagName('ttm:agent')
-
-            # 检查是否有对唱
-            for meta in agent_elements:
-                if meta.getAttribute('xml:id') != 'v1':
-                    TTMLLine.have_duet = True
-
-            lines: list[TTMLLine] = []
-            # 遍历每个<p>元素
-            for p in p_elements:
-                try:
-                    lines.append(TTMLLine(p))
-                except Exception as e:
-                    app.logger.error(f"处理TTML行时出错: {type(e).__name__}: {e!s}，已跳过")
-                    continue
-            
-            # 确保songs目录存在
-            os.makedirs(songs_dir, exist_ok=True)
-
-            # 修改路径
-            base_name = os.path.splitext(input_path)[0]
-
-            lyric_file: TextIO|None = None
-            trans_file: TextIO|None = None
-
-            lyric_path = os.path.join(songs_dir, f"{os.path.basename(base_name)}.lys")
-            lyric_file = open(lyric_path, 'w', encoding='utf8')
-
-            if TTMLLine.have_ts:
-                trans_path = os.path.join(songs_dir, f"{os.path.basename(base_name)}_trans.lrc")
-                trans_file = open(trans_path, 'w', encoding='utf8')
-
-            count: int = 0
-
-            try:
-                for main_line, bg_line in [line.to_str() for line in lines]:
-                    if main_line and main_line[0]:
-                        lyric_file.write(main_line[0] + '\n')
-                        lyric_file.flush()
-                    if main_line and main_line[1] and trans_file:
-                        trans_file.write(main_line[1] + '\n')
-                        trans_file.flush()
-
-                    if bg_line:
-                        if bg_line[0]:
-                            lyric_file.write(bg_line[0] + '\n')
-                            lyric_file.flush()
-                        # 背景歌词不生成独立的翻译行，因为它应该与主歌词共享翻译
-                        count += 1
-            except Exception as e:
-                app.logger.error(f"写入歌词文件时出错: {str(e)}")
-            finally:
-                # 确保文件始终被关闭
-                if lyric_file:
-                    lyric_file.close()
-                if trans_file:
-                    trans_file.close()
-
+        if trans_parts:
+            trans_path = os.path.join(songs_dir, f"{os.path.basename(base_name)}_trans.lrc")
+            with open(trans_path, 'w', encoding='utf8') as trans_file:
+                trans_file.write("\n".join(trans_parts) + "\n")
         else:
-            return False, None, None
+            trans_path = ''
 
     except Exception as e:
-        app.logger.error(f"无法解析TTML文件: {input_path}. 错误: {str(e)}")
+        app.logger.error(f"无法转换TTML文件: {input_path}. 错误: {str(e)}")
         return False, None, None
 
-    return True, lyric_path, trans_path
+    return True, lyric_path, trans_path or None
 
 def preprocess_brackets(content):
     """预处理括号内容，保留时间标记边界
@@ -10309,6 +11361,1070 @@ def translate_lyrics():
             
         return jsonify({'status': 'error', 'message': error_message})
 
+
+_ROMAN_LINE_NUM_RE = re.compile(r'^(\d+)\.(.*)$')
+_ROMAN_LRC_HEAD_RE = re.compile(r'^\s*\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]\s*(.*)$')
+
+
+def _split_roman_body_tokens(body: str, sep: str, require_trail: bool) -> Tuple[Optional[List[str]], Optional[str]]:
+    if sep == '':
+        return [body], None
+    if require_trail and not body.endswith(sep):
+        return None, '缺少行尾分隔符'
+    parts = body.split(sep)
+    if parts and parts[-1] == '':
+        parts = parts[:-1]
+    return parts, None
+
+
+_ROMAN_INDEXED_BRACKET_RE = re.compile(r'\[(\d+)\]')
+
+
+def _parse_indexed_roman_body(body: str, line_n: int) -> Tuple[Optional[Dict[int, str]], List[str]]:
+    """Parse N.[1]tok[2]tok... body into {k: roman_text}. Returns errors on duplicate or malformed."""
+    errs: List[str] = []
+    matches = list(_ROMAN_INDEXED_BRACKET_RE.finditer(body))
+    if not matches:
+        return None, [f'第{line_n}行缺少 token 标记 [k]']
+    first = matches[0].start()
+    if first > 0 and body[:first].strip():
+        return None, [f'第{line_n}行在首个 [k] 前存在多余内容']
+    by_k: Dict[int, str] = {}
+    for i, m in enumerate(matches):
+        k = int(m.group(1))
+        if k in by_k:
+            return None, [f'第{line_n}行重复 token [{k}]']
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        by_k[k] = body[m.end():end].strip()
+    return by_k, errs
+
+
+def _parse_roman_model_output(
+    raw: str, alignment_mode: str, sep: str, require_trail: bool
+) -> Tuple[Dict[int, Any], List[str]]:
+    by_num: Dict[int, Any] = {}
+    errors: List[str] = []
+    mode = _normalize_romanization_alignment_mode(alignment_mode)
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        m = _ROMAN_LINE_NUM_RE.match(line)
+        if not m:
+            errors.append(f'无法解析编号行: {line[:160]}')
+            continue
+        n = int(m.group(1))
+        body = m.group(2)
+        if n in by_num:
+            errors.append(f'重复行号: {n}')
+            continue
+        if mode == 'indexed_tokens':
+            idx_map, idx_errs = _parse_indexed_roman_body(body, n)
+            if idx_errs:
+                errors.extend(idx_errs)
+                continue
+            if idx_map is None:
+                continue
+            by_num[n] = idx_map
+        else:
+            parts, err = _split_roman_body_tokens(body, sep, require_trail)
+            if err:
+                errors.append(f'第{n}行 {err}')
+                continue
+            if parts is None:
+                continue
+            by_num[n] = parts
+    return by_num, errors
+
+
+def _roman_token_texts_with_spaces(parts: Union[List[str], Tuple[str, ...]]) -> List[str]:
+    """
+    Strip each roman fragment so LYS serializes with readable gaps:
+    - trailing space before '(' on every token except the last (e.g. 'a ' -> 'a (ts)');
+    - leading space after the previous ')' starting from the second token (e.g. ' bb' -> ') bb(').
+    """
+    seq = [str(p).strip() for p in parts]
+    n = len(seq)
+    out: List[str] = []
+    for j, s in enumerate(seq):
+        piece = s
+        if j > 0:
+            piece = f' {piece}' if piece else ' '
+        if j < n - 1:
+            if piece.strip():
+                piece = piece.rstrip() + ' '
+            elif not piece:
+                piece = ' '
+        out.append(piece)
+    return out
+
+
+def _lyric_line_tokens_ts_match(a_line: Dict[str, Any], b_line: Dict[str, Any]) -> bool:
+    ta = a_line.get('tokens') or []
+    tb = b_line.get('tokens') or []
+    if len(ta) != len(tb):
+        return False
+    for x, y in zip(ta, tb):
+        if (x.get('ts') or '') != (y.get('ts') or ''):
+            return False
+    return True
+
+
+def _build_lys_roman_background_line(
+    base_line: Dict[str, Any], bg_prefix: str, roman_parts: List[str]
+) -> Dict[str, Any]:
+    """Deep-copy base_line timings, set prefix to bg_prefix, assign spaced roman to token texts."""
+    dup = copy.deepcopy(base_line)
+    dup['id'] = qe_new_id()
+    dup['prefix'] = bg_prefix
+    spaced = _roman_token_texts_with_spaces(roman_parts)
+    toks = dup.get('tokens') or []
+    for j, tok in enumerate(toks):
+        tok['id'] = qe_new_id()
+        tok['text'] = spaced[j] if j < len(spaced) else str(tok.get('text', ''))
+    return dup
+
+
+def _build_lys_roman_targets(
+    doc: Dict[str, Any], alignment_mode: str, sep: str, require_trail: bool
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    targets: List[Dict[str, Any]] = []
+    numbered: List[str] = []
+    mode = _normalize_romanization_alignment_mode(alignment_mode)
+    for li, line in enumerate(doc.get('lines', [])):
+        if line.get('is_meta'):
+            continue
+        if _lys_prefix_is_background_style(str(line.get('prefix') or '')):
+            continue
+        tokens = line.get('tokens') or []
+        if not tokens:
+            continue
+        texts = [str(t.get('text', '')) for t in tokens]
+        n = len(targets) + 1
+        exp = len(tokens)
+        token_indexes = list(range(1, exp + 1))
+        if mode == 'indexed_tokens':
+            body = ''.join(f'[{j + 1}]{texts[j]}' for j in range(exp))
+            targets.append({
+                'n': n,
+                'doc_line_index': li,
+                'expected': exp,
+                'alignment_mode': mode,
+                'token_indexes': token_indexes,
+            })
+            numbered.append(f'{n}.{body}')
+        else:
+            body = sep.join(texts)
+            if require_trail:
+                body += sep
+            targets.append({
+                'n': n,
+                'doc_line_index': li,
+                'expected': exp,
+                'alignment_mode': mode,
+                'token_indexes': token_indexes,
+            })
+            numbered.append(f'{n}.{body}')
+    return targets, numbered
+
+
+def _build_lrc_roman_targets(
+    lrc_text: str, alignment_mode: str, sep: str, require_trail: bool
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    targets: List[Dict[str, Any]] = []
+    numbered: List[str] = []
+    mode = _normalize_romanization_alignment_mode(alignment_mode)
+    for raw in lrc_text.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        m = _ROMAN_LRC_HEAD_RE.match(s)
+        if not m:
+            continue
+        mins, secs, ms3, rest = m.groups()
+        start_ms = (int(mins) * 60 + int(secs)) * 1000 + int((ms3 or '0').ljust(3, '0')[:3])
+        text = (rest or '').strip()
+        if not text:
+            continue
+        n = len(targets) + 1
+        if mode == 'indexed_tokens':
+            body = f'[1]{text}'
+            targets.append({
+                'n': n,
+                'start_ms': start_ms,
+                'expected': 1,
+                'alignment_mode': mode,
+                'token_indexes': [1],
+            })
+            numbered.append(f'{n}.{body}')
+        else:
+            body = text + sep if require_trail else text
+            targets.append({
+                'n': n,
+                'start_ms': start_ms,
+                'expected': 1,
+                'alignment_mode': mode,
+                'token_indexes': [1],
+            })
+            numbered.append(f'{n}.{body}')
+    return targets, numbered
+
+
+def _validate_roman_alignment(
+    targets: List[Dict[str, Any]],
+    ai_by_line: Dict[int, Any],
+    strict: bool,
+) -> List[str]:
+    errors: List[str] = []
+    expected_ns = {t['n'] for t in targets}
+    for n in sorted(ai_by_line.keys()):
+        if n not in expected_ns:
+            errors.append(f'多余行号: {n}')
+    for t in targets:
+        n = t['n']
+        mode = _normalize_romanization_alignment_mode(t.get('alignment_mode'))
+        val = ai_by_line.get(n)
+        if val is None:
+            errors.append(f'缺少行号: {n}')
+            continue
+        exp = int(t.get('expected') or 0)
+        if mode == 'indexed_tokens':
+            if isinstance(val, dict):
+                d: Dict[int, str] = val
+                need = set(range(1, exp + 1))
+                keys = set(d.keys())
+                for k in sorted(keys - need):
+                    if k < 1:
+                        errors.append(f'第{n}行出现非法 token 编号 [{k}]')
+                    else:
+                        errors.append(f'第{n}行出现越界 token [{k}]，期望范围 1..{exp}')
+                for k in sorted(need - keys):
+                    errors.append(f'第{n}行缺少 token [{k}]')
+                    break
+                if keys != need:
+                    continue
+                ai_by_line[n] = [d[i] for i in range(1, exp + 1)]
+            elif isinstance(val, list):
+                if strict and len(val) != exp:
+                    errors.append(f'行{n} token 数不一致（期望 {exp}，实际 {len(val)}）')
+            else:
+                errors.append(f'第{n}行解析结果类型无效')
+        else:
+            parts = val if isinstance(val, list) else None
+            if parts is None:
+                errors.append(f'第{n}行解析结果类型无效')
+                continue
+            if strict and len(parts) != exp:
+                errors.append(f'行{n} token 数不一致（期望 {exp}，实际 {len(parts)}）')
+    return errors
+
+
+def _apply_roman_tokens_to_lys_doc(doc: Dict[str, Any], targets: List[Dict[str, Any]], ai_by_line: Dict[int, Any]) -> str:
+    """
+    Keep each source lyric line unchanged; write roman into a new [6] line directly below
+    (or update an existing companion [6]/[7]/[8] line with matching timestamps).
+    """
+    lines: List[Dict[str, Any]] = doc.setdefault('lines', [])
+    bg_prefix = '[6]'
+    for t in sorted(targets, key=lambda x: int(x['doc_line_index']), reverse=True):
+        li = int(t['doc_line_index'])
+        if li < 0 or li >= len(lines):
+            continue
+        line = lines[li]
+        if line.get('is_meta'):
+            continue
+        if _lys_prefix_is_background_style(str(line.get('prefix') or '')):
+            continue
+        toks = line.get('tokens') or []
+        if not toks:
+            continue
+        parts = ai_by_line.get(t['n'])
+        if not isinstance(parts, list) or len(parts) != len(toks):
+            continue
+        spaced = _roman_token_texts_with_spaces(parts)
+        nxt_i = li + 1
+        if nxt_i < len(lines):
+            nxt = lines[nxt_i]
+            if _lys_prefix_is_background_style(str(nxt.get('prefix') or '')):
+                if _lyric_line_tokens_ts_match(line, nxt):
+                    nxtoks = nxt.get('tokens') or []
+                    for j, tok in enumerate(nxtoks):
+                        tok['text'] = spaced[j] if j < len(spaced) else str(tok.get('text', ''))
+                    continue
+                lines[nxt_i] = _build_lys_roman_background_line(line, bg_prefix, parts)
+                continue
+        lines.insert(li + 1, _build_lys_roman_background_line(line, bg_prefix, parts))
+    return qe_dump_lys(doc)
+
+
+def _parse_lys_rows_for_roman_lrc(parsed: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Keep only lyric rows that _build_lys_roman_targets would number (non-[6]/[7]/[8]).
+    parse_lys marker is the digits inside brackets ('6','7','8' for background tags).
+    """
+    return [pl for pl in parsed if str(pl.get('marker', '')) not in ('6', '7', '8')]
+
+
+def _format_roman_lrc_lines(start_ms_list: List[int], texts: List[str]) -> str:
+    """LRC-style timestamps with centisecond fraction, e.g. [00:32.65]."""
+    rows: List[str] = []
+    for start_ms, text in zip(start_ms_list, texts):
+        ms = max(0, int(start_ms))
+        minutes, rem_ms = divmod(ms, 60000)
+        whole_sec, frac_ms = divmod(rem_ms, 1000)
+        centis = (frac_ms + 5) // 10
+        if centis >= 100:
+            whole_sec += 1
+            centis -= 100
+        if whole_sec >= 60:
+            minutes += whole_sec // 60
+            whole_sec %= 60
+        rows.append(f"[{minutes:02d}:{whole_sec:02d}.{centis:02d}]{text}")
+    return '\n'.join(rows)
+
+
+def _roman_lys_to_lrc(lys_text: str, targets: List[Dict[str, Any]], ai_by_line: Dict[int, Any], strict: bool) -> Tuple[Optional[str], List[str]]:
+    parsed = parse_lys(lys_text)
+    main_rows = _parse_lys_rows_for_roman_lrc(parsed)
+    err = _validate_roman_alignment(targets, ai_by_line, strict)
+    if err:
+        return None, err
+    if len(main_rows) != len(targets):
+        return None, [
+            f'时间轴对齐失败：非背景歌词行数 {len(main_rows)} 与罗马音行数 {len(targets)} 不一致'
+            f'（parse_lys 总行数 {len(parsed)}，已排除 [6]/[7]/[8] 标记行）'
+        ]
+    starts: List[int] = []
+    texts: List[str] = []
+    for i, t in enumerate(targets):
+        parts = ai_by_line[t['n']]
+        pl = main_rows[i]
+        syl = pl.get('syllables') or []
+        if not syl:
+            return None, [f'第{t["n"]}行无音节时间戳']
+        starts.append(int(float(syl[0]['startTime']) * 1000))
+        texts.append(' '.join(parts))
+    return _format_roman_lrc_lines(starts, texts), []
+
+
+_ROMAN_NUMBERED_LINE_HEAD = re.compile(r'(?m)^\s*\d+\.')
+
+
+def _count_numbered_roman_lines(text: str) -> int:
+    return len(_ROMAN_NUMBERED_LINE_HEAD.findall(text or ''))
+
+
+def prepare_romanization_job(
+    request_data: Dict[str, Any],
+    runtime: Dict[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], str, List[str]]:
+    """
+    Parse source, build targets/numbered input, assemble OpenAI-style messages. No API call.
+
+    Returns (job, "", []) on success. On failure returns (None, user_message, errors_list).
+    """
+    roman_cfg = coalesce_romanization_settings((runtime.get('romanization') or {}))
+    alignment_mode = str(roman_cfg.get('alignment_mode') or ROMANIZATION_DEFAULTS['alignment_mode'])
+    sep = str(roman_cfg.get('separator') or ';')
+    strict = bool(roman_cfg.get('strict_token_count', True))
+    require_trail = bool(roman_cfg.get('require_trailing_separator', True))
+    system_prompt = str(roman_cfg.get('system_prompt') or '').strip() or _default_romanization_system_prompt_for_mode(
+        alignment_mode
+    )
+    compat_mode = parse_bool(runtime.get('translation', {}).get('compat_mode'), AI_TRANSLATION_SETTINGS['compat_mode'])
+
+    source_content = str(request_data.get('source_content') or '')
+    source_format = str(request_data.get('source_format') or 'lys').strip().lower()
+    target_format = str(request_data.get('target_format') or 'lys').strip().lower()
+    if target_format not in {'lys', 'lrc'}:
+        return None, 'target_format 必须是 lys 或 lrc', []
+    if source_format not in {'lys', 'lrc', 'ttml'}:
+        return None, 'source_format 必须是 lys、lrc 或 ttml', []
+    if source_format == 'lrc' and target_format == 'lys':
+        return None, 'LRC 源不能输出 LYS（无逐字时间轴可供回填）', []
+
+    lys_working = source_content
+    if source_format == 'ttml':
+        ok_ttml, lys_text, err_ttml = ttml_text_to_lys_content(source_content)
+        if not ok_ttml or not lys_text:
+            return None, err_ttml or 'TTML 转 LYS 失败', []
+        lys_working = lys_text
+        source_effective = 'lys'
+    else:
+        source_effective = source_format
+
+    targets: List[Dict[str, Any]] = []
+    numbered: List[str] = []
+    if source_effective == 'lys':
+        doc = qe_parse_lys(lys_working)
+        targets, numbered = _build_lys_roman_targets(doc, alignment_mode, sep, require_trail)
+    else:
+        targets, numbered = _build_lrc_roman_targets(source_content, alignment_mode, sep, require_trail)
+
+    if not numbered:
+        return None, '没有可罗马音化的歌词行', []
+
+    numbered_preview = '\n'.join(numbered)
+    if _normalize_romanization_alignment_mode(alignment_mode) == 'indexed_tokens':
+        user_block = (
+            '对齐协议：逐 token 编号。每行在「行号 N.」之后为若干「[k]片段」，k 从 1 递增，与输入完全一致。\n'
+            f'输入共 {len(numbered)} 行，请保持行号 1..{len(numbered)} 一一对应。\n\n'
+            f'{numbered_preview}'
+        )
+        contract = (
+            '\n\n硬性要求：只输出编号行，不要其它说明；行号必须与输入一致；'
+            '每行必须保留与输入相同的全部 [k] 编号且不得跳号、不得重复；'
+            '只将每个 [k] 后的原文替换为罗马音，不要输出额外说明。'
+        )
+    else:
+        user_block = (
+            f'分节分隔符为 {sep!r}。\n'
+            f'输入共 {len(numbered)} 行，请保持行号 1..{len(numbered)} 一一对应。\n\n'
+            f'{numbered_preview}'
+        )
+        contract = (
+            '\n\n硬性要求：只输出编号行，不要其它说明；行号必须与输入一致；'
+            '每行分段数量必须与输入一致；只输出罗马音。'
+        )
+    if compat_mode:
+        messages: List[Dict[str, str]] = [{'role': 'user', 'content': f"{system_prompt}{contract}\n\n{user_block}"}]
+    else:
+        messages = [
+            {'role': 'system', 'content': system_prompt + contract},
+            {'role': 'user', 'content': user_block},
+        ]
+
+    job: Dict[str, Any] = {
+        'source_content': source_content,
+        'lys_working': lys_working,
+        'source_format': source_format,
+        'source_effective': source_effective,
+        'target_format': target_format,
+        'targets': targets,
+        'numbered': numbered,
+        'numbered_preview': numbered_preview,
+        'alignment_mode': alignment_mode,
+        'sep': sep,
+        'strict': strict,
+        'require_trail': require_trail,
+        'system_prompt': system_prompt,
+        'contract': contract,
+        'user_block': user_block,
+        'compat_mode': compat_mode,
+        'messages': messages,
+    }
+    return job, '', []
+
+
+def _serialize_roman_merged_to_raw(
+    ai_by_line: Dict[int, Any],
+    targets: List[Dict[str, Any]],
+    alignment_mode: str,
+    sep: str,
+    require_trail: bool,
+) -> Tuple[str, List[str]]:
+    """Rebuild numbered romanization text from merged parse dict. Returns (text, errors)."""
+    errors: List[str] = []
+    mode = _normalize_romanization_alignment_mode(alignment_mode)
+    lines_out: List[str] = []
+    for t in sorted(targets, key=lambda x: int(x['n'])):
+        n = int(t['n'])
+        val = ai_by_line.get(n)
+        if val is None:
+            errors.append(f'合并后缺少行号: {n}')
+            continue
+        exp = int(t.get('expected') or 0)
+        if mode == 'indexed_tokens':
+            if isinstance(val, dict):
+                d: Dict[int, str] = val
+                need = set(range(1, exp + 1))
+                if set(d.keys()) != need:
+                    errors.append(f'第{n}行 token 结构不完整，无法序列化')
+                    continue
+                parts = [d[i] for i in range(1, exp + 1)]
+            elif isinstance(val, list):
+                if len(val) != exp:
+                    errors.append(f'第{n}行 token 数 {len(val)} 与期望 {exp} 不一致，无法序列化')
+                    continue
+                parts = [str(x) for x in val]
+            else:
+                errors.append(f'第{n}行合并值类型无效')
+                continue
+            body = ''.join(f'[{j + 1}]{parts[j]}' for j in range(exp))
+        else:
+            if not isinstance(val, list):
+                errors.append(f'第{n}行合并值类型无效')
+                continue
+            if len(val) != exp:
+                errors.append(f'第{n}行 token 数 {len(val)} 与期望 {exp} 不一致，无法序列化')
+                continue
+            body = sep.join(str(p) for p in val)
+            if require_trail:
+                body += sep
+        lines_out.append(f'{n}.{body}')
+    if errors:
+        return '', errors
+    return '\n'.join(lines_out), []
+
+
+def merge_roman_patch_into_base(
+    job: Dict[str, Any], base_raw: str, patch_raw: str
+) -> Tuple[Optional[str], List[str]]:
+    """
+    Overlay patch lines onto a full baseline model output, then serialize to a complete raw block.
+    Returns (merged_raw_stripped, errors). merged_raw is None when merge cannot proceed.
+    """
+    targets = job['targets']
+    alignment_mode = str(job.get('alignment_mode') or ROMANIZATION_DEFAULTS['alignment_mode'])
+    sep = str(job.get('sep') or ';')
+    require_trail = bool(job.get('require_trail', True))
+    expected_ns = {int(t['n']) for t in targets}
+
+    base_raw_s = str(base_raw or '').strip()
+    patch_raw_s = str(patch_raw or '').strip()
+    if not patch_raw_s:
+        return None, ['修复输出为空']
+
+    ai_base, err_base = _parse_roman_model_output(base_raw_s, alignment_mode, sep, require_trail)
+    if err_base:
+        return None, list(err_base)
+    if set(ai_base.keys()) != expected_ns:
+        return None, ['罗马音基底不完整（缺少行号或含无法解析行），请使用「重新生成」']
+
+    ai_patch, err_patch = _parse_roman_model_output(patch_raw_s, alignment_mode, sep, require_trail)
+    if err_patch:
+        return None, list(err_patch)
+
+    for pn in ai_patch.keys():
+        if int(pn) not in expected_ns:
+            return None, [f'修复输出含非法行号: {pn}']
+
+    merged = {**ai_base, **ai_patch}
+    merged_raw, ser_errs = _serialize_roman_merged_to_raw(merged, targets, alignment_mode, sep, require_trail)
+    if ser_errs:
+        return None, ser_errs
+    return merged_raw.strip(), []
+
+
+def romanization_request_has_repair_fields(request_data: Dict[str, Any]) -> bool:
+    if str(request_data.get('repair_instruction') or '').strip():
+        return True
+    if str(request_data.get('previous_full_model_output') or '').strip():
+        return True
+    hist = request_data.get('conversation_history')
+    return isinstance(hist, list) and len(hist) > 0
+
+
+def _validate_roman_repair_history_turns(hist: List[Any]) -> Tuple[bool, str]:
+    """Require user/assistant alternation, start with user, end with assistant (last model output)."""
+    if not isinstance(hist, list) or len(hist) < 2:
+        return False, 'conversation_history 至少需包含 user 与 assistant 各一条（须含首轮 user 与首轮模型输出）'
+    prev: Optional[str] = None
+    for i, msg in enumerate(hist):
+        if not isinstance(msg, dict):
+            return False, f'conversation_history[{i}] 必须是对象'
+        role = str(msg.get('role') or '').strip().lower()
+        if role not in ('user', 'assistant'):
+            return False, f'conversation_history[{i}].role 必须是 user 或 assistant'
+        if str(msg.get('content') or '').strip() == '':
+            return False, f'conversation_history[{i}].content 不能为空'
+        if prev is None:
+            if role != 'user':
+                return False, 'conversation_history 须以 user（首轮发给模型的输入）起始'
+        else:
+            if role == prev:
+                return False, f'conversation_history[{i}] 须与相邻消息 user/assistant 交替'
+        prev = role
+    if prev != 'assistant':
+        return False, 'conversation_history 须以 assistant（上一轮模型输出）结尾'
+    return True, ''
+
+
+def _format_roman_messages_for_external_clipboard(messages: List[Dict[str, str]]) -> str:
+    """Human-readable multi-turn block for external chat UIs."""
+    title_map = {'system': 'System', 'user': 'User', 'assistant': 'Assistant'}
+    blocks: List[str] = []
+    for m in messages:
+        role = str(m.get('role') or '')
+        label = title_map.get(role, role or 'unknown')
+        blocks.append(f'[{label}]\n{str(m.get("content") or "")}')
+    return '\n\n'.join(blocks).strip()
+
+
+def apply_romanization_repair_to_job(job: Dict[str, Any], request_data: Dict[str, Any]) -> Tuple[bool, str, List[str]]:
+    """
+    Rebuild job['messages'] for multi-turn repair: [system] + conversation_history + [repair user].
+    First-turn user must appear inside conversation_history (not duplicated after system).
+    compat_mode jobs cannot use repair fields.
+    Sets job['_roman_repair_mode'] and job['_roman_repair_base_raw'] on success.
+    """
+    if not romanization_request_has_repair_fields(request_data):
+        return True, '', []
+    if bool(job.get('compat_mode')):
+        return False, '多轮修复需要关闭兼容模式（请使用分条的 system / user 消息预设）', []
+
+    repair_instruction = str(request_data.get('repair_instruction') or '').strip()
+    prev_full = str(request_data.get('previous_full_model_output') or '').strip()
+    hist = request_data.get('conversation_history')
+
+    if not repair_instruction:
+        return False, '缺少 repair_instruction', []
+    if not prev_full:
+        return False, '缺少 previous_full_model_output', []
+    if not isinstance(hist, list):
+        return False, 'conversation_history 必须是数组', []
+
+    ok_hist, herr = _validate_roman_repair_history_turns(hist)
+    if not ok_hist:
+        return False, herr, []
+
+    base_messages = list(job['messages'])
+    if not base_messages:
+        return False, 'job 缺少基础消息', []
+    role0 = str(base_messages[0].get('role') or '').strip().lower()
+    if role0 != 'system':
+        return False, '修复模式要求首条消息为 system（请使用非兼容预设）', []
+    system_msg: Dict[str, str] = {
+        'role': 'system',
+        'content': str(base_messages[0].get('content') or ''),
+    }
+    extra: List[Dict[str, str]] = []
+    for m in hist:
+        role = str(m.get('role') or '').strip().lower()
+        extra.append({'role': role, 'content': str(m.get('content') or '')})
+    extra.append({'role': 'user', 'content': repair_instruction})
+    job['messages'] = [system_msg] + extra
+    job['_roman_repair_mode'] = True
+    job['_roman_repair_base_raw'] = prev_full
+    return True, '', []
+
+
+def assemble_romanization_from_raw(job: Dict[str, Any], raw_model_output: str) -> Tuple[str, List[str], str]:
+    """Parse model output, validate alignment, build LYS/LRC. Returns (result_text, errors, raw_out_stripped)."""
+    targets = job['targets']
+    alignment_mode = str(job.get('alignment_mode') or ROMANIZATION_DEFAULTS['alignment_mode'])
+    sep = str(job.get('sep') or ';')
+    require_trail = bool(job.get('require_trail', True))
+    strict = bool(job.get('strict', True))
+    lys_working = str(job.get('lys_working') or '')
+    source_effective = str(job.get('source_effective') or 'lys')
+    target_format = str(job.get('target_format') or 'lys')
+
+    raw_out = str(raw_model_output or '').strip()
+    ai_by_line, parse_errors = _parse_roman_model_output(raw_out, alignment_mode, sep, require_trail)
+    all_errors = list(parse_errors)
+    all_errors.extend(_validate_roman_alignment(targets, ai_by_line, strict))
+
+    result_text = ''
+    if not all_errors:
+        if target_format == 'lys' and source_effective == 'lys':
+            doc2 = qe_parse_lys(lys_working)
+            result_text = _apply_roman_tokens_to_lys_doc(doc2, targets, ai_by_line)
+        elif target_format == 'lrc' and source_effective == 'lys':
+            lrc_out, lrc_err = _roman_lys_to_lrc(lys_working, targets, ai_by_line, strict)
+            if lrc_err:
+                all_errors.extend(lrc_err)
+            else:
+                result_text = lrc_out or ''
+        elif target_format == 'lrc' and source_effective == 'lrc':
+            err2 = _validate_roman_alignment(targets, ai_by_line, strict)
+            if err2:
+                all_errors.extend(err2)
+            else:
+                starts = [int(t['start_ms']) for t in targets]
+                texts = [' '.join(ai_by_line[t['n']]) for t in targets]
+                result_text = _format_roman_lrc_lines(starts, texts)
+
+    return result_text, all_errors, raw_out
+
+
+@app.route('/romanize_lyrics', methods=['POST'])
+def romanize_lyrics():
+    request_data = request.get_json(silent=True) or {}
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    auth_context = get_current_device_auth_context()
+    runtime = resolve_ai_request_preset(request_data)
+    api_key = str((runtime.get('translation') or {}).get('api_key') or '').strip()
+    if not api_key:
+        source_mode = str(runtime.get('source_mode') or 'manual')
+        preset_label = str(runtime.get('name') or runtime.get('id') or '').strip()
+        if source_mode == 'preset':
+            preset_label = preset_label or '（未知预设）'
+            return jsonify({'status': 'error', 'message': f'当前预设 {preset_label} 未配置后端 API 密钥'})
+        return jsonify({'status': 'error', 'message': '当前 AI 设置未保存 API 密钥'})
+
+    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    if job is None:
+        return jsonify({
+            'status': 'error',
+            'message': prep_err,
+            'errors': prep_details,
+            'numbered_input_preview': '',
+        })
+
+    ok_rep, rep_msg, rep_errs = apply_romanization_repair_to_job(job, request_data)
+    if not ok_rep:
+        return jsonify({
+            'status': 'error',
+            'message': rep_msg,
+            'errors': rep_errs,
+            'numbered_input_preview': job.get('numbered_preview', ''),
+        }), 400
+
+    provider = runtime.get('translation', {}).get('provider') or AI_TRANSLATION_SETTINGS['provider']
+    base_url_raw = runtime.get('translation', {}).get('base_url') or AI_TRANSLATION_SETTINGS['base_url']
+    model = runtime.get('translation', {}).get('model') or AI_TRANSLATION_SETTINGS['model']
+    expect_reasoning = runtime.get('translation', {}).get('expect_reasoning', AI_TRANSLATION_SETTINGS['expect_reasoning'])
+
+    def _normalize_base_url(u: str) -> str:
+        if not u:
+            return u
+        u = u.strip().rstrip('/')
+        u = re.sub(r'/(chat|responses)/(completions|streams?)$', '', u, flags=re.I)
+        return u
+
+    base_url = _normalize_base_url(str(base_url_raw or ''))
+
+    request_id = f"{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
+    audit_started_at = time.monotonic()
+    credential_id = str(auth_context.get('credential_id') or (auth_context.get('credential') or {}).get('credential_id') or '').strip()
+    if auth_context.get('is_system_admin'):
+        credential_id = 'system'
+    audit_payload: Dict[str, Any] = {
+        'request_id': request_id,
+        'event': 'ai_romanize_lyrics',
+        'credential_id': credential_id,
+        'auth_type': str(auth_context.get('auth_type') or ('system' if auth_context.get('is_system_admin') else '')).strip(),
+        'device_id': auth_context.get('device_id'),
+        'preset_id': str(runtime.get('id') or ''),
+        'provider': provider,
+        'base_url': base_url,
+        'model': model,
+        'source_format': job['source_format'],
+        'target_format': job['target_format'],
+        'lines': len(job['numbered']),
+    }
+
+    def generate():
+        audit = dict(audit_payload)
+        reasoning_cap: Dict[str, Any] = {}
+        logged = False
+        current_stage = 'parse_source'
+        numbered = job['numbered']
+        numbered_preview = job['numbered_preview']
+
+        def finalize(success: bool, err_msg: str = '', **extra: Any) -> None:
+            nonlocal logged
+            if logged:
+                return
+            logged = True
+            audit.update({
+                'success': success,
+                'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                'error': err_msg,
+            })
+            audit.update(extra)
+            append_ai_usage_log(audit)
+
+        try:
+            reasoning_cap = get_reasoning_control_capability(provider=provider, base_url=base_url, model=model)
+            meta_body = {
+                'numbered_input_preview': numbered_preview,
+                'user_block': str(job.get('user_block') or ''),
+                'source_format': job['source_format'],
+                'target_format': job['target_format'],
+                'source_effective': job['source_effective'],
+                'lines': len(numbered),
+            }
+            yield f"meta:{json.dumps(meta_body, ensure_ascii=False)}\n"
+            current_stage = 'parse_source'
+            yield f"stage:{json.dumps({'stage': 'parse_source', 'state': 'success'}, ensure_ascii=False)}\n"
+
+            client = build_openai_client(api_key=api_key, base_url=base_url)
+            reasoning_opts = build_reasoning_request_options(
+                provider=provider, base_url=base_url, model=model, expect_reasoning=bool(expect_reasoning)
+            )
+
+            current_stage = 'send_request'
+            yield f"stage:{json.dumps({'stage': 'send_request', 'state': 'active'}, ensure_ascii=False)}\n"
+            try:
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=job['messages'],
+                    stream=True,
+                    **reasoning_opts,
+                )
+            except Exception as api_err:
+                yield f"stage:{json.dumps({'stage': 'send_request', 'state': 'error'}, ensure_ascii=False)}\n"
+                yield f"error:{json.dumps({'message': str(api_err), 'errors': []}, ensure_ascii=False)}\n"
+                finalize(False, str(api_err), reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+                return
+
+            yield f"stage:{json.dumps({'stage': 'send_request', 'state': 'success'}, ensure_ascii=False)}\n"
+            current_stage = 'receive_stream'
+            yield f"stage:{json.dumps({'stage': 'receive_stream', 'state': 'active'}, ensure_ascii=False)}\n"
+
+            raw_out_accum = ""
+            current_reasoning = ""
+            token_total: Optional[int] = None
+            last_stats_at = time.monotonic()
+            chunk_i = 0
+            for chunk in stream:
+                chunk_i += 1
+                usage = getattr(chunk, 'usage', None)
+                if usage is not None:
+                    token_total = getattr(usage, 'total_tokens', None)
+                choices = getattr(chunk, 'choices', None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], 'delta', None)
+                if delta is None:
+                    continue
+                if expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                    current_reasoning += delta.reasoning_content
+                    yield f"reasoning:{json.dumps({'reasoning': current_reasoning}, ensure_ascii=False)}\n"
+                if hasattr(delta, 'content') and delta.content:
+                    raw_out_accum += delta.content
+                    yield f"raw:{json.dumps({'chunk': delta.content}, ensure_ascii=False)}\n"
+                    now = time.monotonic()
+                    if now - last_stats_at >= 0.2 or chunk_i % 12 == 0:
+                        last_stats_at = now
+                        yield (
+                            f"stats:{json.dumps({'chars': len(raw_out_accum), 'lines_detected': _count_numbered_roman_lines(raw_out_accum), 'expected_lines': len(numbered)}, ensure_ascii=False)}\n"
+                        )
+
+            yield f"stats:{json.dumps({'chars': len(raw_out_accum), 'lines_detected': _count_numbered_roman_lines(raw_out_accum), 'expected_lines': len(numbered)}, ensure_ascii=False)}\n"
+            yield f"stage:{json.dumps({'stage': 'receive_stream', 'state': 'success'}, ensure_ascii=False)}\n"
+
+            rc_sup = bool(reasoning_cap.get('supported', False))
+            raw_out = raw_out_accum.strip()
+            patch_raw = raw_out
+            is_repair = bool(job.get('_roman_repair_mode'))
+            merged_for_payload: Optional[str] = None
+
+            current_stage = 'validating'
+            yield f"stage:{json.dumps({'stage': 'validating', 'state': 'active'}, ensure_ascii=False)}\n"
+
+            if is_repair:
+                merged_candidate, merge_errs = merge_roman_patch_into_base(
+                    job, str(job.get('_roman_repair_base_raw') or ''), patch_raw
+                )
+                if merge_errs:
+                    yield f"stage:{json.dumps({'stage': 'validating', 'state': 'error'}, ensure_ascii=False)}\n"
+                    yield f"stage:{json.dumps({'stage': 'assembling', 'state': 'error'}, ensure_ascii=False)}\n"
+                    yield f"stage:{json.dumps({'stage': 'done', 'state': 'error'}, ensure_ascii=False)}\n"
+                    err_merge: Dict[str, Any] = {
+                        'message': '罗马音修复合并失败',
+                        'errors': merge_errs,
+                        'raw_model_output': patch_raw,
+                        'patch_model_output': patch_raw,
+                        'merged_model_output': merged_candidate or '',
+                    }
+                    yield f"error:{json.dumps(err_merge, ensure_ascii=False)}\n"
+                    finalize(False, '; '.join(merge_errs), token_total=token_total, reasoning_control_supported=rc_sup)
+                    return
+                merged_for_payload = merged_candidate
+                result_text, all_errors, raw_out = assemble_romanization_from_raw(job, merged_candidate or '')
+            else:
+                result_text, all_errors, raw_out = assemble_romanization_from_raw(job, raw_out)
+
+            if all_errors:
+                yield f"stage:{json.dumps({'stage': 'validating', 'state': 'error'}, ensure_ascii=False)}\n"
+                yield f"stage:{json.dumps({'stage': 'assembling', 'state': 'error'}, ensure_ascii=False)}\n"
+                yield f"stage:{json.dumps({'stage': 'done', 'state': 'error'}, ensure_ascii=False)}\n"
+                err_val: Dict[str, Any] = {
+                    'message': '罗马音结果未通过校验',
+                    'errors': all_errors,
+                    'raw_model_output': raw_out,
+                }
+                if is_repair:
+                    err_val['patch_model_output'] = patch_raw
+                    err_val['merged_model_output'] = merged_for_payload or raw_out
+                yield f"error:{json.dumps(err_val, ensure_ascii=False)}\n"
+                finalize(False, '; '.join(all_errors), token_total=token_total, reasoning_control_supported=rc_sup)
+            else:
+                yield f"stage:{json.dumps({'stage': 'validating', 'state': 'success'}, ensure_ascii=False)}\n"
+                current_stage = 'assembling'
+                yield f"stage:{json.dumps({'stage': 'assembling', 'state': 'active'}, ensure_ascii=False)}\n"
+                yield f"stage:{json.dumps({'stage': 'assembling', 'state': 'success'}, ensure_ascii=False)}\n"
+                current_stage = 'done'
+                result_payload: Dict[str, Any] = {'result_text': result_text, 'raw_model_output': raw_out}
+                if is_repair:
+                    result_payload['patch_model_output'] = patch_raw
+                    result_payload['merged_raw_model_output'] = merged_for_payload or raw_out
+                yield f"result:{json.dumps(result_payload, ensure_ascii=False)}\n"
+                yield f"stage:{json.dumps({'stage': 'done', 'state': 'success'}, ensure_ascii=False)}\n"
+                finalize(True, '', token_total=token_total, reasoning_control_supported=rc_sup)
+
+        except GeneratorExit:
+            finalize(False, 'client_aborted', reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+            raise
+        except Exception as e:
+            app.logger.error("romanize_lyrics stream failed: %s", e, exc_info=True)
+            try:
+                stage_order = ['parse_source', 'send_request', 'receive_stream', 'validating', 'assembling', 'done']
+                ci = stage_order.index(current_stage) if current_stage in stage_order else stage_order.index('receive_stream')
+                for sj in range(ci, len(stage_order)):
+                    yield f"stage:{json.dumps({'stage': stage_order[sj], 'state': 'error'}, ensure_ascii=False)}\n"
+                yield f"error:{json.dumps({'message': str(e), 'errors': []}, ensure_ascii=False)}\n"
+            except GeneratorExit:
+                finalize(False, 'client_aborted', reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+                raise
+            finalize(False, str(e), reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+
+    return StreamingResponse(
+        generate(),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
+
+@app.route('/romanize_lyrics_prompt', methods=['POST'])
+def romanize_lyrics_prompt():
+    """Return full prompt for external AI (no model call; does not require API key)."""
+    request_data = request.get_json(silent=True) or {}
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    runtime = resolve_ai_request_preset(request_data)
+    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    if job is None:
+        return jsonify({
+            'status': 'error',
+            'message': prep_err,
+            'errors': prep_details,
+            'numbered_input_preview': '',
+        })
+    if romanization_request_has_repair_fields(request_data) and bool(job.get('compat_mode')):
+        return jsonify({
+            'status': 'error',
+            'message': '多轮修复需要关闭兼容模式（请使用分条的 system / user 消息预设）',
+            'errors': [],
+            'numbered_input_preview': job.get('numbered_preview', ''),
+        }), 400
+    compat_mode = bool(job.get('compat_mode'))
+    system_prompt = str(job.get('system_prompt') or '')
+    contract = str(job.get('contract') or '')
+    user_block = str(job.get('user_block') or '')
+    repair_note = (
+        '修复轮：POST /romanize_lyrics 时在 JSON 中加入 conversation_history（首轮 user + 各轮 assistant 成对扩展）、'
+        'repair_instruction（单独一条 user）、previous_full_model_output（完整编号行基底，供服务端按行合并）。'
+        '多轮修复需关闭 compat_mode。'
+    )
+    if compat_mode:
+        final_prompt = f"{system_prompt}{contract}\n\n{user_block}"
+        final_prompt_sections = None
+        message_plan: Dict[str, Any] = {
+            'first_turn_format': 'compat_single_user',
+            'compat_single_user': final_prompt,
+            'repair_usage_note': repair_note,
+        }
+    else:
+        system_part = system_prompt + contract
+        final_prompt_sections = {'system': system_part, 'user': user_block}
+        final_prompt = f"[System Prompt]\n{system_part}\n\n[User Message]\n{user_block}"
+        message_plan = {
+            'first_turn_format': 'system_then_user',
+            'system': system_part,
+            'user_first': user_block,
+            'repair_usage_note': repair_note,
+        }
+
+    repair_prompt_mode = False
+    multiturn_prompt_text: Optional[str] = None
+    repair_messages: Optional[List[Dict[str, str]]] = None
+    if romanization_request_has_repair_fields(request_data):
+        job_prompt = copy.deepcopy(job)
+        ok_pr, pr_msg, pr_errs = apply_romanization_repair_to_job(job_prompt, request_data)
+        if not ok_pr:
+            return jsonify({
+                'status': 'error',
+                'message': pr_msg,
+                'errors': pr_errs,
+                'numbered_input_preview': job.get('numbered_preview', ''),
+            }), 400
+        repair_prompt_mode = True
+        repair_messages = list(job_prompt['messages'])
+        multiturn_prompt_text = _format_roman_messages_for_external_clipboard(repair_messages)
+
+    return jsonify({
+        'status': 'success',
+        'numbered_input_preview': job['numbered_preview'],
+        'system_prompt': system_prompt,
+        'contract': contract,
+        'user_block': user_block,
+        'final_prompt': final_prompt,
+        'final_prompt_sections': final_prompt_sections,
+        'compat_mode': compat_mode,
+        'message_plan': message_plan,
+        'repair_prompt_mode': repair_prompt_mode,
+        'messages': repair_messages,
+        'multiturn_prompt_text': multiturn_prompt_text,
+        'source_effective': job['source_effective'],
+        'source_format': job['source_format'],
+        'target_format': job['target_format'],
+        'lines': len(job['numbered']),
+        'alignment_mode': job['alignment_mode'],
+    })
+
+
+@app.route('/romanize_lyrics_assemble', methods=['POST'])
+def romanize_lyrics_assemble():
+    """Validate pasted model output and assemble LYS/LRC (no AI call; does not require API key)."""
+    request_data = request.get_json(silent=True) or {}
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    runtime = resolve_ai_request_preset(request_data)
+    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    if job is None:
+        return jsonify({
+            'status': 'error',
+            'message': prep_err,
+            'errors': prep_details,
+            'numbered_input_preview': '',
+        })
+    manual = str(request_data.get('manual_model_output') or '')
+    result_text, all_errors, raw_out = assemble_romanization_from_raw(job, manual)
+    if all_errors:
+        return jsonify({
+            'status': 'error',
+            'message': '罗马音结果未通过校验',
+            'errors': all_errors,
+            'raw_model_output': raw_out,
+            'numbered_input_preview': job['numbered_preview'],
+        })
+    return jsonify({
+        'status': 'success',
+        'result_text': result_text,
+        'raw_model_output': raw_out,
+        'errors': [],
+    })
+
+
+@app.route('/romanize_lyrics_weave_background', methods=['POST'])
+def romanize_lyrics_weave_background():
+    """Weave romanized LYS: insert a [6]-style background copy after each main lyric line (local only)."""
+    request_data = request.get_json(silent=True) or {}
+    if not can_use_ai():
+        return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
+    roman = str(request_data.get('roman_lys_text') or '')
+    if not roman.strip():
+        return jsonify({
+            'status': 'error',
+            'message': 'roman_lys_text 不能为空',
+            'errors': ['缺少 roman_lys_text'],
+        })
+    bg_in = request_data.get('background_prefix', '[6]')
+    woven, errs = _weave_roman_lys_as_background(roman, bg_in)
+    if errs:
+        return jsonify({'status': 'error', 'message': errs[0], 'errors': errs})
+    return jsonify({'status': 'success', 'woven_text': woven, 'errors': []})
+
+
 @app.after_request
 def add_header(resp):
     resp.headers['Access-Control-Allow-Origin'] = '*'
@@ -11662,6 +13778,14 @@ def is_request_allowed():
     # 允许远程查看只读歌曲列表
     if request.path == '/songs/summary':
         return True
+    if request.path == '/songs/snapshot':
+        return True
+    if request.path == '/songs/search':
+        return True
+    if request.path == '/songs/summary/batch' and request.method == 'POST':
+        return True
+    if request.path == '/songs/artist':
+        return True
     # 允许远程快速导入 static.zip
     if request.path == '/import_static':
         return True
@@ -12086,6 +14210,9 @@ def iter_ai_usage_events(days: int = 7) -> List[Dict[str, Any]]:
     return events
 
 
+_AI_USAGE_TRACKED_EVENTS = frozenset({'ai_translate_lyrics', 'ai_romanize_lyrics'})
+
+
 @app.route('/admin/ai-usage/summary', methods=['GET'])
 def admin_ai_usage_summary():
     if not can_manage_system():
@@ -12094,7 +14221,7 @@ def admin_ai_usage_summary():
     events = iter_ai_usage_events(days=days)
     grouped: Dict[str, Dict[str, Any]] = {}
     for ev in events:
-        if str(ev.get('event') or '') != 'ai_translate_lyrics':
+        if str(ev.get('event') or '') not in _AI_USAGE_TRACKED_EVENTS:
             continue
         credential_id = str(ev.get('credential_id') or 'unknown')
         bucket = grouped.setdefault(credential_id, {
@@ -12137,7 +14264,7 @@ def admin_ai_usage_recent():
     events = iter_ai_usage_events(days=days)
     filtered: List[Dict[str, Any]] = []
     for ev in events:
-        if str(ev.get('event') or '') != 'ai_translate_lyrics':
+        if str(ev.get('event') or '') not in _AI_USAGE_TRACKED_EVENTS:
             continue
         if credential_id and str(ev.get('credential_id') or '') != credential_id:
             continue
@@ -12153,6 +14280,8 @@ def admin_ai_usage_recent():
                 str(ev.get('lyricsPath') or ''),
                 str(ev.get('content_preview') or ''),
                 str(ev.get('json_files_preview') or ''),
+                str(ev.get('source_format') or ''),
+                str(ev.get('target_format') or ''),
                 str(ev.get('items_preview') or ''),
                 json.dumps(ev.get('items') or [], ensure_ascii=False) if isinstance(ev.get('items'), list) else '',
             ]).lower()
@@ -12536,6 +14665,8 @@ def amll_create_song():
         json_path = STATIC_DIR / json_filename
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(json_content, f, ensure_ascii=False, indent=2)
+
+        upsert_song_search_index_for_path(json_path)
 
         return jsonify({
             'status': 'success',
