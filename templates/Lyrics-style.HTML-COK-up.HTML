@@ -2626,7 +2626,6 @@
                         trans.style.lineHeight = '1.2';
                         trans.style.marginTop = '0.1em';
                         trans.style.width = '100%';
-                        trans.style.paddingBottom = '0.2em';
                         trans.textContent = 'translation';
                         line.appendChild(trans);
                     }
@@ -4086,7 +4085,7 @@
                 const dedupAliases = Array.from(new Set(aliasList));
                 uniqueFonts.forEach((f) => ensureFontLoaded(f));
                 const hasAnySpecialFont = uniqueFonts.length > 0;
-                const disableBlurLayer = hasAnySpecialFont;
+                const disableBlurLayer = true;
 
                 const lineEl = document.createElement('div');
                 lineEl.classList.add('lyric-line');
@@ -4213,20 +4212,11 @@
                         transDiv.textContent = bestTrans.content;
                         // 强制换行并允许文本对齐
                         transDiv.style.width = '100%';
-                        transDiv.style.paddingBottom = '0.2em'; // 给模糊层留下空间
                         // 翻译对齐方式与主歌词一致
                         if (lineEl.classList.contains('left-aligned')) transDiv.classList.add('left-aligned');
                         if (lineEl.classList.contains('center-aligned')) transDiv.classList.add('center-aligned');
                         if (lineEl.classList.contains('right-aligned')) transDiv.classList.add('right-aligned');
                         lineEl.appendChild(transDiv);
-                        
-                        // 如果有翻译，调整模糊层高度以避免重叠
-                        setTimeout(() => {
-                            const transHeight = transDiv.offsetHeight;
-                            if (transHeight > 0 && blurLayer) {
-                                blurLayer.style.height = `calc(100% - ${transHeight}px + var(--blur-safe-pad))`;
-                            }
-                        }, 0);
                     }
                 }
 

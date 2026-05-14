@@ -715,6 +715,7 @@ body.is-resizing .json-item:hover {
     border-radius: 12px;
     border: 2px solid var(--border-color);
     font-size: 16px;
+    color: var(--field-text);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     background: var(--input-bg);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
@@ -723,15 +724,14 @@ body.is-resizing .json-item:hover {
 }
 
 .search-box:focus {
-    border-color: #4dabf7;
-    box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.15),
-        0 4px 12px rgba(77, 171, 247, 0.1);
-    background: white;
+    outline: none;
+    border-color: var(--field-border-focus);
+    box-shadow: 0 0 0 3px var(--field-focus-shadow);
+    background: var(--field-bg-focus);
 }
 
 .search-box::placeholder {
-    color: #868e96;
-    opacity: 0.8;
+    color: var(--field-placeholder);
 }
 
 .file-actions {
