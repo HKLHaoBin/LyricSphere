@@ -1,5 +1,13 @@
 # 更新日志 (Changelog)
 
+## [Unreleased]
+
+### 技术改进
+- GitHub Actions 打包流程：`Smoke test backend.exe` 由固定 8 秒等待改为最长 120 秒、每 2 秒轮询端口与 `/api/runtime/version`，进程早退时立即失败并输出 stdout/stderr 与应用 `logs/` 尾部；校验 `app_version` 与注入版本一致
+- CI 冒烟启动时设置 `LYRICSPHERE_NO_BROWSER=1`，避免无头 runner 调用系统浏览器
+- 新增 `backend.spec`，通过 `collect_submodules` 收集 uvicorn / fastapi / starlette / anyio，降低 onefile 运行时缺模块风险
+- 冒烟失败时上传 `smoke-test-logs` artifact 便于排查
+
 ## [v1.5.11] - 2025-11-08
 
 ### 新增功能
