@@ -132,6 +132,37 @@ jobs:
         run: |
           pyinstaller --noconfirm --onefile --console ".\updater.py"
 
+      - name: Smoke test backend.exe
+        shell: pwsh
+        run: |
+          $smokeDir = "dist/smoke"
+          New-Item -ItemType Directory -Path $smokeDir -Force | Out-Null
+          Copy-Item dist/backend.exe "$smokeDir/backend.exe" -Force
+          Copy-Item templates "$smokeDir/templates" -Recurse -Force
+          New-Item -ItemType Directory -Path "$smokeDir/static" -Force | Out-Null
+          foreach ($dir in @('assets','public','icons','monaco')) {
+            if (Test-Path "static/$dir") {
+              Copy-Item "static/$dir" "$smokeDir/static/$dir" -Recurse -Force
+            }
+          }
+
+          $port = 5999
+          $proc = $null
+          try {
+            $proc = Start-Process -FilePath "$smokeDir/backend.exe" -ArgumentList $port -PassThru -WorkingDirectory $smokeDir
+            Start-Sleep -Seconds 8
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$port/api/runtime/version" -UseBasicParsing -TimeoutSec 30
+            if ($resp.StatusCode -ne 200) {
+              Write-Error "Smoke test failed: HTTP $($resp.StatusCode)"
+              exit 1
+            }
+            Write-Host "Smoke test OK: $($resp.Content)"
+          } finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

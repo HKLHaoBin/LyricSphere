@@ -887,6 +887,7 @@ UPDATER_RELEASE_LATEST_API = 'https://api.github.com/repos/{repo}/releases/lates
 
 
 def launch_updater_sidecar(port: int) -> None:
+    """Start updater.exe in frozen builds. Version checks use GitHub REST API (requests), not git CLI."""
     global _updater_started
     if not getattr(sys, 'frozen', False):
         app.logger.info('Source mode detected; built-in updater is disabled. Please update via git.')
@@ -7359,7 +7360,8 @@ def _normalize_artist_name_for_match(value: Optional[Any]) -> str:
 
 
 _COMPOSITE_ARTIST_SEP_RE = re.compile(
-    r'\s*[,，、;；/|]\s*|\s*&\s*|(?i)\b(?:feat\.?|ft\.?|vs\.?)\b\s*'
+    r'\s*[,，、;；/|]\s*|\s*&\s*|\b(?:feat\.?|ft\.?|vs\.?)\b\s*',
+    re.IGNORECASE,
 )
 
 
@@ -7559,6 +7561,8 @@ def init_artist_playlist_index_on_startup() -> None:
         app.logger.exception('artist playlist index: startup init failed')
 
 
+# Eager index init at import: keeps first /api/search and artist routes consistent.
+# Deferred/background init was skipped: race on first request before index is ready.
 init_song_search_index_on_startup()
 init_artist_playlist_index_on_startup()
 

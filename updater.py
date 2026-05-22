@@ -238,6 +238,7 @@ def retry_io(
 
 
 def github_latest_release(repo: str, timeout: int = 20) -> dict[str, Any]:
+    """Fetch latest release via GitHub REST API (requests); does not invoke git subprocess."""
     url = GITHUB_RELEASE_LATEST_API.format(repo=repo)
     headers = {
         "Accept": "application/vnd.github+json",
