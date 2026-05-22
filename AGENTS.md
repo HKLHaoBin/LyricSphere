@@ -33,10 +33,8 @@
 - Check `logs/upload.log` for warnings and make sure new lyrics produce versioned files in `static/backups/`.
 
 ## CI / Release (`.github/workflows/build-exe-release.yml`)
-- After PyInstaller builds `dist/backend.exe`, the workflow runs a **smoke test** in `dist/smoke/` (exe + `templates/` + selected `static/` dirs, same layout as the release zip).
-- Health check: poll `127.0.0.1:<port>` for up to **120s** (2s interval), then `GET /api/runtime/version` and assert `app_version` matches the injected tag (without leading `v`). If the process exits early, the step fails with `ExitCode` and tails `smoke-stdout.log`, `smoke-stderr.log`, and `dist/smoke/logs/*`.
-- Set **`LYRICSPHERE_NO_BROWSER=1`** when starting the exe in CI (and optionally locally) so `backend.py` skips `webbrowser.open` in headless environments.
-- Backend onefile builds use **`pyinstaller --noconfirm backend.spec`** (`collect_submodules` for uvicorn/fastapi/starlette/anyio). On smoke failure, the workflow uploads a `smoke-test-logs` artifact.
+- Workflow builds `dist/backend.exe` and `dist/updater.exe` with **`pyinstaller --noconfirm backend.spec`** (and a onefile `updater.py` build), then packages `LyricSphere.exe.zip` with `templates/` and selected `static/{assets,public,icons,monaco}`—same layout as a manual install folder.
+- **No automated exe smoke test in CI**; validate the release zip locally (extract, run `backend.exe`, open the UI, spot-check `/api/runtime/version`). Optional: set **`LYRICSPHERE_NO_BROWSER=1`** so `backend.py` skips `webbrowser.open`.
 
 ## Commit & Pull Request Guidelines
 - Follow the Conventional Commit pattern already in history (`feat(scope):`, `docs:`), mixing English or Chinese scopes when helpful.
