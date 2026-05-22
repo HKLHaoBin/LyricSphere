@@ -20,7 +20,7 @@ import xml
 import uuid
 import csv
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from io import BytesIO
@@ -16493,8 +16493,7 @@ if __name__ == '__main__':
                 set_port_status('random', port)
             print(f'[启动] 尝试端口: {port}')
             url = f"http://127.0.0.1:{port}"
-            if os.environ.get('LYRICSPHERE_NO_BROWSER', '').strip().lower() not in ('1', 'true', 'yes'):
-                webbrowser.open(url)
+            webbrowser.open(url)
             # 写入启动命令到文件
             # 检测当前是否是exe文件运行
             is_exe = getattr(sys, 'frozen', False)
