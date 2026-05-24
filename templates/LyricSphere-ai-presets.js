@@ -32,6 +32,184 @@ let aiSettingsSourceDraft = { mode: 'manual', preset_id: '', preset_name: '' };
 let aiSettingsSourceSaved = { mode: 'manual', preset_id: '', preset_name: '' };
 let aiSettingsInitialSnapshot = null;
 let aiSettingsStatusState = { kind: 'idle', presetName: '' };
+const AI_FIELD_HOSTED_PLACEHOLDER = '已由后端托管';
+let aiFieldVisibility = {};
+let aiRuntimeSummary = null;
+
+function flattenAiFieldVisibilityRaw(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return {};
+    }
+    if ('provider' in raw || 'thinking_provider' in raw || 'system_prompt' in raw) {
+        return raw;
+    }
+    const flat = {};
+    const translation = raw.translation;
+    if (translation && typeof translation === 'object') {
+        if (translation.provider !== undefined) flat.provider = translation.provider;
+        if (translation.base_url !== undefined) flat.base_url = translation.base_url;
+        if (translation.model !== undefined) flat.model = translation.model;
+        if (translation.system_prompt !== undefined) flat.system_prompt = translation.system_prompt;
+    }
+    const thinking = raw.thinking;
+    if (thinking && typeof thinking === 'object') {
+        if (thinking.provider !== undefined) flat.thinking_provider = thinking.provider;
+        if (thinking.base_url !== undefined) flat.thinking_base_url = thinking.base_url;
+        if (thinking.model !== undefined) flat.thinking_model = thinking.model;
+        if (thinking.system_prompt !== undefined) flat.thinking_system_prompt = thinking.system_prompt;
+    }
+    const batch = raw.batch;
+    if (batch && typeof batch === 'object' && batch.extra_prompt !== undefined) {
+        flat.batch_extra_prompt = batch.extra_prompt;
+    }
+    const romanization = raw.romanization;
+    if (romanization && typeof romanization === 'object' && romanization.system_prompt !== undefined) {
+        flat.romanization_system_prompt = romanization.system_prompt;
+    }
+    return flat;
+}
+
+function normalizeAiFieldVisibility(raw) {
+    const incoming = flattenAiFieldVisibilityRaw(raw && typeof raw === 'object' ? raw : {});
+    const normalized = {};
+    Object.keys(incoming).forEach((key) => {
+        normalized[key] = String(incoming[key] || 'visible').trim().toLowerCase() === 'hidden' ? 'hidden' : 'visible';
+    });
+    return normalized;
+}
+
+function resolveAiFieldVisibilityFromResponse(data) {
+    const payload = data && typeof data === 'object' ? data : {};
+    const raw = payload.field_visibility
+        || payload.effective_settings?.field_visibility
+        || payload.settings?.field_visibility;
+    return normalizeAiFieldVisibility(raw);
+}
+
+function resolveAiFieldVisibility(settings, options = {}) {
+    const fromOptions = options.fieldVisibility;
+    const fromSettings = settings?._visibility || settings?.field_visibility;
+    if (fromOptions && typeof fromOptions === 'object') {
+        return normalizeAiFieldVisibility(fromOptions);
+    }
+    if (fromSettings && typeof fromSettings === 'object') {
+        return normalizeAiFieldVisibility(fromSettings);
+    }
+    const permissions = aiPresetPermissions || {};
+    return normalizeAiFieldVisibility({
+        provider: permissions.ai_view_provider === false ? 'hidden' : 'visible',
+        base_url: permissions.ai_view_base_url === false ? 'hidden' : 'visible',
+        model: permissions.ai_view_model === false ? 'hidden' : 'visible',
+        system_prompt: permissions.ai_view_prompts === false ? 'hidden' : 'visible',
+        thinking_provider: permissions.ai_view_provider === false ? 'hidden' : 'visible',
+        thinking_base_url: permissions.ai_view_base_url === false ? 'hidden' : 'visible',
+        thinking_model: permissions.ai_view_model === false ? 'hidden' : 'visible',
+        thinking_system_prompt: permissions.ai_view_prompts === false ? 'hidden' : 'visible'
+    });
+}
+
+function isAiFieldHidden(fieldKey, visibility) {
+    return String((visibility || aiFieldVisibility || {})[fieldKey] || 'visible').trim().toLowerCase() === 'hidden';
+}
+
+function setAiFieldVisibility(next) {
+    aiFieldVisibility = normalizeAiFieldVisibility(next || {});
+}
+
+function setAiRuntimeSummary(summary) {
+    aiRuntimeSummary = summary && typeof summary === 'object' ? summary : null;
+}
+
+function getAiRuntimeSummaryLabel(kind = 'translation') {
+    const summary = aiRuntimeSummary || {};
+    if (kind === 'thinking') {
+        return {
+            provider: String(summary.thinking_provider_label || summary.source_label || summary.provider_label || '').trim(),
+            model: String(summary.thinking_model_label || summary.model_label || '').trim()
+        };
+    }
+    return {
+        provider: String(summary.provider_label || summary.source_label || '').trim(),
+        model: String(summary.model_label || '').trim()
+    };
+}
+
+function isThinkingEnabledFromRuntimeSummary() {
+    if (!aiRuntimeSummary || aiRuntimeSummary.thinking_enabled === undefined) {
+        return true;
+    }
+    return Boolean(aiRuntimeSummary.thinking_enabled);
+}
+
+async function ensureAiRuntimeSummaryForProgress() {
+    if (aiRuntimeSummary) {
+        return aiRuntimeSummary;
+    }
+    try {
+        const response = await fetch('/get_ai_settings');
+        const data = await response.json();
+        if (data.status === 'success') {
+            setAiRuntimeSummary(data.runtime_summary);
+            if (data.permissions) {
+                aiPresetPermissions = data.permissions;
+            }
+            setAiFieldVisibility(resolveAiFieldVisibilityFromResponse(data));
+        }
+    } catch (error) {
+        console.warn('Failed to load AI runtime summary:', error);
+    }
+    return aiRuntimeSummary;
+}
+
+function isLocalAiAdminProbeAllowed() {
+    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+    if (!isLocalHost) {
+        return false;
+    }
+    return hasFullAiPresetVisibility();
+}
+
+function formatMissingAiPresetOptionLabel(presetId) {
+    const id = String(presetId || '').trim() || t('preset.defaultName');
+    return `预设已丢失：${id}`;
+}
+
+function getSavedAiPresetSelectId() {
+    return aiSettingsSourceSaved && aiSettingsSourceSaved.mode === 'preset'
+        ? String(aiSettingsSourceSaved.preset_id || '').trim()
+        : '';
+}
+
+function getDraftAiPresetSelectId() {
+    return aiSettingsSourceDraft && aiSettingsSourceDraft.mode === 'preset'
+        ? String(aiSettingsSourceDraft.preset_id || '').trim()
+        : '';
+}
+
+function getAiPresetSelectTargetId() {
+    const savedId = getSavedAiPresetSelectId();
+    const draftId = getDraftAiPresetSelectId();
+    const rememberedId = String(localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '').trim();
+    if (hasPendingAiSettingsPreview() && draftId) {
+        return draftId;
+    }
+    return savedId || rememberedId;
+}
+
+function appendMissingAiPresetOption(select, presetId, selectedId) {
+    const id = String(presetId || '').trim();
+    if (!select || !id) {
+        return;
+    }
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = formatMissingAiPresetOptionLabel(id);
+    option.disabled = true;
+    if (id === selectedId) {
+        option.selected = true;
+    }
+    select.appendChild(option);
+}
 
 function normalizeAiSettingsSource(next) {
     const incoming = next && typeof next === 'object' ? next : {};
@@ -66,10 +244,12 @@ function syncActiveAiPresetKeyWithSavedSource(source = null) {
     const savedSource = source && typeof source === 'object' ? source : (aiSettingsSourceSaved || {});
     const mode = String(savedSource.mode || 'manual').trim().toLowerCase();
     const presetId = mode === 'preset' ? String(savedSource.preset_id || '').trim() : '';
+    const rememberedId = String(localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '').trim();
     const presetExists = presetId ? loadAiPresets().some(preset => preset.id === presetId) : false;
     if (presetId && presetExists) {
         localStorage.setItem(ACTIVE_AI_PRESET_KEY, presetId);
-    } else {
+    } else if (rememberedId && !loadAiPresets().some(preset => preset.id === rememberedId)) {
+        // Cleanup only when remembered preset no longer exists.
         localStorage.removeItem(ACTIVE_AI_PRESET_KEY);
     }
     if (typeof updateQuickAiPresetSelect === 'function') {
@@ -135,10 +315,11 @@ function classifyAiPresetKind(preset) {
 }
 
 function setAiSettingsSourceManual() {
-    setAiSettingsSourceDraft({ mode: 'manual', preset_id: '', preset_name: '', kind: 'manual' });
     const select = document.getElementById('aiPresetSelect');
-    if (select) {
-        select.value = '';
+    const selectedPresetId = select ? String(select.value || '').trim() : '';
+    setAiSettingsSourceDraft({ mode: 'manual', preset_id: '', preset_name: '', kind: 'manual' });
+    if (selectedPresetId) {
+        localStorage.setItem(ACTIVE_AI_PRESET_KEY, selectedPresetId);
     }
     if (aiSettingsInitialSnapshot?.form) {
         fillAIFormState(aiSettingsInitialSnapshot.form);
@@ -161,6 +342,7 @@ function previewSelectedAiPreset() {
         return;
     }
     const classified = classifyAiPresetKind(preset);
+    localStorage.setItem(ACTIVE_AI_PRESET_KEY, preset.id);
     setAiSettingsSourceDraft({
         mode: 'preset',
         preset_id: preset.id,
@@ -168,8 +350,8 @@ function previewSelectedAiPreset() {
         kind: classified.kind,
         label: classified.label
     });
-    // keep behavior: also fill the form so UI matches source
-    fillAIFormState(preset);
+    // keep behavior: also fill the form so UI matches draft preview
+    fillAIFormState(preset, { fieldVisibility: resolveAiFieldVisibility(preset) });
     setAiSettingsStatus(hasPendingAiSettingsPreview() ? 'preview-preset' : 'idle', preset.name);
     updateAiPresetApplyStatus();
 }
@@ -511,26 +693,62 @@ function updateRomanizationAlignmentHint() {
 }
 
 // 填入表单状态
-function fillAIFormState(settings) {
+function fillAIFormState(settings, options = {}) {
+    const visibility = resolveAiFieldVisibility(settings, options);
+    setAiFieldVisibility(visibility);
+    const skipProviderPreset = Boolean(options.skipProviderPreset);
+    const translation = settings.translation || {};
+    const thinking = settings.thinking || {};
+
+    const setInputValue = (id, value, fieldKey, placeholderWhenHidden = AI_FIELD_HOSTED_PLACEHOLDER) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (fieldKey && isAiFieldHidden(fieldKey, visibility)) {
+            el.value = '';
+            el.placeholder = placeholderWhenHidden;
+            return;
+        }
+        el.placeholder = '';
+        el.value = value !== undefined && value !== null ? String(value) : '';
+    };
+
     if (settings.translation) {
-        document.getElementById('aiProvider').value = settings.translation.provider || 'deepseek';
-        document.getElementById('aiBaseUrl').value = settings.translation.base_url || '';
-        document.getElementById('aiModel').value = settings.translation.model || '';
+        const providerEl = document.getElementById('aiProvider');
+        if (providerEl) {
+            if (isAiFieldHidden('provider', visibility)) {
+                providerEl.value = '';
+                providerEl.placeholder = AI_FIELD_HOSTED_PLACEHOLDER;
+            } else {
+                providerEl.placeholder = '';
+                providerEl.value = translation.provider !== undefined && translation.provider !== null ? String(translation.provider) : '';
+            }
+        }
+        setInputValue('aiBaseUrl', translation.base_url, 'base_url');
+        setInputValue('aiModel', translation.model, 'model');
         document.getElementById('aiApiKey').value = '';
-        document.getElementById('aiSystemPrompt').value = settings.translation.system_prompt || '';
-        document.getElementById('aiExpectReasoning').checked = settings.translation.expect_reasoning || false;
-        document.getElementById('aiCompatMode').checked = settings.translation.compat_mode || false;
-        document.getElementById('aiStripBrackets').checked = settings.translation.strip_brackets || false;
-        document.getElementById('aiExperimentalFullLineBracketStrip').checked = settings.translation.experimental_full_line_bracket_strip || false;
-        document.getElementById('aiExperimentalBracketLineAsSubline').checked = settings.translation.experimental_bracket_line_as_subline || false;
+        setInputValue('aiSystemPrompt', translation.system_prompt, 'system_prompt', '');
+        document.getElementById('aiExpectReasoning').checked = translation.expect_reasoning || false;
+        document.getElementById('aiCompatMode').checked = translation.compat_mode || false;
+        document.getElementById('aiStripBrackets').checked = translation.strip_brackets || false;
+        document.getElementById('aiExperimentalFullLineBracketStrip').checked = translation.experimental_full_line_bracket_strip || false;
+        document.getElementById('aiExperimentalBracketLineAsSubline').checked = translation.experimental_bracket_line_as_subline || false;
     }
     if (settings.thinking) {
-        document.getElementById('aiThinkingEnabled').checked = settings.thinking.enabled !== undefined ? settings.thinking.enabled : true;
-        document.getElementById('aiThinkingProvider').value = settings.thinking.provider || '';
-        document.getElementById('aiThinkingBaseUrl').value = settings.thinking.base_url || '';
-        document.getElementById('aiThinkingModel').value = settings.thinking.model || '';
+        document.getElementById('aiThinkingEnabled').checked = thinking.enabled !== undefined ? thinking.enabled : true;
+        const thinkingProviderEl = document.getElementById('aiThinkingProvider');
+        if (thinkingProviderEl) {
+            if (isAiFieldHidden('thinking_provider', visibility)) {
+                thinkingProviderEl.value = '';
+                thinkingProviderEl.placeholder = AI_FIELD_HOSTED_PLACEHOLDER;
+            } else {
+                thinkingProviderEl.placeholder = '';
+                thinkingProviderEl.value = thinking.provider !== undefined && thinking.provider !== null ? String(thinking.provider) : '';
+            }
+        }
+        setInputValue('aiThinkingBaseUrl', thinking.base_url, 'thinking_base_url');
+        setInputValue('aiThinkingModel', thinking.model, 'thinking_model');
         document.getElementById('aiThinkingApiKey').value = '';
-        document.getElementById('aiThinkingPrompt').value = settings.thinking.system_prompt || '';
+        setInputValue('aiThinkingPrompt', thinking.system_prompt, 'thinking_system_prompt', '');
     }
     if (settings.romanization) {
         const rp = document.getElementById('aiRomanizationPrompt');
@@ -548,47 +766,89 @@ function fillAIFormState(settings) {
         if (rtl) rtl.checked = settings.romanization.require_trailing_separator !== false;
     }
     updateRomanizationAlignmentHint();
-    // 更新UI状态
-    updateBaseUrlAndModel();
-    updateThinkingBaseUrlAndModel();
+    const shouldSkipProviderPreset = skipProviderPreset
+        || isAiFieldHidden('provider', visibility)
+        || isAiFieldHidden('base_url', visibility)
+        || isAiFieldHidden('model', visibility)
+        || isAiFieldHidden('thinking_provider', visibility)
+        || isAiFieldHidden('thinking_base_url', visibility)
+        || isAiFieldHidden('thinking_model', visibility);
+    if (!shouldSkipProviderPreset) {
+        updateBaseUrlAndModel();
+        updateThinkingBaseUrlAndModel();
+    }
 }
 
 // 写入当前设置到 localStorage
 function writeAIStateToLocalStorage(settings, permissions = {}) {
-    const translation = settings.translation;
-    const thinking = settings.thinking;
+    const visibility = resolveAiFieldVisibility(settings, { fieldVisibility: settings._visibility });
+    const translation = settings.translation || {};
+    const thinking = settings.thinking || {};
 
-    if (permissions.ai_view_provider !== false) {
-        localStorage.setItem('aiProvider', translation.provider);
-        localStorage.setItem('aiThinkingProvider', thinking.provider);
+    const shouldPersist = (permKey, visKey) => {
+        if (permissions[permKey] === false) {
+            return false;
+        }
+        return !isAiFieldHidden(visKey, visibility);
+    };
+
+    if (shouldPersist('ai_view_provider', 'provider')) {
+        localStorage.setItem('aiProvider', translation.provider || '');
+    } else {
+        localStorage.removeItem('aiProvider');
     }
-    if (permissions.ai_view_base_url !== false) {
-        localStorage.setItem('aiBaseUrl', translation.base_url);
+    if (shouldPersist('ai_view_provider', 'thinking_provider')) {
+        localStorage.setItem('aiThinkingProvider', thinking.provider || '');
+    } else {
+        localStorage.removeItem('aiThinkingProvider');
+    }
+    if (shouldPersist('ai_view_base_url', 'base_url')) {
+        localStorage.setItem('aiBaseUrl', translation.base_url || '');
+    } else {
+        localStorage.removeItem('aiBaseUrl');
+    }
+    if (shouldPersist('ai_view_base_url', 'thinking_base_url')) {
         if (thinking.base_url) {
             localStorage.setItem('aiThinkingBaseUrl', thinking.base_url);
         } else {
             localStorage.removeItem('aiThinkingBaseUrl');
         }
+    } else {
+        localStorage.removeItem('aiThinkingBaseUrl');
     }
-    if (permissions.ai_view_model !== false) {
-        localStorage.setItem('aiModel', translation.model);
+    if (shouldPersist('ai_view_model', 'model')) {
+        localStorage.setItem('aiModel', translation.model || '');
+    } else {
+        localStorage.removeItem('aiModel');
+    }
+    if (shouldPersist('ai_view_model', 'thinking_model')) {
         if (thinking.model) {
             localStorage.setItem('aiThinkingModel', thinking.model);
         } else {
             localStorage.removeItem('aiThinkingModel');
         }
+    } else {
+        localStorage.removeItem('aiThinkingModel');
     }
-    if (permissions.ai_view_prompts !== false) {
+    if (shouldPersist('ai_view_prompts', 'system_prompt')) {
         if (translation.system_prompt) {
             localStorage.setItem('aiSystemPrompt', translation.system_prompt);
         } else {
             localStorage.removeItem('aiSystemPrompt');
         }
+    } else {
+        localStorage.removeItem('aiSystemPrompt');
+    }
+    if (shouldPersist('ai_view_prompts', 'thinking_system_prompt')) {
         if (thinking.system_prompt) {
             localStorage.setItem('aiThinkingPrompt', thinking.system_prompt);
         } else {
             localStorage.removeItem('aiThinkingPrompt');
         }
+    } else {
+        localStorage.removeItem('aiThinkingPrompt');
+    }
+    if (permissions.ai_view_prompts !== false && !isAiFieldHidden('system_prompt', visibility)) {
         const rom = settings.romanization || {};
         if (rom.system_prompt) {
             localStorage.setItem('aiRomanizationPrompt', rom.system_prompt);
@@ -603,6 +863,12 @@ function writeAIStateToLocalStorage(settings, permissions = {}) {
         localStorage.setItem('aiRomanizationSeparator', rom.separator || ';');
         localStorage.setItem('aiRomanizationStrict', rom.strict_token_count !== false ? 'true' : 'false');
         localStorage.setItem('aiRomanizationTrailing', rom.require_trailing_separator !== false ? 'true' : 'false');
+    } else {
+        localStorage.removeItem('aiRomanizationPrompt');
+        localStorage.removeItem('aiRomanizationAlignmentMode');
+        localStorage.removeItem('aiRomanizationSeparator');
+        localStorage.removeItem('aiRomanizationStrict');
+        localStorage.removeItem('aiRomanizationTrailing');
     }
     localStorage.setItem('aiExpectReasoning', translation.expect_reasoning);
     localStorage.setItem('aiCompatMode', translation.compat_mode);
@@ -617,7 +883,7 @@ function writeAIStateToLocalStorage(settings, permissions = {}) {
 function readAIStateFromLocalStorage() {
     return {
         translation: {
-            provider: localStorage.getItem('aiProvider') || 'deepseek',
+            provider: localStorage.getItem('aiProvider') || '',
             base_url: localStorage.getItem('aiBaseUrl') || '',
             model: localStorage.getItem('aiModel') || '',
             api_key: '',
@@ -918,9 +1184,9 @@ function normalizeAiPresetList(presets) {
 
 function getSelectedAiPresetIdForExport() {
     const select = document.getElementById('aiPresetSelect');
-    const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
+    const savedId = getSavedAiPresetSelectId();
     const selectedId = select ? select.value : '';
-    return selectedId || activeId || '';
+    return selectedId || savedId || '';
 }
 
 function downloadAiPresetJson(filename, payload) {
@@ -1180,7 +1446,7 @@ function applyAiPreset(preset) {
     }
 
     // 填入表单
-    fillAIFormState(preset);
+    fillAIFormState(preset, { fieldVisibility: resolveAiFieldVisibility(preset) });
     const classified = classifyAiPresetKind(preset);
     setAiSettingsSourceDraft({
         mode: 'preset',
@@ -1197,9 +1463,8 @@ function applyAiPreset(preset) {
 function updateAiPresetSelect() {
     const select = document.getElementById('aiPresetSelect');
     const presets = loadAiPresets();
-    const selectedId = (aiSettingsSourceDraft && aiSettingsSourceDraft.mode === 'preset')
-        ? String(aiSettingsSourceDraft.preset_id || '').trim()
-        : '';
+    const selectedId = getAiPresetSelectTargetId();
+    const savedId = getSavedAiPresetSelectId();
 
     select.innerHTML = '<option value="">' + t('aiSettings.selectPresetOption') + '</option>';
     presets.forEach(preset => {
@@ -1211,6 +1476,10 @@ function updateAiPresetSelect() {
         }
         select.appendChild(option);
     });
+
+    if (savedId && !presets.some(preset => preset.id === savedId)) {
+        appendMissingAiPresetOption(select, savedId, selectedId);
+    }
 
     // 添加 onchange 事件监听器，实现选择后自动应用
     select.onchange = function() {
@@ -1388,18 +1657,22 @@ function updateQuickAiPresetSelect() {
     if (!select) return;
 
     const presets = loadAiPresets();
-    const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY);
+    const savedId = getSavedAiPresetSelectId();
 
     select.innerHTML = '<option value="">' + t('batch.selectPresetQuick') + '</option>';
     presets.forEach(preset => {
         const option = document.createElement('option');
         option.value = preset.id;
         option.textContent = preset.name;
-        if (preset.id === activeId) {
+        if (preset.id === savedId) {
             option.selected = true;
         }
         select.appendChild(option);
     });
+
+    if (savedId && !presets.some(preset => preset.id === savedId)) {
+        appendMissingAiPresetOption(select, savedId, savedId);
+    }
 }
 
 // 快速应用预设
@@ -1434,6 +1707,25 @@ function applyProviderPreset(providerSelectId, baseInputId, modelInputId, forceA
         return;
     }
 
+    const providerFieldKey = providerSelectId === 'aiThinkingProvider' || providerSelectId === 'batchWbAiThinkingProvider'
+        ? 'thinking_provider'
+        : 'provider';
+    const baseFieldKey = providerSelectId === 'aiThinkingProvider' || providerSelectId === 'batchWbAiThinkingProvider'
+        ? 'thinking_base_url'
+        : 'base_url';
+    const modelFieldKey = providerSelectId === 'aiThinkingProvider' || providerSelectId === 'batchWbAiThinkingProvider'
+        ? 'thinking_model'
+        : 'model';
+
+    if (!forceApply) {
+        return;
+    }
+    if (isAiFieldHidden(providerFieldKey, aiFieldVisibility)
+        || isAiFieldHidden(baseFieldKey, aiFieldVisibility)
+        || isAiFieldHidden(modelFieldKey, aiFieldVisibility)) {
+        return;
+    }
+
     const provider = providerSelect.value;
     const preset = PROVIDER_PRESETS[provider];
 
@@ -1443,11 +1735,8 @@ function applyProviderPreset(providerSelectId, baseInputId, modelInputId, forceA
         return;
     }
 
-    // 只有在强制应用或输入框为空时才自动填充
-    if (forceApply || !baseUrlInput.value.trim() || !modelInput.value.trim()) {
-        baseUrlInput.value = preset.baseUrl;
-        modelInput.value = preset.model;
-    }
+    baseUrlInput.value = preset.baseUrl;
+    modelInput.value = preset.model;
     baseUrlInput.readOnly = true;
     modelInput.readOnly = true;
 }
@@ -1577,12 +1866,13 @@ function sanitizeBaseUrl(value) {
     return value.trim().replace(/\/+(chat|responses)\/(completions|streams?)\/?$/i, '');
 }
 
-function buildEffectiveAISettingsFromResponse(settings) {
+function buildEffectiveAISettingsFromResponse(settings, options = {}) {
+    const visibility = resolveAiFieldVisibility(settings, options);
     const translation = settings?.translation || {};
     const thinking = settings?.thinking || {};
     return {
         translation: {
-            provider: translation.provider !== undefined ? translation.provider : 'deepseek',
+            provider: translation.provider !== undefined ? translation.provider : '',
             base_url: translation.base_url !== undefined ? translation.base_url : '',
             model: translation.model !== undefined ? translation.model : '',
             api_key: '',
@@ -1595,7 +1885,7 @@ function buildEffectiveAISettingsFromResponse(settings) {
         },
         thinking: {
             enabled: thinking.enabled !== undefined ? thinking.enabled : true,
-            provider: thinking.provider !== undefined ? thinking.provider : (translation.provider !== undefined ? translation.provider : ''),
+            provider: thinking.provider !== undefined ? thinking.provider : '',
             base_url: thinking.base_url !== undefined ? thinking.base_url : '',
             model: thinking.model !== undefined ? thinking.model : '',
             api_key: '',
@@ -1611,7 +1901,8 @@ function buildEffectiveAISettingsFromResponse(settings) {
                 strict_token_count: r.strict_token_count !== undefined ? Boolean(r.strict_token_count) : true,
                 require_trailing_separator: r.require_trailing_separator !== undefined ? Boolean(r.require_trailing_separator) : true
             };
-        })()
+        })(),
+        _visibility: visibility
     };
 }
 
@@ -1711,9 +2002,15 @@ async function saveAISettings(options = {}) {
         applyAiPresetFieldPermissions(aiPresetPermissions);
         applyAiSettingsButtonPermissions(Boolean(data.can_save_settings ?? data.can_use_ai), Boolean(data.can_edit_preset ?? aiPresetPermissions?.ai_edit_preset));
 
-        const responseSettings = buildEffectiveAISettingsFromResponse(data.effective_settings || data.settings || {});
+        const fieldVisibility = resolveAiFieldVisibilityFromResponse(data);
+        const responseSettings = buildEffectiveAISettingsFromResponse(
+            data.effective_settings || data.settings || {},
+            { fieldVisibility }
+        );
+        setAiRuntimeSummary(data.runtime_summary);
+        setAiFieldVisibility(fieldVisibility);
         writeAIStateToLocalStorage(responseSettings, aiPresetPermissions || payloadBundle.permissions);
-        fillAIFormState(responseSettings);
+        fillAIFormState(responseSettings, { fieldVisibility });
 
         document.getElementById('aiApiKey').value = '';
         document.getElementById('aiThinkingApiKey').value = '';
@@ -1733,7 +2030,9 @@ async function saveAISettings(options = {}) {
         } else {
             setAiSettingsStatus('idle');
         }
-        syncActiveAiPresetKeyWithSavedSource(savedSource);
+        if (intent === 'bind_preset' || statusKind === 'applied-preset' || savedSource.mode !== 'preset') {
+            syncActiveAiPresetKeyWithSavedSource(savedSource);
+        }
 
         aiSettingsInitialSnapshot = snapshotAiSettingsPreviewState();
         updateAiPresetSelect();
@@ -1806,9 +2105,6 @@ async function probeAIConnection(mode = 'translation', btn = null) {
     const isThinking = mode === 'thinking';
     const targetLabel = isThinking ? '思考模型' : '翻译模型';
     const formState = collectAIFormState();
-    const presetId = (aiSettingsSourceDraft && aiSettingsSourceDraft.mode === 'preset')
-        ? String(aiSettingsSourceDraft.preset_id || '').trim()
-        : '';
 
     const probeBtn = btn || document.querySelector(`button[data-probe="${isThinking ? 'thinking' : 'translation'}"]`);
     const originalText = probeBtn ? probeBtn.textContent : '';
@@ -1818,12 +2114,10 @@ async function probeAIConnection(mode = 'translation', btn = null) {
     }
 
     try {
-        const response = await fetch('/probe_ai', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                mode,
-                preset_id: presetId || undefined,
+        const payload = { mode };
+        if (isLocalAiAdminProbeAllowed()) {
+            Object.assign(payload, {
+                intent: 'probe_form',
                 compat_mode: formState.translation.compat_mode,
                 thinking_enabled: formState.thinking.enabled,
                 translation: {
@@ -1846,7 +2140,13 @@ async function probeAIConnection(mode = 'translation', btn = null) {
                     system_prompt: formState.thinking.system_prompt,
                     api_key: formState.thinking.api_key
                 }
-            })
+            });
+        }
+
+        const response = await fetch('/probe_ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
 
         const data = await response.json();

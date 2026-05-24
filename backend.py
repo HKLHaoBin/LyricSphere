@@ -1231,6 +1231,87 @@ def append_ai_usage_log(event: Dict[str, Any]) -> None:
     except Exception as exc:
         app.logger.warning("Failed to write ai usage log: %s", exc)
 
+
+def _ai_usage_resolve_song_name(json_file: str) -> str:
+    raw = str(json_file or '').strip()
+    if not raw:
+        return ''
+    try:
+        _, json_path = _resolve_existing_static_json_filename(raw)
+        if json_path.exists():
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            meta = data.get('meta') if isinstance(data.get('meta'), dict) else {}
+            title = str(meta.get('title') or '').strip()
+            if title:
+                return title
+    except Exception:
+        pass
+    return re.sub(r'\.json$', '', raw, flags=re.I)
+
+
+def _ai_usage_merge_stream_usage(
+    usage: Any,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+) -> Tuple[int, int, int]:
+    if usage is None:
+        return prompt_tokens, completion_tokens, total_tokens
+    p = getattr(usage, 'prompt_tokens', None)
+    c = getattr(usage, 'completion_tokens', None)
+    t = getattr(usage, 'total_tokens', None)
+    if p is not None:
+        prompt_tokens += int(p)
+    if c is not None:
+        completion_tokens += int(c)
+    if t is not None:
+        total_tokens += int(t)
+    return prompt_tokens, completion_tokens, total_tokens
+
+
+def _ai_usage_audit_token_payload(
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+) -> Dict[str, Any]:
+    has_usage = bool(prompt_tokens or completion_tokens or total_tokens)
+    if not has_usage:
+        return {
+            'prompt_tokens': None,
+            'completion_tokens': None,
+            'total_tokens': None,
+            'token_total': None,
+        }
+    return {
+        'prompt_tokens': prompt_tokens,
+        'completion_tokens': completion_tokens,
+        'total_tokens': total_tokens,
+        'token_total': total_tokens,
+    }
+
+
+def _ai_usage_event_tokens(ev: Dict[str, Any]) -> Tuple[int, int, int]:
+    prompt = coerce_int(ev.get('prompt_tokens'), 0) or 0
+    completion = coerce_int(ev.get('completion_tokens'), 0) or 0
+    total = coerce_int(ev.get('total_tokens'), 0) or 0
+    if not total:
+        total = coerce_int(ev.get('token_total'), 0) or 0
+    return prompt, completion, total
+
+
+def _ai_usage_effective_model(ev: Dict[str, Any]) -> str:
+    for key in ('effective_model', 'model', 'translation_model'):
+        value = str(ev.get(key) or '').strip()
+        if value:
+            return value
+    return ''
+
+
+def _ai_usage_preset_key(ev: Dict[str, Any]) -> str:
+    preset_id = str(ev.get('preset_id') or '').strip()
+    return preset_id if preset_id else 'manual'
+
 AMLL_COVER_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
 
@@ -2377,6 +2458,32 @@ AI_TRANSLATION_SETTINGS = {
 
 AI_TRANSLATION_DEFAULTS = AI_TRANSLATION_SETTINGS.copy()
 
+AI_ALLOW_REQUEST_RUNTIME_OVERRIDE = os.environ.get('AI_ALLOW_REQUEST_RUNTIME_OVERRIDE', '0') == '1'
+
+AI_TASK_PAYLOAD_ALLOWLIST = frozenset({
+    'content', 'song_name', 'jsonFile', 'items', 'thinking_enabled',
+    'mode', 'intent',
+    'source_content', 'source_format', 'target_format',
+    'repair_instruction', 'previous_full_model_output', 'conversation_history',
+    'manual_model_output', 'compat_mode',
+})
+
+AI_RUNTIME_CONFIG_REQUEST_KEYS = frozenset({
+    'preset_id', 'source_mode', 'source_preset_id',
+    'provider', 'base_url', 'model', 'api_key', 'system_prompt',
+    'expect_reasoning', 'strip_brackets', 'experimental_full_line_bracket_strip',
+    'experimental_bracket_line_as_subline', 'compat_mode',
+    'thinking_enabled', 'thinking_provider', 'thinking_base_url', 'thinking_model',
+    'thinking_system_prompt', 'thinking_api_key',
+    'auto_save', 'only_empty', 'always_override', 'extra_prompt',
+    'romanization_system_prompt', 'romanization_alignment_mode', 'romanization_separator',
+    'romanization_strict_token_count', 'romanization_require_trailing_separator',
+    'translation', 'thinking', 'batch', 'romanization',
+    'clear_translation_api_key', 'clear_thinking_api_key',
+})
+
+_ai_runtime_config_strip_warning_logged = False
+
 ROMANIZATION_DEFAULT_PROMPT_INDEXED = (
     '你是歌词罗马音助手。用户每行格式为：行号 N. 后紧跟若干「[k]原文片段」，k 为从 1 开始的 token 编号（与输入完全一致）。\n'
     '你必须输出完全相同的结构：保留每个 [k] 编号，只把编号后的原文替换为对应罗马音（如日语 Hepburn）；不得翻译含义；不得添加说明。\n'
@@ -2680,16 +2787,103 @@ def credential_permissions_snapshot(credential: Optional[Dict[str, Any]]) -> Dic
     return normalize_device_permissions(credential.get('permissions'))
 
 
-def build_ai_public_payload_from_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+def build_ai_field_visibility(permissions: Optional[Dict[str, bool]] = None) -> Dict[str, str]:
+    """Flat field_visibility keys aligned with LyricSphere-ai-presets.js."""
+    permissions = permissions or dict(DEFAULT_DEVICE_PERMISSIONS)
+
+    def vis(perm_key: str) -> str:
+        return 'visible' if permissions.get(perm_key, False) else 'hidden'
+
+    provider_vis = vis('ai_view_provider')
+    base_url_vis = vis('ai_view_base_url')
+    model_vis = vis('ai_view_model')
+    prompt_vis = vis('ai_view_prompts')
+
+    return {
+        'provider': provider_vis,
+        'base_url': base_url_vis,
+        'model': model_vis,
+        'system_prompt': prompt_vis,
+        'thinking_provider': provider_vis,
+        'thinking_base_url': base_url_vis,
+        'thinking_model': model_vis,
+        'thinking_system_prompt': prompt_vis,
+        'batch_extra_prompt': prompt_vis,
+        'romanization_system_prompt': prompt_vis,
+    }
+
+
+def build_ai_public_payload_from_settings(
+    settings: Dict[str, Any],
+    permissions: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
     translation = settings.get('translation', {}) if isinstance(settings.get('translation'), dict) else {}
     thinking = settings.get('thinking', {}) if isinstance(settings.get('thinking'), dict) else {}
     batch = settings.get('batch', {}) if isinstance(settings.get('batch'), dict) else {}
+    romanization = coalesce_romanization_settings(settings.get('romanization'))
+
+    if permissions is None:
+        return {
+            'translation': {
+                'provider': translation.get('provider', AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')),
+                'base_url': translation.get('base_url', AI_TRANSLATION_DEFAULTS.get('base_url', '')),
+                'model': translation.get('model', AI_TRANSLATION_DEFAULTS.get('model', '')),
+                'system_prompt': translation.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('system_prompt', '')),
+                'expect_reasoning': parse_bool(translation.get('expect_reasoning'), AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True)),
+                'strip_brackets': parse_bool(translation.get('strip_brackets'), AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)),
+                'experimental_full_line_bracket_strip': parse_bool(translation.get('experimental_full_line_bracket_strip'), AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)),
+                'experimental_bracket_line_as_subline': parse_bool(translation.get('experimental_bracket_line_as_subline'), AI_TRANSLATION_DEFAULTS.get('experimental_bracket_line_as_subline', False)),
+                'compat_mode': parse_bool(translation.get('compat_mode'), AI_TRANSLATION_DEFAULTS.get('compat_mode', False)),
+            },
+            'thinking': {
+                'enabled': parse_bool(thinking.get('enabled'), AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True)),
+                'provider': thinking.get('provider', AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek')),
+                'base_url': thinking.get('base_url', AI_TRANSLATION_DEFAULTS.get('thinking_base_url', '')),
+                'model': thinking.get('model', AI_TRANSLATION_DEFAULTS.get('thinking_model', '')),
+                'system_prompt': thinking.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', '')),
+            },
+            'batch': {
+                'auto_save': parse_bool(batch.get('auto_save'), True),
+                'only_empty': parse_bool(batch.get('only_empty'), True),
+                'always_override': parse_bool(batch.get('always_override'), False),
+                'extra_prompt': batch.get('extra_prompt', ''),
+            },
+            'romanization': romanization,
+        }
+
+    view_provider = bool(permissions.get('ai_view_provider', False))
+    view_base_url = bool(permissions.get('ai_view_base_url', False))
+    view_model = bool(permissions.get('ai_view_model', False))
+    view_prompts = bool(permissions.get('ai_view_prompts', False))
+
+    def pick_text(value: Any, default_value: str = '', visible: bool = True) -> str:
+        if not visible:
+            return ''
+        text = '' if value is None else str(value)
+        return text if text.strip() else default_value
+
     return {
         'translation': {
-            'provider': translation.get('provider', AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek')),
-            'base_url': translation.get('base_url', AI_TRANSLATION_DEFAULTS.get('base_url', '')),
-            'model': translation.get('model', AI_TRANSLATION_DEFAULTS.get('model', '')),
-            'system_prompt': translation.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('system_prompt', '')),
+            'provider': pick_text(
+                translation.get('provider'),
+                AI_TRANSLATION_DEFAULTS.get('provider', 'deepseek'),
+                view_provider,
+            ).strip(),
+            'base_url': pick_text(
+                translation.get('base_url'),
+                AI_TRANSLATION_DEFAULTS.get('base_url', ''),
+                view_base_url,
+            ).strip(),
+            'model': pick_text(
+                translation.get('model'),
+                AI_TRANSLATION_DEFAULTS.get('model', ''),
+                view_model,
+            ).strip(),
+            'system_prompt': pick_text(
+                translation.get('system_prompt'),
+                AI_TRANSLATION_DEFAULTS.get('system_prompt', ''),
+                view_prompts,
+            ),
             'expect_reasoning': parse_bool(translation.get('expect_reasoning'), AI_TRANSLATION_DEFAULTS.get('expect_reasoning', True)),
             'strip_brackets': parse_bool(translation.get('strip_brackets'), AI_TRANSLATION_DEFAULTS.get('strip_brackets', False)),
             'experimental_full_line_bracket_strip': parse_bool(translation.get('experimental_full_line_bracket_strip'), AI_TRANSLATION_DEFAULTS.get('experimental_full_line_bracket_strip', False)),
@@ -2698,22 +2892,48 @@ def build_ai_public_payload_from_settings(settings: Dict[str, Any]) -> Dict[str,
         },
         'thinking': {
             'enabled': parse_bool(thinking.get('enabled'), AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True)),
-            'provider': thinking.get('provider', AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek')),
-            'base_url': thinking.get('base_url', AI_TRANSLATION_DEFAULTS.get('thinking_base_url', '')),
-            'model': thinking.get('model', AI_TRANSLATION_DEFAULTS.get('thinking_model', '')),
-            'system_prompt': thinking.get('system_prompt', AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', '')),
+            'provider': pick_text(
+                thinking.get('provider'),
+                AI_TRANSLATION_DEFAULTS.get('thinking_provider', 'deepseek'),
+                view_provider,
+            ).strip(),
+            'base_url': pick_text(
+                thinking.get('base_url'),
+                AI_TRANSLATION_DEFAULTS.get('thinking_base_url', ''),
+                view_base_url,
+            ).strip(),
+            'model': pick_text(
+                thinking.get('model'),
+                AI_TRANSLATION_DEFAULTS.get('thinking_model', ''),
+                view_model,
+            ).strip(),
+            'system_prompt': pick_text(
+                thinking.get('system_prompt'),
+                AI_TRANSLATION_DEFAULTS.get('thinking_system_prompt', ''),
+                view_prompts,
+            ),
         },
         'batch': {
             'auto_save': parse_bool(batch.get('auto_save'), True),
             'only_empty': parse_bool(batch.get('only_empty'), True),
             'always_override': parse_bool(batch.get('always_override'), False),
-            'extra_prompt': batch.get('extra_prompt', ''),
+            'extra_prompt': pick_text(batch.get('extra_prompt'), '', view_prompts),
         },
-        'romanization': coalesce_romanization_settings(settings.get('romanization')),
+        'romanization': {
+            **romanization,
+            'system_prompt': pick_text(
+                romanization.get('system_prompt'),
+                _default_romanization_system_prompt_for_mode(romanization.get('alignment_mode')),
+                view_prompts,
+            ),
+        },
     }
 
 
-def build_ai_settings_snapshot(record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def build_ai_settings_snapshot(
+    record: Optional[Dict[str, Any]] = None,
+    permissions: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
     source = record or {}
     if isinstance(source, dict):
         if isinstance(source.get('settings'), dict):
@@ -2721,10 +2941,84 @@ def build_ai_settings_snapshot(record: Optional[Dict[str, Any]] = None) -> Dict[
         elif isinstance(source.get('public_payload'), dict):
             source = source.get('public_payload', {})
     normalized = normalize_ai_settings_state(source)
-    snapshot = build_ai_public_payload_from_settings(normalized)
+    snapshot = build_ai_public_payload_from_settings(normalized, permissions=permissions)
     snapshot['translation_api_key_present'] = bool(str((normalized.get('translation') or {}).get('api_key') or '').strip())
     snapshot['thinking_api_key_present'] = bool(str((normalized.get('thinking') or {}).get('api_key') or '').strip())
+    if permissions is not None:
+        snapshot['field_visibility'] = build_ai_field_visibility(permissions)
     return snapshot
+
+
+def sanitize_settings_for_device(
+    settings: Dict[str, Any],
+    permissions: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    permissions = permissions or dict(DEFAULT_DEVICE_PERMISSIONS)
+    return build_ai_settings_snapshot({'settings': settings}, permissions=permissions)
+
+
+def build_ai_runtime_summary(
+    settings_store: Dict[str, Any],
+    runtime: Dict[str, Any],
+    permissions: Optional[Dict[str, bool]] = None,
+) -> Dict[str, Any]:
+    permissions = permissions or dict(DEFAULT_DEVICE_PERMISSIONS)
+    source_mode = str(settings_store.get('source_mode') or 'manual').strip().lower()
+    if source_mode not in {'manual', 'preset'}:
+        source_mode = 'manual'
+    source_preset_id = str(settings_store.get('source_preset_id') or '').strip() if source_mode == 'preset' else ''
+    source_preset = get_ai_preset_by_id(source_preset_id) if source_preset_id else None
+    if source_mode == 'preset':
+        source_kind, source_label = classify_ai_preset_source(source_preset, source_preset_id)
+    else:
+        source_kind, source_label = ('manual', '独立当前设置')
+
+    provider_visible = bool(permissions.get('ai_view_provider', False))
+    model_visible = bool(permissions.get('ai_view_model', False))
+    translation = runtime.get('translation', {}) if isinstance(runtime.get('translation'), dict) else {}
+    thinking = runtime.get('thinking', {}) if isinstance(runtime.get('thinking'), dict) else {}
+
+    def mask_model(model_value: Any) -> str:
+        model_text = str(model_value or '').strip()
+        if not model_text:
+            return ''
+        if not model_visible:
+            return '***'
+        return model_text
+
+    def mask_provider(provider_value: Any) -> str:
+        if not provider_visible:
+            return ''
+        return str(provider_value or '').strip()
+
+    translation_provider = mask_provider(translation.get('provider'))
+    thinking_provider = mask_provider(thinking.get('provider'))
+    translation_model_label = mask_model(translation.get('model'))
+    thinking_model_label = mask_model(thinking.get('model'))
+    thinking_enabled = parse_bool(
+        thinking.get('enabled'),
+        AI_TRANSLATION_DEFAULTS.get('thinking_enabled', True),
+    )
+
+    return {
+        'source_mode': source_mode,
+        'source_preset_id': source_preset_id,
+        'source_kind': source_kind,
+        'source_label': source_label,
+        'provider_visible': provider_visible,
+        'provider_label': translation_provider,
+        'model_label': translation_model_label,
+        'thinking_provider_label': thinking_provider,
+        'thinking_model_label': thinking_model_label,
+        'thinking_enabled': thinking_enabled,
+        'translation_provider': translation_provider,
+        'translation_model_label': translation_model_label,
+        'translation_api_key_present': bool(str(translation.get('api_key') or '').strip()),
+        'thinking_api_key_present': bool(str(thinking.get('api_key') or '').strip()),
+        'resolved_from': str(runtime.get('resolved_from') or ''),
+        'preset_id': str(runtime.get('id') or ''),
+        'preset_name': str(runtime.get('name') or ''),
+    }
 
 
 def ai_preset_secret_presence(preset: Optional[Dict[str, Any]]) -> Dict[str, bool]:
@@ -3609,7 +3903,98 @@ def sanitize_preset_for_device(preset: Dict[str, Any], permissions: Optional[Dic
         flat['batch']['extra_prompt'] = ''
         if isinstance(flat.get('romanization'), dict):
             flat['romanization']['system_prompt'] = ''
+    flat['field_visibility'] = build_ai_field_visibility(permissions)
     return flat
+
+
+def _can_apply_request_runtime_override(request_data: Dict[str, Any]) -> bool:
+    if AI_ALLOW_REQUEST_RUNTIME_OVERRIDE:
+        return True
+    if not is_loopback_request():
+        return False
+    intent = str(request_data.get('intent') or '').strip().lower()
+    return intent in {'probe_form', 'preview'}
+
+
+def _request_contains_runtime_config_keys(request_data: Dict[str, Any]) -> List[str]:
+    if not isinstance(request_data, dict):
+        return []
+    stripped: List[str] = []
+    for key in request_data.keys():
+        if key in AI_RUNTIME_CONFIG_REQUEST_KEYS:
+            stripped.append(key)
+            continue
+        if key.startswith('thinking_') or key.startswith('romanization_'):
+            stripped.append(key)
+    return stripped
+
+
+def extract_ai_task_payload(request_data: Any) -> Dict[str, Any]:
+    global _ai_runtime_config_strip_warning_logged
+    if not isinstance(request_data, dict):
+        return {}
+    payload = {key: request_data[key] for key in AI_TASK_PAYLOAD_ALLOWLIST if key in request_data}
+    if not _can_apply_request_runtime_override(request_data):
+        stripped = _request_contains_runtime_config_keys(request_data)
+        if stripped and not _ai_runtime_config_strip_warning_logged:
+            app.logger.warning(
+                'AI task request contained runtime config fields (ignored): %s',
+                ', '.join(sorted(set(stripped))[:24]),
+            )
+            _ai_runtime_config_strip_warning_logged = True
+    return payload
+
+
+def resolve_runtime_ai_config(request_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    request_data = request_data if isinstance(request_data, dict) else {}
+    settings_store = get_ai_settings_store()
+    current_settings = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
+
+    stored_source_mode = str(settings_store.get('source_mode') or 'manual').strip().lower()
+    if stored_source_mode not in {'manual', 'preset'}:
+        stored_source_mode = 'manual'
+    stored_preset_id = str(settings_store.get('source_preset_id') or '').strip() if stored_source_mode == 'preset' else ''
+
+    resolved_from = 'manual'
+    effective_preset_id = ''
+    preset = None
+
+    if stored_source_mode == 'preset' and stored_preset_id:
+        effective_preset_id = stored_preset_id
+        preset = get_ai_preset_by_id(effective_preset_id)
+        if preset:
+            resolved_from = 'stored_preset'
+            runtime = normalize_ai_settings_state(materialize_ai_settings_from_preset(preset))
+        else:
+            resolved_from = 'stored_preset_missing_fallback'
+            runtime = normalize_ai_settings_state(current_settings)
+    else:
+        runtime = normalize_ai_settings_state(current_settings)
+
+    if _can_apply_request_runtime_override(request_data):
+        runtime = normalize_ai_settings_state(request_data, runtime)
+
+    request_preset_id = str(request_data.get('preset_id') or '').strip()
+    if effective_preset_id and not preset and resolved_from == 'stored_preset_missing_fallback':
+        runtime['source_mode'] = 'manual'
+        runtime['source_preset_id'] = ''
+    elif preset:
+        runtime['source_mode'] = 'preset'
+        runtime['source_preset_id'] = str(preset.get('id') or '')
+    else:
+        runtime['source_mode'] = 'manual'
+        runtime['source_preset_id'] = ''
+
+    runtime['requested_preset_id'] = request_preset_id
+    runtime['resolved_from'] = resolved_from
+    runtime['id'] = str((preset or {}).get('id') or effective_preset_id or '')
+    runtime['name'] = str((preset or {}).get('name') or effective_preset_id or '')
+    return runtime
+
+
+def resolve_ai_request_preset(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Backward-compatible wrapper; runtime is resolved server-side only."""
+    return resolve_runtime_ai_config(request_data)
 
 
 def get_current_device_auth_context() -> Dict[str, Any]:
@@ -3776,43 +4161,6 @@ def classify_ai_preset_source(preset: Optional[Dict[str, Any]], preset_id: str =
         return ('shared_preset', f'分享预设：{name}')
     return ('personal_preset', f'个人预设：{name}')
 
-
-def resolve_ai_request_preset(request_data: Dict[str, Any]) -> Dict[str, Any]:
-    settings_store = get_ai_settings_store()
-    current_settings = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
-
-    request_preset_id = str(request_data.get('preset_id') or '').strip()
-    stored_source_mode = str(settings_store.get('source_mode') or 'manual').strip().lower()
-    if stored_source_mode not in {'manual', 'preset'}:
-        stored_source_mode = 'manual'
-    stored_preset_id = str(settings_store.get('source_preset_id') or '').strip() if stored_source_mode == 'preset' else ''
-
-    resolved_from = 'manual'
-    effective_preset_id = ''
-    if request_preset_id:
-        effective_preset_id = request_preset_id
-        resolved_from = 'request_preset'
-    elif stored_source_mode == 'preset' and stored_preset_id:
-        effective_preset_id = stored_preset_id
-        resolved_from = 'stored_preset'
-
-    preset = get_ai_preset_by_id(effective_preset_id) if effective_preset_id else None
-    base_state = preset if preset else current_settings
-    runtime = normalize_ai_settings_state(base_state)
-    runtime = normalize_ai_settings_state(request_data, runtime)
-    # If stored binding points to a missing preset, explicitly fall back to manual.
-    if effective_preset_id and not preset and resolved_from == 'stored_preset':
-        resolved_from = 'stored_preset_missing_fallback'
-        runtime['source_mode'] = 'manual'
-        runtime['source_preset_id'] = ''
-    else:
-        runtime['source_mode'] = 'preset' if preset else 'manual'
-        runtime['source_preset_id'] = str(preset.get('id') or '') if preset else ''
-    runtime['requested_preset_id'] = request_preset_id
-    runtime['resolved_from'] = resolved_from
-    runtime['id'] = str((preset or {}).get('id') or effective_preset_id or '')
-    runtime['name'] = str((preset or {}).get('name') or effective_preset_id or '')
-    return runtime
 
 BATCH_TRANSLATION_FIXED_PROMPT = '''批量翻译固定规则：
 1. 每个歌曲块必须先输出对应的 [ID:xxx]。
@@ -10463,11 +10811,17 @@ def get_ai_settings():
     else:
         source_kind, source_label = ('manual', '独立当前设置')
 
+    runtime_for_summary = resolve_runtime_ai_config({})
+    runtime_summary = build_ai_runtime_summary(settings_store, runtime_for_summary, permissions)
+    field_visibility = build_ai_field_visibility(permissions)
+
     return jsonify({
         'status': 'success',
-        'settings': build_ai_settings_snapshot({'settings': effective_settings_state}),
-        'stored_settings': build_ai_settings_snapshot({'settings': settings_state}),
-        'effective_settings': build_ai_settings_snapshot({'settings': effective_settings_state}),
+        'settings': sanitize_settings_for_device(effective_settings_state, permissions),
+        'stored_settings': sanitize_settings_for_device(settings_state, permissions),
+        'effective_settings': sanitize_settings_for_device(effective_settings_state, permissions),
+        'field_visibility': field_visibility,
+        'runtime_summary': runtime_summary,
         'preset': active_settings,
         'active_preset_id': preset_store.get('active_preset_id', ''),
         'source_mode': source_mode,
@@ -10611,11 +10965,17 @@ def save_ai_settings():
         else:
             source_kind_rsp, source_label_rsp = ('manual', '独立当前设置')
 
+        runtime_for_summary_rsp = resolve_runtime_ai_config({})
+        runtime_summary_rsp = build_ai_runtime_summary(settings_store, runtime_for_summary_rsp, response_permissions)
+        field_visibility_rsp = build_ai_field_visibility(response_permissions)
+
         return jsonify({
             'status': 'success',
-            'settings': build_ai_settings_snapshot({'settings': effective_settings_rsp}),
-            'stored_settings': build_ai_settings_snapshot({'settings': stored_settings_rsp}),
-            'effective_settings': build_ai_settings_snapshot({'settings': effective_settings_rsp}),
+            'settings': sanitize_settings_for_device(effective_settings_rsp, response_permissions),
+            'stored_settings': sanitize_settings_for_device(stored_settings_rsp, response_permissions),
+            'effective_settings': sanitize_settings_for_device(effective_settings_rsp, response_permissions),
+            'field_visibility': field_visibility_rsp,
+            'runtime_summary': runtime_summary_rsp,
             'preset': sanitize_preset_for_device(active_preset, response_permissions),
             'active_preset_id': preset_store.get('active_preset_id', ''),
             'source_mode': source_mode_rsp,
@@ -10781,8 +11141,9 @@ def probe_ai():
         return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
     try:
         request_data = request.get_json(silent=True) or {}
-        mode = (request_data.get('mode') or 'translation').lower()
-        runtime = resolve_ai_request_preset(request_data)
+        task_payload = extract_ai_task_payload(request_data)
+        mode = (task_payload.get('mode') or 'translation').lower()
+        runtime = resolve_runtime_ai_config(request_data)
         source_mode = str(runtime.get('source_mode') or 'manual')
         source_preset_name = str(runtime.get('name') or runtime.get('id') or '').strip()
         if mode == 'thinking':
@@ -10795,7 +11156,7 @@ def probe_ai():
             base_url_raw = runtime.get('translation', {}).get('base_url')
             model = runtime.get('translation', {}).get('model')
             system_prompt = runtime.get('translation', {}).get('system_prompt') or ''
-        compat_mode = parse_bool(request_data.get('compat_mode'), False)
+        compat_mode = parse_bool(task_payload.get('compat_mode'), parse_bool(runtime.get('translation', {}).get('compat_mode'), False))
 
         # 规范化 base_url，去掉用户误填的 /chat/completions 等尾巴
         def _normalize_base_url(u: str) -> str:
@@ -10872,11 +11233,12 @@ def translate_lyrics():
     try:
         # 获取请求数据
         request_data = request.get_json(silent=True) or {}
+        task_payload = extract_ai_task_payload(request_data)
         if not can_use_ai():
             return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
-        content = request_data.get('content', '')
+        content = task_payload.get('content', '')
         auth_context = get_current_device_auth_context()
-        runtime = resolve_ai_request_preset(request_data)
+        runtime = resolve_runtime_ai_config(request_data)
         api_key = runtime.get('translation', {}).get('api_key', '')
         if not api_key:
             source_mode = str(runtime.get('source_mode') or 'manual')
@@ -10943,16 +11305,23 @@ def translate_lyrics():
             if auth_context.get('is_system_admin'):
                 credential_id = 'system'
             auth_type = str(auth_context.get('auth_type') or ('system' if auth_context.get('is_system_admin') else '')).strip()
+            effective_preset_id = str(runtime.get('id') or '').strip() or 'manual'
+            translation_model = str(model or '')
             return {
                 'request_id': request_id,
                 'event': 'ai_translate_lyrics',
                 'credential_id': credential_id,
                 'auth_type': auth_type,
                 'device_id': auth_context.get('device_id'),
-                'preset_id': str(runtime.get('id') or ''),
+                'preset_id': effective_preset_id,
+                'preset_name': str(runtime.get('name') or ''),
+                'source_mode': str(runtime.get('source_mode') or ''),
+                'resolved_from': str(runtime.get('resolved_from') or ''),
                 'provider': provider,
                 'base_url': base_url,
-                'model': model,
+                'translation_model': translation_model,
+                'effective_model': translation_model,
+                'model': translation_model,
                 'thinking_enabled': bool(thinking_enabled),
                 'thinking_provider': thinking_provider,
                 'thinking_base_url': thinking_base_url,
@@ -10975,9 +11344,9 @@ def translate_lyrics():
             experimental_bracket_line_as_subline
         )
 
-        items = request_data.get('items')
+        items = task_payload.get('items')
         if isinstance(items, list) and items:
-            batch_thinking_enabled = parse_bool(request_data.get('thinking_enabled'), False)
+            batch_thinking_enabled = parse_bool(task_payload.get('thinking_enabled'), False)
             valid_items: List[Dict[str, Any]] = []
             for idx, raw_item in enumerate(items, 1):
                 item = raw_item if isinstance(raw_item, dict) else {}
@@ -11007,12 +11376,16 @@ def translate_lyrics():
                 if not item_prompt_lines:
                     continue
                 has_sublines = any(line['is_subline'] for line in item_prompt_lines)
+                item_song_name = str(item.get('song_name') or '').strip()
+                if not item_song_name:
+                    item_song_name = _ai_usage_resolve_song_name(str(item.get('jsonFile') or ''))
 
                 valid_items.append({
                     'id': item_id,
                     'jsonFile': item.get('jsonFile', ''),
                     'lyricsPath': item.get('lyricsPath', ''),
                     'translationPath': item.get('translationPath', ''),
+                    'song_name': item_song_name,
                     'lyrics': item_lyrics,
                     'lyrics_entries': item_entries,
                     'prompt_lines': item_prompt_lines,
@@ -11035,17 +11408,20 @@ def translate_lyrics():
                 if item_preview:
                     items_preview_lines.append(f"{item_json or item.get('id')}: {item_preview[:160]}")
 
+            batch_song_names = [str(item.get('song_name') or '').strip() for item in valid_items if str(item.get('song_name') or '').strip()]
             audit_base.update({
                 'mode': 'batch',
                 'item_count': len(valid_items),
                 'json_files_preview': json_files_preview,
                 'items_preview': '\n'.join(items_preview_lines),
                 'content_preview': '\n'.join(items_preview_lines)[:600],
+                'song_names_preview': ', '.join(batch_song_names[:8]),
                 'items': [
                     {
                         'id': str(item.get('id') or ''),
                         'jsonFile': str(item.get('jsonFile') or ''),
                         'lyricsPath': str(item.get('lyricsPath') or ''),
+                        'song_name': str(item.get('song_name') or ''),
                         **_summarize_content('\n'.join(item.get('lyrics', []) or []))
                     }
                     for item in valid_items[:50]
@@ -11087,6 +11463,9 @@ def translate_lyrics():
 
             def generate_batch():
                 audit_payload = dict(audit_base)
+                prompt_tokens = 0
+                completion_tokens = 0
+                total_tokens = 0
                 try:
                     batch_blocks = []
                     has_any_sublines = False
@@ -11179,6 +11558,10 @@ def translate_lyrics():
                             last_flush_at = now
 
                     for chunk in response:
+                        if hasattr(chunk, 'usage') and chunk.usage:
+                            prompt_tokens, completion_tokens, total_tokens = _ai_usage_merge_stream_usage(
+                                chunk.usage, prompt_tokens, completion_tokens, total_tokens
+                            )
                         choices = getattr(chunk, 'choices', None)
                         if not choices:
                             continue
@@ -11234,6 +11617,7 @@ def translate_lyrics():
                     audit_payload.update({
                         'success': True,
                         'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                        **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
                     })
                 except Exception as e:
                     app.logger.error(f"批量翻译出错 [ID: {request_id}]: {str(e)}", exc_info=True)
@@ -11242,6 +11626,7 @@ def translate_lyrics():
                         'success': False,
                         'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
                         'error': str(e),
+                        **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
                     })
                 finally:
                     append_ai_usage_log(audit_payload)
@@ -11252,6 +11637,9 @@ def translate_lyrics():
             return jsonify({'status': 'error', 'message': '未提供歌词内容'})
 
         audit_base = _build_ai_usage_audit_base()
+        single_song_name = str(request_data.get('song_name') or '').strip()
+        if not single_song_name:
+            single_song_name = _ai_usage_resolve_song_name(str(request_data.get('jsonFile') or ''))
         audit_base.update({
             'mode': 'single',
             'item_count': 1,
@@ -11259,6 +11647,8 @@ def translate_lyrics():
             'jsonFile': str(request_data.get('jsonFile') or ''),
             'lyricsPath': str(request_data.get('lyricsPath') or ''),
             'translationPath': str(request_data.get('translationPath') or ''),
+            'song_name': single_song_name,
+            'song_names_preview': single_song_name,
         })
 
         timestamps = extract_timestamps_from_content(content)
@@ -11379,6 +11769,9 @@ def translate_lyrics():
         # 2. 调用AI服务进行翻译
         def generate():
             audit_payload = dict(audit_base)
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
             try:
                 # 构建提示词
                 numbered_lyrics = '\n'.join(
@@ -11423,14 +11816,17 @@ def translate_lyrics():
                         current_thinking = ""
                         for chunk in thinking_response:
                             thinking_chunks += 1
+                            if hasattr(chunk, 'usage') and chunk.usage:
+                                prompt_tokens, completion_tokens, total_tokens = _ai_usage_merge_stream_usage(
+                                    chunk.usage, prompt_tokens, completion_tokens, total_tokens
+                                )
+                                thinking_tokens = getattr(chunk.usage, 'total_tokens', 0) or thinking_tokens
                             choices = getattr(chunk, 'choices', None)
                             if not choices:
                                 continue
                             delta = getattr(choices[0], 'delta', None)
                             if delta is None:
                                 continue
-                            if hasattr(chunk, 'usage') and chunk.usage:
-                                thinking_tokens = getattr(chunk.usage, 'total_tokens', 0)
                             if hasattr(delta, 'content') and delta.content:
                                 addition = delta.content
                                 current_thinking += addition
@@ -11514,7 +11910,6 @@ def translate_lyrics():
                 full_translation = ""
                 reasoning_content = ""
                 current_reasoning = ""
-                total_tokens = 0
                 received_chunks = 0
 
                 app.logger.info("开始接收AI流式响应...")
@@ -11531,10 +11926,11 @@ def translate_lyrics():
                         app.logger.debug(f"数据块缺少delta字段 [ID: {request_id}]，跳过处理")
                         continue
                     
-                    # 记录token使用情况（如果有）
                     if hasattr(chunk, 'usage') and chunk.usage:
-                        total_tokens = getattr(chunk.usage, 'total_tokens', 0)
-                        
+                        prompt_tokens, completion_tokens, total_tokens = _ai_usage_merge_stream_usage(
+                            chunk.usage, prompt_tokens, completion_tokens, total_tokens
+                        )
+
                     # 检查是否有思维链内容
                     if expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                         content = delta.reasoning_content
@@ -11597,6 +11993,7 @@ def translate_lyrics():
                     'success': False,
                     'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
                     'error': str(e),
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
                 })
             else:
                 # 记录翻译成功完成
@@ -11607,9 +12004,9 @@ def translate_lyrics():
                 audit_payload.update({
                     'success': True,
                     'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
-                    'token_total': total_tokens,
                     'reasoning_length': len(current_reasoning),
                     'translation_length': len(full_translation),
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
                 })
             finally:
                 append_ai_usage_log(audit_payload)
@@ -12311,10 +12708,11 @@ def assemble_romanization_from_raw(job: Dict[str, Any], raw_model_output: str) -
 @app.route('/romanize_lyrics', methods=['POST'])
 def romanize_lyrics():
     request_data = request.get_json(silent=True) or {}
+    task_payload = extract_ai_task_payload(request_data)
     if not can_use_ai():
         return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
     auth_context = get_current_device_auth_context()
-    runtime = resolve_ai_request_preset(request_data)
+    runtime = resolve_runtime_ai_config(request_data)
     api_key = str((runtime.get('translation') or {}).get('api_key') or '').strip()
     if not api_key:
         source_mode = str(runtime.get('source_mode') or 'manual')
@@ -12324,7 +12722,7 @@ def romanize_lyrics():
             return jsonify({'status': 'error', 'message': f'当前预设 {preset_label} 未配置后端 API 密钥'})
         return jsonify({'status': 'error', 'message': '当前 AI 设置未保存 API 密钥'})
 
-    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    job, prep_err, prep_details = prepare_romanization_job(task_payload, runtime)
     if job is None:
         return jsonify({
             'status': 'error',
@@ -12333,7 +12731,7 @@ def romanize_lyrics():
             'numbered_input_preview': '',
         })
 
-    ok_rep, rep_msg, rep_errs = apply_romanization_repair_to_job(job, request_data)
+    ok_rep, rep_msg, rep_errs = apply_romanization_repair_to_job(job, task_payload)
     if not ok_rep:
         return jsonify({
             'status': 'error',
@@ -12361,16 +12759,23 @@ def romanize_lyrics():
     credential_id = str(auth_context.get('credential_id') or (auth_context.get('credential') or {}).get('credential_id') or '').strip()
     if auth_context.get('is_system_admin'):
         credential_id = 'system'
+    romanize_preset_id = str(runtime.get('id') or '').strip() or 'manual'
+    romanize_effective_model = str(model or '')
     audit_payload: Dict[str, Any] = {
         'request_id': request_id,
         'event': 'ai_romanize_lyrics',
         'credential_id': credential_id,
         'auth_type': str(auth_context.get('auth_type') or ('system' if auth_context.get('is_system_admin') else '')).strip(),
         'device_id': auth_context.get('device_id'),
-        'preset_id': str(runtime.get('id') or ''),
+        'preset_id': romanize_preset_id,
+        'preset_name': str(runtime.get('name') or ''),
+        'source_mode': str(runtime.get('source_mode') or ''),
+        'resolved_from': str(runtime.get('resolved_from') or ''),
         'provider': provider,
         'base_url': base_url,
-        'model': model,
+        'effective_model': romanize_effective_model,
+        'model': romanize_effective_model,
+        'thinking_model': str(runtime.get('thinking', {}).get('model') or ''),
         'source_format': job['source_format'],
         'target_format': job['target_format'],
         'lines': len(job['numbered']),
@@ -12383,6 +12788,9 @@ def romanize_lyrics():
         current_stage = 'parse_source'
         numbered = job['numbered']
         numbered_preview = job['numbered_preview']
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
 
         def finalize(success: bool, err_msg: str = '', **extra: Any) -> None:
             nonlocal logged
@@ -12428,7 +12836,12 @@ def romanize_lyrics():
             except Exception as api_err:
                 yield f"stage:{json.dumps({'stage': 'send_request', 'state': 'error'}, ensure_ascii=False)}\n"
                 yield f"error:{json.dumps({'message': str(api_err), 'errors': []}, ensure_ascii=False)}\n"
-                finalize(False, str(api_err), reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+                finalize(
+                    False,
+                    str(api_err),
+                    reasoning_control_supported=bool(reasoning_cap.get('supported', False)),
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                )
                 return
 
             yield f"stage:{json.dumps({'stage': 'send_request', 'state': 'success'}, ensure_ascii=False)}\n"
@@ -12437,14 +12850,15 @@ def romanize_lyrics():
 
             raw_out_accum = ""
             current_reasoning = ""
-            token_total: Optional[int] = None
             last_stats_at = time.monotonic()
             chunk_i = 0
             for chunk in stream:
                 chunk_i += 1
                 usage = getattr(chunk, 'usage', None)
                 if usage is not None:
-                    token_total = getattr(usage, 'total_tokens', None)
+                    prompt_tokens, completion_tokens, total_tokens = _ai_usage_merge_stream_usage(
+                        usage, prompt_tokens, completion_tokens, total_tokens
+                    )
                 choices = getattr(chunk, 'choices', None)
                 if not choices:
                     continue
@@ -12492,7 +12906,11 @@ def romanize_lyrics():
                         'merged_model_output': merged_candidate or '',
                     }
                     yield f"error:{json.dumps(err_merge, ensure_ascii=False)}\n"
-                    finalize(False, '; '.join(merge_errs), token_total=token_total, reasoning_control_supported=rc_sup)
+                    finalize(
+                        False, '; '.join(merge_errs),
+                        reasoning_control_supported=rc_sup,
+                        **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                    )
                     return
                 merged_for_payload = merged_candidate
                 result_text, all_errors, raw_out = assemble_romanization_from_raw(job, merged_candidate or '')
@@ -12512,7 +12930,11 @@ def romanize_lyrics():
                     err_val['patch_model_output'] = patch_raw
                     err_val['merged_model_output'] = merged_for_payload or raw_out
                 yield f"error:{json.dumps(err_val, ensure_ascii=False)}\n"
-                finalize(False, '; '.join(all_errors), token_total=token_total, reasoning_control_supported=rc_sup)
+                finalize(
+                    False, '; '.join(all_errors),
+                    reasoning_control_supported=rc_sup,
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                )
             else:
                 yield f"stage:{json.dumps({'stage': 'validating', 'state': 'success'}, ensure_ascii=False)}\n"
                 current_stage = 'assembling'
@@ -12525,10 +12947,19 @@ def romanize_lyrics():
                     result_payload['merged_raw_model_output'] = merged_for_payload or raw_out
                 yield f"result:{json.dumps(result_payload, ensure_ascii=False)}\n"
                 yield f"stage:{json.dumps({'stage': 'done', 'state': 'success'}, ensure_ascii=False)}\n"
-                finalize(True, '', token_total=token_total, reasoning_control_supported=rc_sup)
+                finalize(
+                    True, '',
+                    reasoning_control_supported=rc_sup,
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                )
 
         except GeneratorExit:
-            finalize(False, 'client_aborted', reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+            finalize(
+                False,
+                'client_aborted',
+                reasoning_control_supported=bool(reasoning_cap.get('supported', False)),
+                **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+            )
             raise
         except Exception as e:
             app.logger.error("romanize_lyrics stream failed: %s", e, exc_info=True)
@@ -12539,9 +12970,19 @@ def romanize_lyrics():
                     yield f"stage:{json.dumps({'stage': stage_order[sj], 'state': 'error'}, ensure_ascii=False)}\n"
                 yield f"error:{json.dumps({'message': str(e), 'errors': []}, ensure_ascii=False)}\n"
             except GeneratorExit:
-                finalize(False, 'client_aborted', reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+                finalize(
+                    False,
+                    'client_aborted',
+                    reasoning_control_supported=bool(reasoning_cap.get('supported', False)),
+                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                )
                 raise
-            finalize(False, str(e), reasoning_control_supported=bool(reasoning_cap.get('supported', False)))
+            finalize(
+                False,
+                str(e),
+                reasoning_control_supported=bool(reasoning_cap.get('supported', False)),
+                **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+            )
 
     return StreamingResponse(
         generate(),
@@ -12558,10 +12999,11 @@ def romanize_lyrics():
 def romanize_lyrics_prompt():
     """Return full prompt for external AI (no model call; does not require API key)."""
     request_data = request.get_json(silent=True) or {}
+    task_payload = extract_ai_task_payload(request_data)
     if not can_use_ai():
         return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
-    runtime = resolve_ai_request_preset(request_data)
-    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    runtime = resolve_runtime_ai_config(request_data)
+    job, prep_err, prep_details = prepare_romanization_job(task_payload, runtime)
     if job is None:
         return jsonify({
             'status': 'error',
@@ -12569,7 +13011,7 @@ def romanize_lyrics_prompt():
             'errors': prep_details,
             'numbered_input_preview': '',
         })
-    if romanization_request_has_repair_fields(request_data) and bool(job.get('compat_mode')):
+    if romanization_request_has_repair_fields(task_payload) and bool(job.get('compat_mode')):
         return jsonify({
             'status': 'error',
             'message': '多轮修复需要关闭兼容模式（请使用分条的 system / user 消息预设）',
@@ -12607,9 +13049,9 @@ def romanize_lyrics_prompt():
     repair_prompt_mode = False
     multiturn_prompt_text: Optional[str] = None
     repair_messages: Optional[List[Dict[str, str]]] = None
-    if romanization_request_has_repair_fields(request_data):
+    if romanization_request_has_repair_fields(task_payload):
         job_prompt = copy.deepcopy(job)
-        ok_pr, pr_msg, pr_errs = apply_romanization_repair_to_job(job_prompt, request_data)
+        ok_pr, pr_msg, pr_errs = apply_romanization_repair_to_job(job_prompt, task_payload)
         if not ok_pr:
             return jsonify({
                 'status': 'error',
@@ -12646,10 +13088,11 @@ def romanize_lyrics_prompt():
 def romanize_lyrics_assemble():
     """Validate pasted model output and assemble LYS/LRC (no AI call; does not require API key)."""
     request_data = request.get_json(silent=True) or {}
+    task_payload = extract_ai_task_payload(request_data)
     if not can_use_ai():
         return jsonify({'status': 'error', 'message': '当前设备没有使用 AI 的权限'}), 403
-    runtime = resolve_ai_request_preset(request_data)
-    job, prep_err, prep_details = prepare_romanization_job(request_data, runtime)
+    runtime = resolve_runtime_ai_config(request_data)
+    job, prep_err, prep_details = prepare_romanization_job(task_payload, runtime)
     if job is None:
         return jsonify({
             'status': 'error',
@@ -12657,7 +13100,7 @@ def romanize_lyrics_assemble():
             'errors': prep_details,
             'numbered_input_preview': '',
         })
-    manual = str(request_data.get('manual_model_output') or '')
+    manual = str(task_payload.get('manual_model_output') or '')
     result_text, all_errors, raw_out = assemble_romanization_from_raw(job, manual)
     if all_errors:
         return jsonify({
@@ -14502,7 +14945,10 @@ def admin_ai_usage_summary():
             'success': 0,
             'failure': 0,
             'last_ts': 0,
-            'models': {},
+            'preset_ids': set(),
+            'prompt_tokens_total': 0,
+            'completion_tokens_total': 0,
+            'total_tokens_total': 0,
         })
         bucket['total'] += 1
         if ev.get('success') is True:
@@ -14512,10 +14958,41 @@ def admin_ai_usage_summary():
         ts = coerce_int(ev.get('ts'), 0) or 0
         if ts > bucket['last_ts']:
             bucket['last_ts'] = ts
-        model = str(ev.get('model') or '')
-        if model:
-            bucket['models'][model] = bucket['models'].get(model, 0) + 1
-    summary = sorted(grouped.values(), key=lambda x: (x.get('total', 0), x.get('last_ts', 0)), reverse=True)
+        bucket['preset_ids'].add(_ai_usage_preset_key(ev))
+        p_tok, c_tok, t_tok = _ai_usage_event_tokens(ev)
+        bucket['prompt_tokens_total'] += p_tok
+        bucket['completion_tokens_total'] += c_tok
+        bucket['total_tokens_total'] += t_tok
+    summary = []
+    for bucket in grouped.values():
+        preset_ids = bucket.pop('preset_ids', set())
+        bucket['preset_count'] = len(preset_ids) if isinstance(preset_ids, set) else 0
+        summary.append(bucket)
+    summary.sort(key=lambda x: (x.get('total', 0), x.get('last_ts', 0)), reverse=True)
+    security_config = get_security_config()
+    remark_by_id = {
+        str(c.get('credential_id') or '').strip(): str(c.get('remark') or '').strip()
+        for c in security_config.get('device_credentials', [])
+        if str(c.get('credential_id') or '').strip()
+    }
+    for bucket in summary:
+        credential_id = str(bucket.get('credential_id') or 'unknown')
+        if credential_id == 'unknown':
+            bucket['credential_remark'] = ''
+            bucket['credential_display'] = '未知凭据（内部编号缺失）'
+            bucket['credential_primary_label'] = '未知凭据（内部编号缺失）'
+            bucket['credential_secondary_label'] = ''
+        elif credential_id == 'system':
+            bucket['credential_remark'] = ''
+            bucket['credential_display'] = '系统管理员'
+            bucket['credential_primary_label'] = '系统管理员'
+            bucket['credential_secondary_label'] = credential_id
+        else:
+            remark = remark_by_id.get(credential_id, '')
+            bucket['credential_remark'] = remark
+            bucket['credential_display'] = f"{remark}（{credential_id}）" if remark else credential_id
+            bucket['credential_primary_label'] = remark if remark else '未备注'
+            bucket['credential_secondary_label'] = credential_id
     return jsonify({'status': 'success', 'days': days, 'summary': summary, 'total_events': len(events)})
 
 
@@ -14538,7 +15015,10 @@ def admin_ai_usage_recent():
     for ev in events:
         if str(ev.get('event') or '') not in _AI_USAGE_TRACKED_EVENTS:
             continue
-        if credential_id and str(ev.get('credential_id') or '') != credential_id:
+        if credential_id == 'unknown':
+            if str(ev.get('credential_id') or '').strip():
+                continue
+        elif credential_id and str(ev.get('credential_id') or '') != credential_id:
             continue
         if want_success is not None and ev.get('success') is not want_success:
             continue
@@ -14546,8 +15026,16 @@ def admin_ai_usage_recent():
             hay = ' '.join([
                 str(ev.get('request_id') or ''),
                 str(ev.get('model') or ''),
-                str(ev.get('provider') or ''),
+                str(ev.get('effective_model') or ''),
+                str(ev.get('translation_model') or ''),
+                str(ev.get('thinking_model') or ''),
                 str(ev.get('preset_id') or ''),
+                str(ev.get('preset_name') or ''),
+                str(ev.get('source_mode') or ''),
+                str(ev.get('resolved_from') or ''),
+                str(ev.get('song_name') or ''),
+                str(ev.get('song_names_preview') or ''),
+                str(ev.get('provider') or ''),
                 str(ev.get('jsonFile') or ''),
                 str(ev.get('lyricsPath') or ''),
                 str(ev.get('content_preview') or ''),
@@ -14555,6 +15043,9 @@ def admin_ai_usage_recent():
                 str(ev.get('source_format') or ''),
                 str(ev.get('target_format') or ''),
                 str(ev.get('items_preview') or ''),
+                str(ev.get('prompt_tokens') or ''),
+                str(ev.get('completion_tokens') or ''),
+                str(ev.get('total_tokens') or ''),
                 json.dumps(ev.get('items') or [], ensure_ascii=False) if isinstance(ev.get('items'), list) else '',
             ]).lower()
             if q not in hay:
@@ -14579,14 +15070,23 @@ def admin_ai_usage_export():
         writer = csv.writer(output)
         writer.writerow([
             'ts', 'request_id', 'credential_id', 'auth_type', 'preset_id',
-            'provider', 'base_url', 'model', 'thinking_enabled', 'thinking_model',
+            'provider', 'base_url', 'model',
+            'translation_model', 'thinking_model', 'effective_model',
+            'prompt_tokens', 'completion_tokens', 'total_tokens',
+            'song_name', 'song_names_preview', 'preset_name', 'source_mode', 'resolved_from',
+            'thinking_enabled',
             'expect_reasoning', 'mode', 'item_count', 'success', 'duration_ms',
             'content_length', 'line_count', 'sha256', 'content_preview', 'error'
         ])
         for ev in events:
             writer.writerow([
                 ev.get('ts'), ev.get('request_id'), ev.get('credential_id'), ev.get('auth_type'), ev.get('preset_id'),
-                ev.get('provider'), ev.get('base_url'), ev.get('model'), ev.get('thinking_enabled'), ev.get('thinking_model'),
+                ev.get('provider'), ev.get('base_url'), ev.get('model'),
+                ev.get('translation_model'), ev.get('thinking_model'), ev.get('effective_model'),
+                ev.get('prompt_tokens'), ev.get('completion_tokens'), ev.get('total_tokens'),
+                ev.get('song_name'), ev.get('song_names_preview'), ev.get('preset_name'),
+                ev.get('source_mode'), ev.get('resolved_from'),
+                ev.get('thinking_enabled'),
                 ev.get('expect_reasoning'), ev.get('mode'), ev.get('item_count'), ev.get('success'), ev.get('duration_ms'),
                 ev.get('content_length'), ev.get('line_count'), ev.get('sha256'), ev.get('content_preview'), ev.get('error')
             ])

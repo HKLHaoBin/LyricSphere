@@ -333,9 +333,19 @@ function escapeSelectorValue(value) {
 
 function getBatchWorkbenchPresetStateFromUI() {
     const settings = getBatchWorkbenchSettingsFromUI()
-    const presetId = String(localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || batchWorkbenchState.activePresetId || '').trim()
     return {
-        preset_id: presetId || undefined,
+        batch: {
+            auto_save: settings.autoSave,
+            only_empty: settings.onlyEmpty,
+            always_override: settings.alwaysOverride,
+            extra_prompt: settings.extraPrompt
+        }
+    }
+}
+
+function getBatchWorkbenchFullPresetStateFromUI() {
+    const settings = getBatchWorkbenchSettingsFromUI()
+    return {
         translation: {
             provider: settings.provider,
             base_url: settings.baseUrl,
@@ -454,7 +464,7 @@ function getBatchWorkbenchPresetVisibleState(state) {
 }
 
 function batchWorkbenchPresetMatchesCurrent(preset) {
-    return JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchPresetStateFromUI())) === JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchPresetStateFromPreset(preset)))
+    return JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchFullPresetStateFromUI())) === JSON.stringify(getBatchWorkbenchPresetVisibleState(getBatchWorkbenchPresetStateFromPreset(preset)))
 }
 
 function getBatchWorkbenchPresetList() {
@@ -544,7 +554,7 @@ async function saveBatchWorkbenchAsPreset() {
     const preset = {
         id: 'preset_' + Date.now(),
         name: name.trim(),
-        ...getBatchWorkbenchPresetStateFromUI(),
+        ...getBatchWorkbenchFullPresetStateFromUI(),
         updated_at: Date.now()
     }
     await createAiPresetOnBackend(preset)
@@ -565,7 +575,7 @@ async function updateCurrentBatchWorkbenchPreset() {
     }
     await upsertAiPresetOnBackend(presetId, {
         id: presetId,
-        ...getBatchWorkbenchPresetStateFromUI(),
+        ...getBatchWorkbenchFullPresetStateFromUI(),
         updated_at: Date.now()
     })
     localStorage.setItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY, presetId)
@@ -1255,10 +1265,13 @@ function syncBatchWbSettingsSummary() {
     const controls = getBatchWorkbenchControls()
     if (!controls.summaryModel) return
     const settings = getBatchWorkbenchSettingsFromUI()
-    controls.summaryModel.textContent = settings.model || t('batch.notSet')
+    const runtimeModel = typeof getAiRuntimeSummaryLabel === 'function'
+        ? getAiRuntimeSummaryLabel('translation').model
+        : ''
+    controls.summaryModel.textContent = runtimeModel || settings.model || t('batch.notSet')
     controls.summaryCoverageMode.textContent = settings.alwaysOverride ? t('batch.alwaysOverrideShort') : (settings.onlyEmpty ? t('batch.onlyEmptyShort') : t('batch.byCurrentRules'))
     const activePreset = getBatchWorkbenchActivePreset()
-    const currentPresetState = getBatchWorkbenchPresetStateFromUI()
+    const currentPresetState = getBatchWorkbenchFullPresetStateFromUI()
     if (controls.settingsSource) {
         if (activePreset) {
             controls.settingsSource.textContent = `${t('batch.fromPreset')}${activePreset.name}`
@@ -1392,12 +1405,26 @@ function restoreAISettingsSnapshot(snapshot) {
 async function testBatchWbConnection() {
         const settings = getBatchWorkbenchSettingsFromUI()
         try {
-            const currentState = getBatchWorkbenchPresetStateFromUI()
+            if (typeof ensureAiRuntimeSummaryForProgress === 'function') {
+                await ensureAiRuntimeSummaryForProgress()
+            }
+            const buildProbePayload = (mode) => {
+                const payload = { mode }
+                if (typeof isLocalAiAdminProbeAllowed === 'function' && isLocalAiAdminProbeAllowed()) {
+                    Object.assign(payload, {
+                        intent: 'probe_form',
+                        ...getBatchWorkbenchFullPresetStateFromUI(),
+                        compat_mode: settings.compatMode,
+                        thinking_enabled: settings.thinkingEnabled
+                    })
+                }
+                return payload
+            }
 
         const response = await fetch('/probe_ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'translation', ...currentState })
+            body: JSON.stringify(buildProbePayload('translation'))
         })
         const data = await response.json()
         if (!data || data.status !== 'success') {
@@ -1405,36 +1432,30 @@ async function testBatchWbConnection() {
         }
 
         let thinkingResultText = ''
-        const thinkingEnabled = settings.thinkingEnabled
+        const thinkingEnabled = typeof isThinkingEnabledFromRuntimeSummary === 'function'
+            ? isThinkingEnabledFromRuntimeSummary()
+            : settings.thinkingEnabled
         if (thinkingEnabled) {
-            const thinkingBaseUrl = sanitizeBaseUrl(localStorage.getItem('aiThinkingBaseUrl') || settings.baseUrl)
-            const thinkingModel = localStorage.getItem('aiThinkingModel') || settings.model
-            const thinkingSystemPrompt = localStorage.getItem('aiThinkingPrompt') || ''
-            const thinkingProvider = localStorage.getItem('aiThinkingProvider') || localStorage.getItem('aiProvider') || 'deepseek'
             const thinkingResponse = await fetch('/probe_ai', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    mode: 'thinking',
-                    ...currentState,
-                    thinking: {
-                        enabled: true,
-                        provider: thinkingProvider,
-                        base_url: thinkingBaseUrl,
-                        model: thinkingModel,
-                        system_prompt: thinkingSystemPrompt
-                    }
-                })
+                body: JSON.stringify(buildProbePayload('thinking'))
             })
             const thinkingData = await thinkingResponse.json()
             if (!thinkingData || thinkingData.status !== 'success') {
                 throw new Error(thinkingData?.message || t('batch.thinkingFailed'))
             }
-            thinkingResultText = `${t('batch.thinkingModelInfo')}${thinkingData.model || thinkingModel}${t('batch.thinkingBaseUrlInfo')}${thinkingData.base_url || thinkingBaseUrl}`
+            const thinkingRuntime = typeof getAiRuntimeSummaryLabel === 'function'
+                ? getAiRuntimeSummaryLabel('thinking')
+                : { provider: settings.provider, model: settings.model }
+            thinkingResultText = `${t('batch.thinkingModelInfo')}${thinkingData.model || thinkingRuntime.model || ''}${t('batch.thinkingBaseUrlInfo')}${thinkingData.base_url || ''}`
         }
 
+        const translationRuntime = typeof getAiRuntimeSummaryLabel === 'function'
+            ? getAiRuntimeSummaryLabel('translation')
+            : { provider: settings.provider, model: settings.model }
         const extra = data.note ? `\n${data.note}` : ''
-        alert(t('runtime.connectionSuccess') + '\n' + t('batch.modelInfo') + (data.model || settings.model) + '\n' + t('batch.baseUrlInfo') + (data.base_url || settings.baseUrl) + extra + thinkingResultText)
+        alert(t('runtime.connectionSuccess') + '\n' + t('batch.modelInfo') + (data.model || translationRuntime.model || settings.model) + '\n' + t('batch.baseUrlInfo') + (data.base_url || settings.baseUrl) + extra + thinkingResultText)
     } catch (error) {
         alert(t('runtime.connectionFailed') + (error.message || error))
     }
@@ -3151,6 +3172,7 @@ async function startBatchTranslate() {
                 items.push({
                     id: itemId,
                     jsonFile: summary.filename,
+                    song_name: getSummaryDisplayName(summary),
                     lyricsPath: summary.lyricsPath || '',
                     translationPath: summary.translationPath || '',
                     content: processedContent
@@ -3186,6 +3208,7 @@ async function startBatchTranslate() {
         const idToDisplay = new Map(items.map(item => [item.id, item.jsonFile.replace(/\.json$/i, '')]))
         batchWorkbenchState.lifecyclePhase = 'waiting-model'
         setBatchWorkbenchRunStatus(t('batch.waitingModel'), 'running')
+        await ensureAiRuntimeSummaryForProgress()
         const response = await fetch('/translate_lyrics', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

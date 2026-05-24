@@ -19,6 +19,8 @@
     --status-color-success: #0c8599;
     --status-bg-error: #ffe3e3;
     --status-color-error: #c92a2a;
+    --status-bg-warning: #fff4e6;
+    --status-color-warning: #e67700;
     --status-progress-bg: rgba(33, 33, 33, 0.92);
     --status-progress-color: #ffffff;
     --status-progress-desc-color: rgba(0, 0, 0, 0.72);
@@ -95,6 +97,8 @@
     --status-color-success: #7fe7c7;
     --status-bg-error: rgba(255, 107, 107, 0.25);
     --status-color-error: #ffb3b3;
+    --status-bg-warning: rgba(251, 191, 36, 0.18);
+    --status-color-warning: #fcd34d;
     --status-progress-bg: rgba(20, 20, 20, 0.92);
     --status-progress-color: #ffffff;
     --status-progress-desc-color: rgba(255, 255, 255, 0.78);
@@ -1100,6 +1104,15 @@ button.lyrics-search-card {
     font-size: 1.1em;
 }
 
+.admin-modal-status {
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+    background: var(--tag-bg);
+    color: var(--text-color);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
 .image-path-modal-body {
     display: flex;
     flex-direction: column;
@@ -1789,6 +1802,36 @@ button.lyrics-search-card {
 .status-message.status-success {
     background: var(--status-bg-success);
     color: var(--status-color-success);
+}
+
+.credential-manager-form-status {
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.credential-manager-form-status.mode-create {
+    background: var(--status-bg-info);
+    color: var(--status-color-info);
+}
+
+.credential-manager-form-status.mode-edit {
+    background: var(--status-bg-warning);
+    color: var(--status-color-warning);
+}
+
+#credentialManagerStatus {
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+    background: var(--status-bg-info);
+    color: var(--status-color-info);
+}
+
+#credentialManagerStatus.is-error {
+    background: var(--status-bg-error);
+    color: var(--status-color-error);
 }
 
 #lyricsSearchStatus {

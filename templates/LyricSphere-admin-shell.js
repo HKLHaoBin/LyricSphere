@@ -645,6 +645,10 @@ async function showAiUsageMonitorModal() {
     await refreshAiUsageMonitor();
 }
 
+function formatAiUsageTokens(n) {
+    return (n == null || n === '') ? '-' : String(n);
+}
+
 function renderAiUsageSummary(summary) {
     const list = document.getElementById('aiUsageSummaryList');
     if (!list) return;
@@ -652,19 +656,32 @@ function renderAiUsageSummary(summary) {
     (Array.isArray(summary) ? summary : []).forEach(item => {
         const el = document.createElement('div');
         el.style.cssText = 'border:1px solid var(--border-color); border-radius:10px; padding:10px; background: var(--card-bg, #fff);';
-        const models = item.models ? Object.entries(item.models).slice(0, 4).map(([k, v]) => `${k}×${v}`).join(' | ') : '';
+        const primary = item.credential_primary_label
+            || (item.credential_remark ? item.credential_remark : (item.credential_id === 'system' ? '系统管理员' : '未备注'));
+        const secondary = item.credential_secondary_label || item.credential_id || '';
         el.innerHTML = `
-            <div style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
-                <div style="font-weight:600;">${(item.credential_id || 'unknown')}</div>
-                <button style="font-size:12px; padding:4px 8px;" onclick="refreshAiUsageRecent('${(item.credential_id || '').replace(/'/g, "\\'")}')">只看此凭据</button>
+            <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
+                <div>
+                    <div style="font-weight:600;">${escapeHtml(primary)}</div>
+                    ${secondary ? `<div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${escapeHtml(secondary)}</div>` : ''}
+                </div>
+                <button style="font-size:12px; padding:4px 8px; flex-shrink:0;" onclick="refreshAiUsageRecent('${(item.credential_id || '').replace(/'/g, "\\'")}')">只看此凭据</button>
             </div>
             <div style="font-size:12px; color:var(--text-secondary); margin-top:6px; line-height:1.6;">
                 总计: ${item.total || 0} ｜ 成功: ${item.success || 0} ｜ 失败: ${item.failure || 0}<br>
-                模型: ${models || '-'}
+                预设数: ${item.preset_count != null ? item.preset_count : '-'} ｜ 输入Token: ${formatAiUsageTokens(item.prompt_tokens_total)} ｜ 输出Token: ${formatAiUsageTokens(item.completion_tokens_total)}
             </div>
         `;
         list.appendChild(el);
     });
+}
+
+function aiUsageSongDisplay(ev) {
+    const preview = (ev.song_names_preview || ev.song_name || '').toString().trim();
+    if (preview) return preview;
+    const jsonFile = (ev.jsonFile || '').toString().trim();
+    if (jsonFile) return jsonFile.replace(/\.json$/i, '');
+    return '';
 }
 
 function renderAiUsageRecent(events) {
@@ -676,27 +693,40 @@ function renderAiUsageRecent(events) {
         el.style.cssText = 'border:1px solid var(--border-color); border-radius:10px; padding:10px; background: var(--card-bg, #fff);';
         const ts = ev.ts ? new Date(ev.ts).toLocaleString() : '';
         const ok = ev.success === true ? '✅' : (ev.success === false ? '❌' : '⏺');
-        const title = `${ok} ${ts} ｜ ${ev.credential_id || 'unknown'} ｜ ${ev.model || ''}`;
+        const effectiveModel = (ev.effective_model || ev.model || '').toString();
+        const title = `${ok} ${ts} ｜ ${ev.credential_id || 'unknown'} ｜ ${effectiveModel}`;
         const sub = [
+            ev.preset_id ? `preset=${ev.preset_id}` : '',
+            ev.source_mode ? `source=${ev.source_mode}` : '',
+            ev.resolved_from ? `from=${ev.resolved_from}` : '',
             ev.mode ? `mode=${ev.mode}` : '',
             (ev.item_count != null) ? `items=${ev.item_count}` : '',
             (ev.duration_ms != null) ? `dur=${ev.duration_ms}ms` : '',
         ].filter(Boolean).join(' ｜ ');
+        const songLine = aiUsageSongDisplay(ev) || '-';
+        const tokenLine = `输入Token: ${formatAiUsageTokens(ev.prompt_tokens)} ｜ 输出Token: ${formatAiUsageTokens(ev.completion_tokens)}`;
         let preview = (ev.content_preview || '').toString();
         if (!preview && Array.isArray(ev.items) && ev.items.length) {
             const lines = ev.items.slice(0, 8).map(item => {
-                const name = (item.jsonFile || item.id || '').toString();
+                const label = (item.song_name || item.jsonFile || item.id || '').toString();
                 const p = (item.content_preview || '').toString().replace(/\r/g, '').split('\n').slice(0, 2).join(' / ');
-                return `${name}${p ? `: ${p}` : ''}`;
+                return `${label}${p ? `: ${p}` : ''}`;
             });
             preview = lines.join('\n');
         }
         preview = preview.slice(0, 420);
+        const modelDetail = [
+            ev.translation_model ? `翻译=${ev.translation_model}` : '',
+            ev.thinking_model ? `思考=${ev.thinking_model}` : '',
+        ].filter(Boolean).join(' ｜ ');
         el.innerHTML = `
-            <div style="font-weight:600; margin-bottom:6px;">${title}</div>
-            <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">${sub}</div>
-            <div style="font-size:12px; white-space:pre-wrap; opacity:.95;">${preview || '-'}</div>
-            ${ev.error ? `<div style="margin-top:6px; font-size:12px; color:#b91c1c; white-space:pre-wrap;">${String(ev.error)}</div>` : ''}
+            <div style="font-weight:600; margin-bottom:6px;">${escapeHtml(title)}</div>
+            <div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(sub)}</div>
+            ${modelDetail ? `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">${escapeHtml(modelDetail)}</div>` : ''}
+            <div style="font-size:12px; margin-bottom:4px;">歌曲：${escapeHtml(songLine)}</div>
+            <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">${escapeHtml(tokenLine)}</div>
+            <div style="font-size:12px; white-space:pre-wrap; opacity:.95;">${escapeHtml(preview || '-')}</div>
+            ${ev.error ? `<div style="margin-top:6px; font-size:12px; color:#b91c1c; white-space:pre-wrap;">${escapeHtml(String(ev.error))}</div>` : ''}
         `;
         list.appendChild(el);
     });
@@ -750,6 +780,67 @@ function exportAiUsage(format) {
 
 let credentialManagerMode = 'create';
 let credentialManagerEditingId = '';
+const CREDENTIAL_MANAGER_SHOW_REVOKED_KEY = 'credentialManagerShowRevoked';
+let credentialManagerCachedCredentials = [];
+let credentialManagerShowRevoked = false;
+
+function readCredentialManagerShowRevoked() {
+    try {
+        const raw = localStorage.getItem(CREDENTIAL_MANAGER_SHOW_REVOKED_KEY);
+        if (raw === null || raw === '') return false;
+        if (raw === 'true' || raw === '1') return true;
+        if (raw === 'false' || raw === '0') return false;
+    } catch (e) {
+        /* ignore */
+    }
+    return false;
+}
+
+function writeCredentialManagerShowRevoked(value) {
+    try {
+        localStorage.setItem(CREDENTIAL_MANAGER_SHOW_REVOKED_KEY, value ? 'true' : 'false');
+    } catch (e) {
+        /* ignore */
+    }
+    credentialManagerShowRevoked = Boolean(value);
+}
+
+credentialManagerShowRevoked = readCredentialManagerShowRevoked();
+
+function countRevokedCredentials(credentials) {
+    if (!Array.isArray(credentials)) return 0;
+    return credentials.filter(credential => getCredentialLifecycleStatus(credential) === 'revoked').length;
+}
+
+function updateCredentialManagerRevokedToggle(credentials) {
+    const toolbar = document.getElementById('credentialManagerListToolbar');
+    const summary = document.getElementById('credentialManagerRevokedSummary');
+    const btn = document.getElementById('credentialManagerToggleRevokedBtn');
+    if (!toolbar || !summary || !btn) return;
+
+    const revokedCount = countRevokedCredentials(credentials);
+    if (revokedCount === 0) {
+        toolbar.style.display = 'none';
+        summary.textContent = '';
+        btn.textContent = '';
+        return;
+    }
+
+    toolbar.style.display = 'flex';
+    if (credentialManagerShowRevoked) {
+        summary.textContent = '';
+        btn.textContent = t('credentialManager.hideRevoked', { count: revokedCount });
+    } else {
+        summary.textContent = t('credentialManager.hiddenRevokedSummary', { count: revokedCount });
+        btn.textContent = t('credentialManager.showRevoked', { count: revokedCount });
+    }
+}
+
+function toggleCredentialManagerRevokedVisibility() {
+    credentialManagerShowRevoked = !credentialManagerShowRevoked;
+    writeCredentialManagerShowRevoked(credentialManagerShowRevoked);
+    renderCredentialManagerList(credentialManagerCachedCredentials);
+}
 
 function getCredentialLifecycleStatus(credential) {
     const rawStatus = String(credential?.status || '').trim().toLowerCase();
@@ -797,13 +888,11 @@ function updateCredentialManagerFormMode(mode, credential) {
         if (normalizedMode === 'edit') {
             const remark = String(credential?.remark || '').trim();
             statusDiv.textContent = `${t('credentialManager.modeEdit')} ${t('credentialManager.editingLabel')}${credentialManagerEditingId}${remark ? `（${remark}）` : ''}`;
-            statusDiv.style.background = '#fff4e5';
-            statusDiv.style.color = 'var(--text-color)';
         } else {
             statusDiv.textContent = t('credentialManager.modeCreate');
-            statusDiv.style.background = '#eef6ff';
-            statusDiv.style.color = 'var(--text-secondary)';
         }
+        statusDiv.classList.remove('mode-create', 'mode-edit');
+        statusDiv.classList.add(normalizedMode === 'edit' ? 'mode-edit' : 'mode-create');
     }
     if (saveBtn) {
         saveBtn.textContent = normalizedMode === 'edit' ? t('credentialManager.saveEdit') : t('credentialManager.saveCreate');
@@ -870,12 +959,27 @@ function getCredentialPermissionsFromForm() {
 function renderCredentialManagerList(credentials) {
     const list = document.getElementById('credentialManagerList');
     if (!list) return;
+
+    const allCredentials = Array.isArray(credentials) ? credentials : [];
+    credentialManagerCachedCredentials = allCredentials;
+    const revokedCount = countRevokedCredentials(allCredentials);
+    const visibleCredentials = credentialManagerShowRevoked
+        ? allCredentials
+        : allCredentials.filter(credential => getCredentialLifecycleStatus(credential) !== 'revoked');
+
     list.innerHTML = '';
-    if (!Array.isArray(credentials) || credentials.length === 0) {
+    updateCredentialManagerRevokedToggle(allCredentials);
+
+    if (allCredentials.length === 0) {
         list.innerHTML = '<div style="padding: 10px; border: 1px dashed var(--border-color); border-radius: 8px; color: var(--text-secondary);">暂无共享凭据</div>';
         return;
     }
-    credentials.forEach(credential => {
+    if (visibleCredentials.length === 0) {
+        const hiddenNote = t('credentialManager.hiddenRevokedSummary', { count: revokedCount });
+        list.innerHTML = `<div style="padding: 10px; border: 1px dashed var(--border-color); border-radius: 8px; color: var(--text-secondary);">${escapeHtml(t('credentialManager.noActiveCredentials'))}（${escapeHtml(hiddenNote)}）</div>`;
+        return;
+    }
+    visibleCredentials.forEach(credential => {
         if (!credential || typeof credential !== 'object') return;
         const status = getCredentialLifecycleStatus(credential);
         const statusLabel = getCredentialStatusLabel(status);
@@ -916,6 +1020,7 @@ function renderCredentialManagerList(credentials) {
 async function loadCredentialsForManager() {
     const statusDiv = document.getElementById('credentialManagerStatus');
     const list = document.getElementById('credentialManagerList');
+    credentialManagerShowRevoked = readCredentialManagerShowRevoked();
     if (statusDiv) {
         statusDiv.textContent = '正在加载凭据列表...';
         statusDiv.style.display = 'block';
@@ -928,12 +1033,15 @@ async function loadCredentialsForManager() {
             throw new Error(data.message || '加载失败');
         }
         if (statusDiv) statusDiv.style.display = 'none';
-        renderCredentialManagerList(Array.isArray(data.credentials) ? data.credentials : []);
+        const loadedCredentials = Array.isArray(data.credentials) ? data.credentials : [];
+        renderCredentialManagerList(loadedCredentials);
+        updateCredentialManagerRevokedToggle(loadedCredentials);
     } catch (error) {
+        updateCredentialManagerRevokedToggle([]);
         if (statusDiv) {
             statusDiv.textContent = error.message || '加载失败';
             statusDiv.style.display = 'block';
-            statusDiv.style.background = '#ffeaea';
+            statusDiv.classList.add('is-error');
         }
     }
 }
@@ -946,7 +1054,7 @@ async function showCredentialManagerModal() {
     if (statusDiv) {
         statusDiv.textContent = t('credentialManager.statusHint');
         statusDiv.style.display = 'block';
-        statusDiv.style.background = '#f8f9fa';
+        statusDiv.classList.remove('is-error');
     }
     await loadCredentialsForManager();
 }

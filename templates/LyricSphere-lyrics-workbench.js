@@ -1077,52 +1077,14 @@ async function translateLyrics() {
         translationEditor.value = '';
 
         console.log('发送翻译请求到服务器...');
-        const systemPrompt = localStorage.getItem('aiSystemPrompt');
-        const provider = localStorage.getItem('aiProvider') || 'deepseek';
-        const baseUrl = localStorage.getItem('aiBaseUrl') || 'https://api.deepseek.com';
-        const model = localStorage.getItem('aiModel') || 'deepseek-reasoner';
-        const expectReasoning = localStorage.getItem('aiExpectReasoning') === 'true';
-        const compatModeStorage = localStorage.getItem('aiCompatMode');
-        const compatMode = compatModeStorage ? compatModeStorage === 'true' : false;
-        const thinkingEnabledStorage = localStorage.getItem('aiThinkingEnabled');
-        const thinkingEnabled = thinkingEnabledStorage ? thinkingEnabledStorage === 'true' : true;
-        const thinkingProviderStored = localStorage.getItem('aiThinkingProvider');
-        const thinkingBaseUrlStored = localStorage.getItem('aiThinkingBaseUrl');
-        const thinkingModelStored = localStorage.getItem('aiThinkingModel');
-        const thinkingPrompt = localStorage.getItem('aiThinkingPrompt');
-        const stripBracketsStored = localStorage.getItem('aiStripBrackets');
-        const thinkingProvider = thinkingProviderStored && thinkingProviderStored.length > 0 ? thinkingProviderStored : provider;
-        const thinkingBaseUrl = thinkingBaseUrlStored && thinkingBaseUrlStored.length > 0 ? thinkingBaseUrlStored : baseUrl;
-        const thinkingModel = thinkingModelStored && thinkingModelStored.length > 0 ? thinkingModelStored : model;
-        const stripBrackets = stripBracketsStored ? stripBracketsStored === 'true' : false;
-        const experimentalFullLineBracketStripStored = localStorage.getItem('aiExperimentalFullLineBracketStrip');
-        const experimentalBracketLineAsSublineStored = localStorage.getItem('aiExperimentalBracketLineAsSubline');
-        const experimentalFullLineBracketStrip = experimentalFullLineBracketStripStored ? experimentalFullLineBracketStripStored === 'true' : false;
-        const experimentalBracketLineAsSubline = experimentalBracketLineAsSublineStored ? experimentalBracketLineAsSublineStored === 'true' : false;
-
-        // 获取并追加附加提示词
-        const extraTranslationPrompt = getExtraTranslationPrompt();
-        const extraThinkingPrompt = getExtraThinkingPrompt();
-        let finalSystemPrompt = systemPrompt;
-        let finalThinkingPrompt = thinkingPrompt;
-
-        // 追加翻译附加提示词
-        if (extraTranslationPrompt) {
-            if (finalSystemPrompt) {
-                finalSystemPrompt = finalSystemPrompt + '\n\n' + extraTranslationPrompt;
-            } else {
-                finalSystemPrompt = extraTranslationPrompt;
-            }
-        }
-
-        // 追加思考附加提示词
-        if (extraThinkingPrompt) {
-            if (finalThinkingPrompt) {
-                finalThinkingPrompt = finalThinkingPrompt + '\n\n' + extraThinkingPrompt;
-            } else {
-                finalThinkingPrompt = extraThinkingPrompt;
-            }
-        }
+        await ensureAiRuntimeSummaryForProgress();
+        const translationRuntime = getAiRuntimeSummaryLabel('translation');
+        const thinkingRuntime = getAiRuntimeSummaryLabel('thinking');
+        const provider = translationRuntime.provider || t('aiSettings.sourceApiKeyManaged');
+        const model = translationRuntime.model || t('aiSettings.sourceApiKeyManaged');
+        const thinkingProvider = thinkingRuntime.provider || provider;
+        const thinkingModel = thinkingRuntime.model || model;
+        const thinkingEnabled = isThinkingEnabledFromRuntimeSummary();
 
         let thinkingRequestAcknowledged = !thinkingEnabled;
         let thinkingOutputCompleted = !thinkingEnabled;
@@ -1143,6 +1105,17 @@ async function translateLyrics() {
 
         flushStages();
 
+        const currentFileNameEl = document.getElementById('currentFileName');
+        let song_name = (currentFileNameEl && currentFileNameEl.textContent)
+            ? currentFileNameEl.textContent.trim()
+            : '';
+        if (!song_name && typeof currentJsonFile === 'string' && currentJsonFile.trim()) {
+            song_name = currentJsonFile.trim().replace(/\.json$/i, '');
+        }
+        const jsonFile = (typeof currentJsonFile === 'string' && currentJsonFile.trim())
+            ? currentJsonFile.trim()
+            : '';
+
         const response = await fetch('/translate_lyrics', {
             method: 'POST',
             headers: {
@@ -1150,29 +1123,8 @@ async function translateLyrics() {
             },
             body: JSON.stringify({
                 content: processedLyricsContent,
-                translation: {
-                    provider,
-                    base_url: baseUrl,
-                    model,
-                    system_prompt: finalSystemPrompt,
-                    expect_reasoning: expectReasoning,
-                    compat_mode: compatMode,
-                    strip_brackets: stripBrackets,
-                    experimental_full_line_bracket_strip: experimentalFullLineBracketStrip,
-                    experimental_bracket_line_as_subline: experimentalBracketLineAsSubline
-                },
-                thinking: {
-                    enabled: thinkingEnabled,
-                    provider: thinkingProvider,
-                    base_url: thinkingBaseUrl,
-                    model: thinkingModel,
-                    system_prompt: finalThinkingPrompt
-                },
-                compat_mode: compatMode,
-                thinking_enabled: thinkingEnabled,
-                strip_brackets: stripBrackets,
-                experimental_full_line_bracket_strip: experimentalFullLineBracketStrip,
-                experimental_bracket_line_as_subline: experimentalBracketLineAsSubline
+                song_name,
+                jsonFile
             })
         });
 
@@ -1535,41 +1487,12 @@ async function showAISettings() {
 
         const backendSettings = data.effective_settings || data.settings || {};
         aiPresetPermissions = data.permissions || aiPresetPermissions || {};
-        const translation = backendSettings.translation || {};
-        const thinking = backendSettings.thinking || {};
-        const romanization = backendSettings.romanization || {};
-        const effectiveSettings = {
-            translation: {
-                provider: translation.provider !== undefined ? translation.provider : 'deepseek',
-                base_url: translation.base_url !== undefined ? translation.base_url : 'https://api.deepseek.com',
-                model: translation.model !== undefined ? translation.model : 'deepseek-reasoner',
-                api_key: '',
-                system_prompt: translation.system_prompt !== undefined ? translation.system_prompt : '',
-                expect_reasoning: translation.expect_reasoning !== undefined ? translation.expect_reasoning : true,
-                compat_mode: translation.compat_mode !== undefined ? translation.compat_mode : false,
-                strip_brackets: translation.strip_brackets !== undefined ? translation.strip_brackets : false,
-                experimental_full_line_bracket_strip: translation.experimental_full_line_bracket_strip !== undefined ? translation.experimental_full_line_bracket_strip : false,
-                experimental_bracket_line_as_subline: translation.experimental_bracket_line_as_subline !== undefined ? translation.experimental_bracket_line_as_subline : false
-            },
-            thinking: {
-                enabled: thinking.enabled !== undefined ? thinking.enabled : true,
-                provider: thinking.provider !== undefined ? thinking.provider : (translation.provider !== undefined ? translation.provider : 'deepseek'),
-                base_url: thinking.base_url !== undefined ? thinking.base_url : (translation.base_url !== undefined ? translation.base_url : ''),
-                model: thinking.model !== undefined ? thinking.model : (translation.model !== undefined ? translation.model : ''),
-                api_key: '',
-                system_prompt: thinking.system_prompt !== undefined ? thinking.system_prompt : ''
-            },
-            romanization: {
-                system_prompt: romanization.system_prompt !== undefined ? romanization.system_prompt : '',
-                alignment_mode: (() => {
-                    const v = String(romanization.alignment_mode || '').trim().toLowerCase();
-                    return v === 'separator_tokens' ? 'separator_tokens' : 'indexed_tokens';
-                })(),
-                separator: romanization.separator !== undefined ? romanization.separator : ';',
-                strict_token_count: romanization.strict_token_count !== undefined ? Boolean(romanization.strict_token_count) : true,
-                require_trailing_separator: romanization.require_trailing_separator !== undefined ? Boolean(romanization.require_trailing_separator) : true
-            }
-        };
+        setAiRuntimeSummary(data.runtime_summary);
+        const fieldVisibility = resolveAiFieldVisibilityFromResponse(data);
+        const effectiveSettings = buildEffectiveAISettingsFromResponse(backendSettings, {
+            fieldVisibility
+        });
+        setAiFieldVisibility(fieldVisibility);
 
         // sync current source binding from backend
         const sourceMode = String(data.source_mode || 'manual').trim().toLowerCase();
@@ -1590,11 +1513,13 @@ async function showAISettings() {
                 label: String(data.source_label || '')
             };
         }
+        if (sourceMode === 'preset' && sourcePresetId && !(data.source_preset && data.source_preset.id)) {
+            syncedSource.kind = syncedSource.kind || 'missing_preset';
+        }
         setAiSettingsSourceSaved(syncedSource);
         setAiSettingsSourceDraft(syncedSource);
-        syncActiveAiPresetKeyWithSavedSource(syncedSource);
 
-        fillAIFormState(effectiveSettings);
+        fillAIFormState(effectiveSettings, { fieldVisibility });
         writeAIStateToLocalStorage(effectiveSettings, aiPresetPermissions);
         applyAiPresetFieldPermissions(aiPresetPermissions);
         applyAiSettingsButtonPermissions(Boolean(data.can_save_settings ?? data.can_use_ai), Boolean(data.can_edit_preset));
@@ -1619,6 +1544,14 @@ function closeAISettings(options = {}) {
             return false;
         }
     }
+    setAiSettingsSourceDraft(aiSettingsSourceSaved);
+    if (aiSettingsInitialSnapshot?.form) {
+        fillAIFormState(aiSettingsInitialSnapshot.form, {
+            fieldVisibility: aiFieldVisibility,
+            skipProviderPreset: true
+        });
+    }
+    updateAiPresetSelect();
     document.getElementById('aiSettingsModal').style.display = 'none';
     return true;
 }

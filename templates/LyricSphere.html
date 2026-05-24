@@ -951,16 +951,20 @@
         <div class="modal-content" style="max-width: 900px;">
             <h2 data-i18n="credentialManager.title">🔑 共享凭据管理</h2>
             <div style="font-size:12px; color:var(--text-secondary); margin: -2px 0 10px 0; line-height: 1.5;">
-                卡片会显示全部共享凭据，并标出已吊销、已过期或已达次数上限的状态。<code style="font-size: 12px;">credential_id</code> 是内部编号，仅供管理员识别、编辑和吊销，不要对外分享。
+                卡片会显示可用共享凭据（已吊销凭据默认隐藏，可通过列表上方按钮查看），并标出已过期或已达次数上限的状态。<code style="font-size: 12px;">credential_id</code> 是内部编号，仅供管理员识别、编辑和吊销，不要对外分享。
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 16px; align-items: start;">
-                <div style="display: flex; flex-direction: column; gap: 12px;">
-                    <div id="credentialManagerStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center;">正在加载凭据列表...</div>
-                    <div id="credentialManagerList" style="max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;"></div>
+            <div style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 16px; align-items: stretch;">
+                <div style="display: flex; flex-direction: column; gap: 12px; min-height: 0; height: 100%;">
+                    <div id="credentialManagerStatus">正在加载凭据列表...</div>
+                    <div id="credentialManagerListToolbar" style="display:none; justify-content:space-between; align-items:center; gap:8px;">
+                        <span id="credentialManagerRevokedSummary" style="font-size:12px; color:var(--text-secondary);"></span>
+                        <button id="credentialManagerToggleRevokedBtn" type="button" onclick="toggleCredentialManagerRevokedVisibility()"></button>
+                    </div>
+                    <div id="credentialManagerList" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px; border-left: 1px solid var(--border-color); padding-left: 16px;">
                     <div style="font-weight: 600;">新增 / 编辑凭据</div>
-                    <div id="credentialManagerFormStatus" style="padding: 8px 10px; border-radius: 8px; background: #eef6ff; color: var(--text-secondary); font-size: 12px; line-height: 1.5;">当前模式：新增凭据</div>
+                    <div id="credentialManagerFormStatus" class="credential-manager-form-status mode-create">当前模式：新增凭据</div>
                     <input type="hidden" id="credentialManagerCredentialId">
                     <div>
                         <label>备注</label>
@@ -1041,14 +1045,14 @@
                     <option value="30">30</option>
                 </select>
                 <label style="font-size:12px; color:var(--text-secondary);">筛选</label>
-                <input id="aiUsageQuery" class="file-path-input" placeholder="模型/文件名/内容关键字..." style="flex:1; min-width: 220px;">
+                <input id="aiUsageQuery" class="file-path-input" placeholder="歌曲名/模型/预设/内容关键字..." style="flex:1; min-width: 220px;">
                 <button onclick="refreshAiUsageMonitor()">刷新</button>
                 <button onclick="exportAiUsage('jsonl')">导出 JSONL</button>
                 <button onclick="exportAiUsage('csv')">导出 CSV</button>
                 <button onclick="closeAiUsageMonitorModal()">关闭</button>
             </div>
 
-            <div id="aiUsageMonitorStatus" style="padding: 10px; border-radius: 8px; background: #f8f9fa; text-align: center;">正在加载...</div>
+            <div id="aiUsageMonitorStatus" class="admin-modal-status">正在加载...</div>
 
             <div style="display:grid; grid-template-columns: 1fr 1.2fr; gap: 14px; align-items: start; margin-top: 12px;">
                 <div>
