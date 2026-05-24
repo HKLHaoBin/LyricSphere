@@ -481,6 +481,21 @@ function collectAIFormState() {
     };
 }
 
+function omitEmptyEndpointFields(settings) {
+    const out = { ...settings };
+    if (out.translation && typeof out.translation === 'object') {
+        out.translation = { ...out.translation };
+        if (!String(out.translation.base_url || '').trim()) delete out.translation.base_url;
+        if (!String(out.translation.model || '').trim()) delete out.translation.model;
+    }
+    if (out.thinking && typeof out.thinking === 'object') {
+        out.thinking = { ...out.thinking };
+        if (!String(out.thinking.base_url || '').trim()) delete out.thinking.base_url;
+        if (!String(out.thinking.model || '').trim()) delete out.thinking.model;
+    }
+    return out;
+}
+
 function updateRomanizationAlignmentHint() {
     const sel = document.getElementById('aiRomanizationAlignmentMode');
     const hint = document.getElementById('aiRomanizationSeparatorModeHint');
@@ -1239,7 +1254,7 @@ async function saveAsAiPreset() {
         return;
     }
 
-    const settings = collectAIFormState();
+    const settings = omitEmptyEndpointFields(collectAIFormState());
     const preset = {
         id: 'preset_' + Date.now(),
         name: name.trim(),
@@ -1265,7 +1280,7 @@ async function updateCurrentAiPreset() {
         return;
     }
 
-    const settings = collectAIFormState();
+    const settings = omitEmptyEndpointFields(collectAIFormState());
     const payload = {
         ...settings,
         id: presetId,
@@ -1600,6 +1615,7 @@ function buildEffectiveAISettingsFromResponse(settings) {
     };
 }
 
+// Empty base_url/model fields are omitted so preset/local values are preserved.
 function buildAISavePayload() {
     const apiKey = document.getElementById('aiApiKey').value;
     const systemPrompt = document.getElementById('aiSystemPrompt').value;
@@ -1642,12 +1658,12 @@ function buildAISavePayload() {
         payload.thinking_provider = thinkingProvider;
     }
     if (permissions.ai_view_base_url !== false) {
-        payload.base_url = baseUrl;
-        payload.thinking_base_url = thinkingBaseUrl;
+        if (baseUrl.trim()) payload.base_url = baseUrl;
+        if (thinkingBaseUrl.trim()) payload.thinking_base_url = thinkingBaseUrl;
     }
     if (permissions.ai_view_model !== false) {
-        payload.model = model;
-        payload.thinking_model = thinkingModel;
+        if (model.trim()) payload.model = model;
+        if (thinkingModel.trim()) payload.thinking_model = thinkingModel;
     }
     if (permissions.ai_view_prompts !== false) {
         payload.system_prompt = systemPrompt;

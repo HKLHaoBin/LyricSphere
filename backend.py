@@ -3258,16 +3258,25 @@ def update_ai_preset_store_from_payload(
                 translation['provider'] = str(raw_preset.get('provider', raw_translation.get('provider')) or '').strip()
             if 'thinking_provider' in raw_preset or has_nested_key(raw_thinking, 'provider'):
                 thinking['provider'] = str(raw_preset.get('thinking_provider', raw_thinking.get('provider')) or '').strip()
+        # Empty string means unchanged for base_url/model fields.
         if should_update_field('ai_view_base_url'):
             if 'base_url' in raw_preset or has_nested_key(raw_translation, 'base_url'):
-                translation['base_url'] = str(raw_preset.get('base_url', raw_translation.get('base_url')) or '').strip()
+                incoming_base_url = str(raw_preset.get('base_url', raw_translation.get('base_url')) or '').strip()
+                if incoming_base_url:
+                    translation['base_url'] = incoming_base_url
             if 'thinking_base_url' in raw_preset or has_nested_key(raw_thinking, 'base_url'):
-                thinking['base_url'] = str(raw_preset.get('thinking_base_url', raw_thinking.get('base_url')) or '').strip()
+                incoming_thinking_base_url = str(raw_preset.get('thinking_base_url', raw_thinking.get('base_url')) or '').strip()
+                if incoming_thinking_base_url:
+                    thinking['base_url'] = incoming_thinking_base_url
         if should_update_field('ai_view_model'):
             if 'model' in raw_preset or has_nested_key(raw_translation, 'model'):
-                translation['model'] = str(raw_preset.get('model', raw_translation.get('model')) or '').strip()
+                incoming_model = str(raw_preset.get('model', raw_translation.get('model')) or '').strip()
+                if incoming_model:
+                    translation['model'] = incoming_model
             if 'thinking_model' in raw_preset or has_nested_key(raw_thinking, 'model'):
-                thinking['model'] = str(raw_preset.get('thinking_model', raw_thinking.get('model')) or '').strip()
+                incoming_thinking_model = str(raw_preset.get('thinking_model', raw_thinking.get('model')) or '').strip()
+                if incoming_thinking_model:
+                    thinking['model'] = incoming_thinking_model
         if should_update_field('ai_view_prompts'):
             if 'system_prompt' in raw_preset or has_nested_key(raw_translation, 'system_prompt'):
                 translation['system_prompt'] = str(raw_preset.get('system_prompt', raw_translation.get('system_prompt')) or '')
@@ -10491,7 +10500,8 @@ def save_ai_settings():
         current_settings = settings_store.get('settings', {}) if isinstance(settings_store.get('settings'), dict) else normalize_ai_settings_state({})
         intent = str(data.get('intent') or '').strip().lower()
 
-        # Prevent implicit secret deletion: empty string means "unchanged".
+        # Prevent implicit overwrite: empty string means unchanged for api_key and flat base_url/model keys
+        # (base_url, model, thinking_base_url, thinking_model) from the frontend — not nested translation.model shapes.
         # Explicit clearing must be requested via dedicated flags.
         clear_translation_api_key = parse_bool(data.get('clear_translation_api_key'), False)
         clear_thinking_api_key = parse_bool(data.get('clear_thinking_api_key'), False)
@@ -10501,6 +10511,9 @@ def save_ai_settings():
         if 'thinking_api_key' in data and not clear_thinking_api_key:
             if not str(data.get('thinking_api_key') or '').strip():
                 data.pop('thinking_api_key', None)
+        for key in ('base_url', 'model', 'thinking_base_url', 'thinking_model'):
+            if key in data and not str(data.get(key) or '').strip():
+                data.pop(key, None)
 
         preset_secret_updated = False
         if intent == 'bind_preset':
