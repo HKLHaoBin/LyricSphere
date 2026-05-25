@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="translateWb.pageTitle">独立 AI 翻译</title>
+    <link rel="stylesheet" href="/LyricSphere.css">
+</head>
+<body class="roman-wb-shell">
+    <header class="roman-wb-top">
+        <div class="roman-wb-top-row">
+            <h1 data-i18n="translateWb.headerTitle">独立 AI 翻译</h1>
+            <div class="batch-wb-header-status">
+                <span id="translateWbStatusBadge" class="batch-wb-status-badge idle" data-i18n="translateWb.badgeIdle">就绪</span>
+                <div class="batch-wb-header-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <span id="translateWbProgressBar" style="width:0%"></span>
+                </div>
+            </div>
+        </div>
+        <p class="roman-wb-meta" id="translateWbPasteHint" data-i18n="translateWb.pasteHint">在此粘贴 LYS 歌词；结果仅展示于本页，不会写入歌曲库。</p>
+        <ul class="status-progress roman-wb-stages" id="translateWbStageList">
+            <li class="status-progress__item status-progress__item--pending" data-stage="lyricsPrep">
+                <span class="status-progress__label" data-i18n="translate.stage.lyricsPrep">歌词预处理阶段</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="thinkingRequest">
+                <span class="status-progress__label" data-i18n="translate.stage.thinkingRequest">请求思考阶段</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="thinkingOutput">
+                <span class="status-progress__label" data-i18n="translate.stage.thinkingOutput">输出思考阶段</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="translationRequest">
+                <span class="status-progress__label" data-i18n="translate.stage.translationRequest">请求翻译阶段</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="translationOutput">
+                <span class="status-progress__label" data-i18n="translate.stage.translationOutput">输出翻译阶段</span>
+            </li>
+            <li class="status-progress__item status-progress__item--pending" data-stage="postProcessing">
+                <span class="status-progress__label" data-i18n="translate.stage.postProcessing">翻译处理阶段</span>
+            </li>
+        </ul>
+    </header>
+
+    <div class="roman-wb-toolbar">
+        <button type="button" class="lyrics-action-btn save-btn" id="translateWbRunBtn" data-i18n="translateWb.run">开始翻译</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="translateWbStopBtn" disabled data-i18n="translateWb.stop">停止</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="translateWbCopyResultBtn" disabled data-i18n="translateWb.copyResult">复制结果</button>
+        <button type="button" class="lyrics-action-btn path-update-btn" id="translateWbAiSettingsBtn" data-i18n="translateWb.aiSettings">AI 设置</button>
+    </div>
+
+    <div class="roman-wb-grid">
+        <div class="roman-wb-col">
+            <div class="roman-wb-card">
+                <h3 data-i18n="translateWb.sourceLabel">源歌词（LYS）</h3>
+                <textarea id="translateWbSourceInput" class="roman-wb-manual-input" rows="18" data-i18n-placeholder="translateWb.pasteHint" placeholder="在此粘贴 LYS 歌词；结果仅展示于本页，不会写入歌曲库。"></textarea>
+            </div>
+        </div>
+        <div class="roman-wb-col">
+            <div class="roman-wb-card">
+                <h3 data-i18n="translateWb.resultLabel">翻译结果</h3>
+                <div id="translateWbStatusMessage" class="status-message" style="display:none;"></div>
+                <textarea id="translateWbResultOutput" class="roman-wb-manual-input" rows="18" readonly></textarea>
+            </div>
+        </div>
+    </div>
+
+    <div id="aiSettingsModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2 data-i18n="aiSettings.title">AI翻译设置</h2>
+            <div style="display: flex; flex-direction: column; gap: 15px;">
+                <!-- 预设管理区域 -->
+                <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+                    <h3 style="margin: 0 0 8px 0;" data-i18n="aiSettings.presetTitle">预设管理</h3>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                        <select id="aiPresetSelect" class="file-path-input" style="flex: 1;">
+                            <option value="" data-i18n="aiSettings.selectPresetOption">选择预设...</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="aiPresetSaveAsBtn" onclick="saveAsAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.saveAsPreset">另存为预设</button>
+                        <button id="aiPresetUpdateBtn" onclick="updateCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.updatePreset">更新当前预设</button>
+                        <button id="aiPresetRenameBtn" onclick="renameCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.renamePreset">重命名当前预设</button>
+                        <button id="aiPresetDuplicateBtn" onclick="duplicateCurrentAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.duplicatePreset">复制当前预设</button>
+                        <button id="aiPresetDeleteBtn" onclick="deleteAiPreset()" class="action-button" style="flex: 1;" data-i18n="aiSettings.deletePreset">删除预设</button>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <button onclick="exportAiPresets()" class="action-button" style="flex: 1;" data-i18n="aiSettings.exportPresets">导出预设</button>
+                        <button onclick="triggerAiPresetImport()" class="action-button" style="flex: 1;" data-i18n="aiSettings.importPresets">导入预设</button>
+                    </div>
+                    <div id="aiPresetApplyHint" style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);" data-i18n="aiSettings.presetApplyHint">
+                        选择预设会先预览配置；点击上方任一按钮后立即生效。
+                    </div>
+                    <div id="aiSettingsSourceInfo" style="margin-top: 6px; font-size: 12px; color: var(--text-secondary);"></div>
+                    <div style="display:flex; gap:8px; margin-top: 8px; flex-wrap: wrap;">
+                        <button id="aiApplyManualSettingsBtn" type="button" class="action-button" style="flex: 1; min-width: 160px;" onclick="applyManualAISettings()">
+                            使用独立当前设置
+                        </button>
+                        <button id="aiBindPresetBtn" type="button" class="action-button" style="flex: 1; min-width: 160px;" onclick="bindSelectedAiPreset()">
+                            绑定到所选预设
+                        </button>
+                    </div>
+                    <div id="aiPresetApplyStatus" style="margin-top: 4px; font-size: 12px; color: var(--text-secondary);"></div>
+                    <div style="display: flex; justify-content: flex-end; margin-top: 8px;">
+                        <button type="button" class="action-button" onclick="closeAISettings()" data-i18n="aiSettings.closeBtn">关闭</button>
+                    </div>
+                </div>
+                <div>
+                    <label data-i18n="aiSettings.providerLabel">API提供商：</label>
+                    <select id="aiProvider" class="file-path-input">
+                        <option value="deepseek">DeepSeek</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="together">Together</option>
+                        <option value="groq">Groq</option>
+                        <option value="custom" data-i18n="aiSettings.customOption">自定义</option>
+                    </select>
+                </div>
+                <div>
+                    <label data-i18n="aiSettings.baseUrlLabel">基础URL：</label>
+                    <input type="text" id="aiBaseUrl" class="file-path-input" data-i18n-placeholder="aiSettings.baseUrlPlaceholder" placeholder="例如: https://api.deepseek.com">
+                </div>
+                <div>
+                    <label data-i18n="aiSettings.modelLabel">模型名称：</label>
+                    <input type="text" id="aiModel" class="file-path-input" data-i18n-placeholder="aiSettings.modelPlaceholder" placeholder="例如: deepseek-reasoner">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExpectReasoning"> <span data-i18n="aiSettings.expectReasoning">期望思维链内容（仅部分模型支持）</span>
+                    </label>
+                    <div id="aiReasoningCapabilityHint" style="margin-top:6px; font-size:12px; color: var(--text-secondary); display:none;"></div>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiCompatMode"> <span data-i18n="aiSettings.compatMode">兼容模式：将提示词合并到用户消息中</span>
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiStripBrackets"> <span data-i18n="aiSettings.stripBrackets">预处理歌词时去掉括号</span>
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExperimentalFullLineBracketStrip"> <span data-i18n="aiSettings.fullLineBracketStrip">实验性：仅去除整句外层括号</span>
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiExperimentalBracketLineAsSubline"> <span data-i18n="aiSettings.bracketLineAsSubline">实验性：整句括号行并入上一句作为从句</span>
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" id="aiThinkingEnabled" checked> <span data-i18n="aiSettings.thinkingEnabled">启用思考模式（先生成整首歌理解）</span>
+                    </label>
+                </div>
+                <div>
+                    <label data-i18n="aiSettings.apiKey">API密钥：</label>
+                    <input type="password" id="aiApiKey" class="file-path-input" data-i18n-placeholder="aiSettings.apiKeyPlaceholder" placeholder="请输入API密钥">
+                    <div class="form-help-text">
+                        <a href="https://platform.deepseek.com/usage" target="_blank" class="form-help-link" data-i18n="aiSettings.apiKeyHint">点击这里获取 DeepSeek API 密钥 →</a>
+                    </div>
+                </div>
+                <div>
+                    <label data-i18n="aiSettings.systemPrompt">翻译提示词：</label>
+                    <textarea id="aiSystemPrompt" class="lyrics-editor" style="height: 150px;" data-i18n-placeholder="aiSettings.systemPromptPlaceholder" placeholder="设置AI翻译的提示词，用于指导AI如何翻译歌词"></textarea>
+                </div>
+                <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+                    <h3 style="margin: 0 0 8px 0;" data-i18n="aiSettings.thinkingTitle">思考模型设置</h3>
+                    <div class="form-help-text" style="margin-bottom: 8px;" data-i18n="aiSettings.thinkingHint">
+                        可选：先调用思考模型生成整首歌理解，再将结果传给翻译模型。留空的字段将沿用翻译设置。
+                    </div>
+                    <div>
+                        <label data-i18n="aiSettings.thinkingProvider">思考模型提供商：</label>
+                        <select id="aiThinkingProvider" class="file-path-input">
+                            <option value="deepseek">DeepSeek</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="openrouter">OpenRouter</option>
+                            <option value="together">Together</option>
+                            <option value="groq">Groq</option>
+                            <option value="custom" data-i18n="aiSettings.customOption">自定义</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label data-i18n="aiSettings.thinkingBaseUrl">思考模型基础URL：</label>
+                        <input type="text" id="aiThinkingBaseUrl" class="file-path-input" data-i18n-placeholder="aiSettings.thinkingBaseUrlPlaceholder" placeholder="默认沿用翻译模型的基础URL">
+                    </div>
+                    <div>
+                        <label data-i18n="aiSettings.thinkingModel">思考模型名称：</label>
+                        <input type="text" id="aiThinkingModel" class="file-path-input" data-i18n-placeholder="aiSettings.thinkingModelPlaceholder" placeholder="默认沿用翻译模型名称">
+                    </div>
+                    <div>
+                        <label data-i18n="aiSettings.thinkingApiKey">思考模型API密钥（可选）：</label>
+                        <input type="password" id="aiThinkingApiKey" class="file-path-input" data-i18n-placeholder="aiSettings.thinkingApiKeyPlaceholder" placeholder="留空则沿用翻译API密钥">
+                    </div>
+                    <div>
+                        <label data-i18n="aiSettings.thinkingPrompt">思考提示词：</label>
+                        <textarea id="aiThinkingPrompt" class="lyrics-editor" style="height: 120px;" data-i18n-placeholder="aiSettings.thinkingPrompt" placeholder="设置思考模型的提示词，用于生成整首歌的理解"></textarea>
+                    </div>
+                </div>
+                <div class="editor-buttons">
+                    <button id="aiSettingsTestTranslationBtn" onclick="probeAIConnection('translation', this)" data-probe="translation" data-i18n="aiSettings.testTranslationBtn">测试翻译模型</button>
+                    <button id="aiSettingsTestThinkingBtn" onclick="probeAIConnection('thinking', this)" data-probe="thinking" data-i18n="aiSettings.testThinkingBtn">测试思考模型</button>
+                </div>
+                <input type="file" id="aiPresetImportInput" accept=".json,application/json" style="display: none;" onchange="handleAiPresetImport(event)">
+            </div>
+        </div>
+    </div>
+
+    <script src="/LyricSphere-js/LyricSphere-i18n.js"></script>
+    <script src="/LyricSphere-js/LyricSphere-appearance.js"></script>
+    <script src="/LyricSphere-js/LyricSphere-ai-presets.js"></script>
+    <script src="/LyricSphere-js/LyricSphere-ai-translate.js"></script>
+</body>
+</html>

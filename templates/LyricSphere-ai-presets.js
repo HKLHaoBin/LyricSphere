@@ -24,6 +24,7 @@ const PROVIDER_PRESETS = {
 // 预设相关常量
 const AI_PRESETS_STORAGE_KEY = 'aiTranslationPresets';
 const ACTIVE_AI_PRESET_KEY = 'activeAiPresetId';
+const BATCH_WORKBENCH_ACTIVE_PRESET_KEY_SAFE = (typeof globalThis !== 'undefined' && globalThis.BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || 'batchWorkbenchActiveAiPresetId';
 const AI_PRESETS_EXPORT_TYPE = 'famyliam-ai-presets';
 const AI_PRESETS_EXPORT_VERSION = 1;
 let aiPresetCache = [];
@@ -35,6 +36,12 @@ let aiSettingsStatusState = { kind: 'idle', presetName: '' };
 const AI_FIELD_HOSTED_PLACEHOLDER = '已由后端托管';
 let aiFieldVisibility = {};
 let aiRuntimeSummary = null;
+
+function safeUpdateBatchWorkbenchPresetSelect() {
+    if (typeof updateBatchWorkbenchPresetSelect === 'function') {
+        updateBatchWorkbenchPresetSelect();
+    }
+}
 
 function flattenAiFieldVisibilityRaw(raw) {
     if (!raw || typeof raw !== 'object') {
@@ -408,7 +415,7 @@ function safeParseJson(rawValue, fallbackValue) {
 function readLegacyAiPresetSnapshot() {
     const rawPresets = localStorage.getItem(AI_PRESETS_STORAGE_KEY);
     const rawActiveId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
-    const rawBatchActiveId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || '';
+    const rawBatchActiveId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY_SAFE) || '';
 
     const parsed = safeParseJson(rawPresets, []);
     const presets = Array.isArray(parsed) ? parsed : [];
@@ -1289,7 +1296,7 @@ function collectImportedAiPresets(rawPayload) {
 
 function syncActiveAiPresetKeys(presets) {
     const activeId = localStorage.getItem(ACTIVE_AI_PRESET_KEY) || '';
-    const batchActiveId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || '';
+    const batchActiveId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY_SAFE) || '';
     const presetIds = new Set(presets.map(preset => preset.id));
     const result = {
         mainRemoved: false,
@@ -1301,7 +1308,7 @@ function syncActiveAiPresetKeys(presets) {
         result.mainRemoved = true;
     }
     if (batchActiveId && !presetIds.has(batchActiveId)) {
-        localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY);
+        localStorage.removeItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY_SAFE);
         batchWorkbenchState.activePresetId = '';
         result.batchRemoved = true;
     }
@@ -1383,7 +1390,7 @@ async function importAiPresetsFromData(rawData, importMode) {
 
     nextPresets = normalizeAiPresetList(nextPresets);
     await saveAiPresets(nextPresets);
-    const activeBatchPresetId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY) || '';
+    const activeBatchPresetId = localStorage.getItem(BATCH_WORKBENCH_ACTIVE_PRESET_KEY_SAFE) || '';
     const nextPresetMap = new Map(nextPresets.map(preset => [preset.id, preset]));
     if (importMode === 'replace' && activeBatchPresetId && importedPresetIdSet.has(activeBatchPresetId)) {
         const updatedBatchPreset = nextPresetMap.get(activeBatchPresetId);
@@ -1397,7 +1404,7 @@ async function importAiPresetsFromData(rawData, importMode) {
     }
     updateAiPresetSelect();
     updateQuickAiPresetSelect();
-    updateBatchWorkbenchPresetSelect();
+    safeUpdateBatchWorkbenchPresetSelect();
 
     return nextPresets.length;
 }
@@ -1537,7 +1544,7 @@ async function saveAsAiPreset() {
 
     alert(t('runtime.presetSaved', {name: name}));
     updateQuickAiPresetSelect(); // 更新快速选择框
-    updateBatchWorkbenchPresetSelect();
+    safeUpdateBatchWorkbenchPresetSelect();
 }
 
 // 更新当前预设
@@ -1562,7 +1569,7 @@ async function updateCurrentAiPreset() {
     const updatedPreset = loadAiPresets().find(p => p.id === presetId);
     alert(t('runtime.presetUpdated', {name: updatedPreset?.name || t('preset.defaultName')}));
     updateQuickAiPresetSelect(); // 更新快速选择框
-    updateBatchWorkbenchPresetSelect();
+    safeUpdateBatchWorkbenchPresetSelect();
 }
 
 async function renameCurrentAiPreset() {
@@ -1593,7 +1600,7 @@ async function renameCurrentAiPreset() {
 
     updateAiPresetSelect();
     updateQuickAiPresetSelect();
-    updateBatchWorkbenchPresetSelect();
+    safeUpdateBatchWorkbenchPresetSelect();
 
     alert(t('runtime.presetRenamed', {name: nextName}));
 }
@@ -1648,7 +1655,7 @@ async function deleteAiPreset() {
 
     alert(t('alert.presetDeleted'));
     updateQuickAiPresetSelect(); // 更新快速选择框
-    updateBatchWorkbenchPresetSelect();
+    safeUpdateBatchWorkbenchPresetSelect();
 }
 
 // 更新快速预设选择框
@@ -2037,7 +2044,7 @@ async function saveAISettings(options = {}) {
         aiSettingsInitialSnapshot = snapshotAiSettingsPreviewState();
         updateAiPresetSelect();
         updateQuickAiPresetSelect();
-        updateBatchWorkbenchPresetSelect();
+        safeUpdateBatchWorkbenchPresetSelect();
         updateAiPresetApplyStatus();
         if (!silent) {
             const presetName = String((data.source_preset || {}).name || savedSource.preset_name || '').trim() || t('preset.defaultName');

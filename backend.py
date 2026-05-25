@@ -5277,6 +5277,11 @@ def ai_romanization_workbench():
     return render_template('lyrics_ai_romanization.html')
 
 
+@app.route('/ai-translate-workbench')
+def ai_translate_workbench():
+    return render_template('lyrics_ai_translate.html')
+
+
 @app.route('/LyricSphere.css')
 def lyric_sphere_css():
     """Serve LyricSphere stylesheet from templates (paired with LyricSphere.html)."""
@@ -5292,6 +5297,7 @@ _LYRIC_SPHERE_JS_ALLOWLIST = frozenset({
     'LyricSphere-lyrics-workbench.js',
     'LyricSphere-ai-presets.js',
     'LyricSphere-ai-romanization.js',
+    'LyricSphere-ai-translate.js',
     'LyricSphere-admin-shell.js',
 })
 
