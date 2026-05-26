@@ -2426,6 +2426,7 @@ AMLL_STATE = {
     "song": {"musicName": "", "artists": [], "duration": 0, "album": "", "cover": "", "cover_data_url": ""},
     "progress_ms": 0,
     "lines": [],
+    "raw_lines": [],
     "last_update": 0
 }
 # 事件队列（给前端实时推送用）
@@ -15313,25 +15314,44 @@ def get_my_ip():
 def amll_state_api():
     """AMLL 状态快照 API"""
     host = request.host
+    lines = _build_amll_lines_for_client(AMLL_STATE.get("raw_lines", []), request.args)
     return jsonify({
         "song": _normalize_song_for_host(AMLL_STATE["song"], host),
         "progress_ms": AMLL_STATE["progress_ms"],
-        "lines": AMLL_STATE["lines"]
+        "lines": lines
     })
 
 @app.route('/amll/stream')
 def amll_stream_api():
     """AMLL 实时事件流 API (Server-Sent Events)"""
+    split_opts = _parse_char_split_options(request.args)
 
     def _normalize_song_for_client(song_val: dict) -> dict:
         return _normalize_song_for_host(song_val or {}, request.host)
 
     def _normalize_state_snapshot(snapshot: dict) -> dict:
+        raw_lines = snapshot.get("raw_lines")
+        if raw_lines is None:
+            raw_lines = AMLL_STATE.get("raw_lines", [])
         return {
             "song": _normalize_song_for_client(snapshot.get("song", {})),
             "progress_ms": snapshot.get("progress_ms", 0),
-            "lines": snapshot.get("lines", [])
+            "lines": _build_amll_lines_for_client(raw_lines, char_split_options=split_opts),
         }
+
+    def _transform_event_payload(etype: str, data: dict) -> dict:
+        if etype == "lyrics":
+            raw_lines = data.get("raw_lines")
+            if raw_lines is None:
+                raw_lines = data.get("lines", [])
+            return {
+                "lines": _build_amll_lines_for_client(raw_lines, char_split_options=split_opts),
+            }
+        if etype == "state":
+            return _normalize_state_snapshot(data)
+        if etype == "song":
+            return {"song": _normalize_song_for_client(data.get("song", {}))}
+        return data
 
     @stream_with_context
     def _gen():
@@ -15343,12 +15363,7 @@ def amll_stream_api():
                 evt = AMLL_QUEUE.get(timeout=15)
                 etype = evt.get("type")
                 data = evt.get("data", {})
-                if etype == "state":
-                    payload = _normalize_state_snapshot(data)
-                elif etype == "song":
-                    payload = {"song": _normalize_song_for_client(data.get("song", {}))}
-                else:
-                    payload = data
+                payload = _transform_event_payload(etype, data)
                 yield _sse(etype, payload)
             except queue.Empty:
                 # 心跳：防止 Nginx/浏览器断流
@@ -15373,7 +15388,10 @@ def amll_create_song():
     payload = request.get_json(silent=True) or {}
     use_translation = bool(payload.get("useTranslation", True))
     snapshot_song = AMLL_STATE.get("song", {}) or {}
-    lines = AMLL_STATE.get("lines", []) or []
+    lines = _build_amll_lines_for_client(
+        AMLL_STATE.get("raw_lines", []) or [],
+        {"char_split": "off"},
+    )
 
     title = (snapshot_song.get("musicName") or "AMLL 未命名").strip()
     artists = [str(item).strip() for item in (snapshot_song.get("artists") or []) if str(item).strip()]
@@ -16076,7 +16094,10 @@ def _amll_publish(evt_type: str, data: dict):
     """发布事件到AMLL前端"""
     # 更新全局快照
     if evt_type == "lyrics":
-        AMLL_STATE["lines"] = data.get("lines", [])
+        if "raw_lines" in data:
+            AMLL_STATE["raw_lines"] = data.get("raw_lines", [])
+        elif "lines" in data:
+            AMLL_STATE["lines"] = data.get("lines", [])
     elif evt_type == "progress":
         AMLL_STATE["progress_ms"] = int(data.get("progress_ms", 0))
     elif evt_type == "song":
@@ -16094,11 +16115,99 @@ def _sse(event: str, data: dict) -> str:
     """SSE 格式：event:<name>\ndata:<json>\n\n"""
     return f"event:{event}\ndata:{json.dumps(data, ensure_ascii=False)}\n\n"
 
-def _amll_lines_to_front(payload_lines: list[dict]) -> list[dict]:
+
+def _parse_char_split_threshold_ms(request_args) -> int:
+    """Parse char_split_threshold_ms; 0 is valid; default 2000 when absent/invalid."""
+    th_raw = None
+    if request_args is not None:
+        getter = getattr(request_args, "get", None)
+        if callable(getter):
+            th_raw = getter("char_split_threshold_ms")
+        elif isinstance(request_args, dict):
+            th_raw = request_args.get("char_split_threshold_ms")
+    if th_raw is None or str(th_raw).strip() == "":
+        return 2000
+    try:
+        return max(0, int(th_raw))
+    except (TypeError, ValueError):
+        return 2000
+
+
+def _parse_char_split_options(request_args) -> dict:
+    """Parse char_split query: off (default) or on, with optional threshold_ms."""
+    raw = None
+    if request_args is not None:
+        getter = getattr(request_args, "get", None)
+        if callable(getter):
+            raw = getter("char_split")
+        elif isinstance(request_args, dict):
+            raw = request_args.get("char_split")
+    threshold_ms = _parse_char_split_threshold_ms(request_args)
+    if raw is None or str(raw).strip() == "":
+        return {"mode": "off", "threshold_ms": threshold_ms}
+    val = str(raw).strip().lower()
+    if val == "off":
+        return {"mode": "off", "threshold_ms": threshold_ms}
+    if val == "on":
+        return {"mode": "on", "threshold_ms": threshold_ms}
+    return {"mode": "off", "threshold_ms": threshold_ms}
+
+
+def split_word_for_frontend(word_obj, *, mode: str, threshold_ms: int) -> list[dict]:
+    """Split a word for AMLL frontend display; off=whole word, on=split when duration > threshold."""
+    w = str(word_obj.get("word", "") or "")
+    if not w:
+        return []
+
+    s = int(word_obj.get("startTime") or word_obj.get("start_ms") or 0)
+    e = int(word_obj.get("endTime") or word_obj.get("end_ms") or s)
+    rw = str(word_obj.get("romanWord") or word_obj.get("roman_word") or "")
+    duration = max(0, e - s)
+
+    def _whole_word():
+        return [{
+            "char": w,
+            "roman_char": rw,
+            "start_ms": s,
+            "end_ms": e,
+        }]
+
+    if mode == "off" or len(w) == 1:
+        return _whole_word()
+
+    if duration > threshold_ms:
+        return split_word_to_chars(word_obj)
+    return _whole_word()
+
+
+def _build_amll_lines_for_client(raw_lines, request_args=None, *, char_split_options=None) -> list:
+    opts = char_split_options if char_split_options is not None else _parse_char_split_options(request_args)
+    lines = _amll_lines_to_front(raw_lines or [], opts)
+    try:
+        compute_disappear_times(lines, delta1=500, delta2=0)
+    except Exception as e:
+        app.logger.warning(f"[AMLL] compute_disappear_times failed: {e}")
+    return lines
+
+
+def _amll_lines_to_front(payload_lines: list[dict], char_split_options: dict | None = None) -> list[dict]:
     """
     把 AMLL 的 lines（每行包含 words[]）转换为前端统一的结构：
       每行 -> { syllables: [ {text,startTime,duration,roman?}, ... ] }
     """
+    if char_split_options is None:
+        char_split_options = {"mode": "off", "threshold_ms": 2000}
+    mode = char_split_options.get("mode", "off")
+    if mode not in ("off", "on"):
+        mode = "off"
+    th_val = char_split_options.get("threshold_ms")
+    if th_val is None:
+        threshold_ms = 2000
+    else:
+        try:
+            threshold_ms = max(0, int(th_val))
+        except (TypeError, ValueError):
+            threshold_ms = 2000
     out_lines = []
     for line in payload_lines:
         words = line.get("words", [])
@@ -16135,8 +16244,7 @@ def _amll_lines_to_front(payload_lines: list[dict]) -> list[dict]:
                     "roman": str(wobj.get("romanWord") or wobj.get("roman_word") or "")
                 })
 
-            # 拆成逐字
-            for ev in split_word_to_chars(wobj):
+            for ev in split_word_for_frontend(wobj, mode=mode, threshold_ms=threshold_ms):
                 syllables.append({
                     "text": ev["char"],
                     "startTime": _ms_to_sec(ev["start_ms"]),
@@ -16874,14 +16982,8 @@ async def ws_handle(ws):
                             writer = csv.DictWriter(f, fieldnames=list(rows[0].keys())); writer.writeheader(); writer.writerows(rows)
                         print(f"[WS] 逐字 CSV 已导出：exports/{name}（{len(rows)} 条）")
 
-                    lines_front = _amll_lines_to_front(payload)
-                    try:
-                        compute_disappear_times(lines_front, delta1=500, delta2=0)
-                    except Exception as e:
-                        app.logger.warning(f"[WS] 计算消失时机失败，降级继续: {e}")
-                    total_syllables = sum(len(l.get('syllables', [])) for l in lines_front)
-                    print(f"[WS] 收到歌词(state) {len(payload)} 行，已转换为 {total_syllables} 个逐字单元（含 disappearTime）")
-                    _amll_publish("lyrics", {"lines": lines_front})
+                    print(f"[WS] 收到歌词(state) {len(payload)} 行（raw_lines 发布）")
+                    _amll_publish("lyrics", {"raw_lines": payload})
                     continue
                 if update in ("progress", "playprogress", "onplayprogress", "setprogress", "position", "time"):
                     prog = _extract_progress_ms_from_state(val)
@@ -16928,17 +17030,8 @@ async def ws_handle(ws):
                         writer = csv.DictWriter(f, fieldnames=list(rows[0].keys())); writer.writeheader(); writer.writerows(rows)
                     print(f"[WS] 逐字 CSV 已导出：exports/{name}（{len(rows)} 条）")
 
-                # 转发到前端 AMLL 流（先计算消失时机）
-                lines_front = _amll_lines_to_front(payload)
-
-                try:
-                    compute_disappear_times(lines_front, delta1=500, delta2=0)
-                except Exception as e:
-                    app.logger.warning(f"[WS] 计算消失时机失败，降级继续: {e}")
-
-                total_syllables = sum(len(l.get('syllables', [])) for l in lines_front)
-                print(f"[WS] 收到歌词 {len(payload)} 行，已转换为 {total_syllables} 个逐字单元（含 disappearTime）")
-                _amll_publish("lyrics", {"lines": lines_front})
+                print(f"[WS] 收到歌词 {len(payload)} 行（raw_lines 发布）")
+                _amll_publish("lyrics", {"raw_lines": payload})
                 continue
 
             print("[WS] 未知消息：", msg)

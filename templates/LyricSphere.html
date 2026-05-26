@@ -1243,6 +1243,14 @@
         </div>
     </div>
 
+    <div id="amllCharSplitContextBackdrop" class="amll-char-split-backdrop" hidden></div>
+    <div id="amllCharSplitContextMenu" class="amll-char-split-menu" hidden role="menu">
+        <label class="amll-char-split-menu__item">
+            <input type="checkbox" id="amllCharSplitToggle" />
+            <span data-i18n="btn.amllCharSplit">长音节逐字拆分</span>
+        </label>
+    </div>
+
     <script id="amllPlayerConfig" type="application/json">{{ amll_player_base_url|tojson }}</script>
     <script id="lyricSphereBootstrap" type="application/json">{{ {'defaultAmllCover': url_for('static', filename='icons/icon-512x512.png')} | tojson }}</script>
     <script src="/LyricSphere-js/LyricSphere-i18n.js" defer></script>

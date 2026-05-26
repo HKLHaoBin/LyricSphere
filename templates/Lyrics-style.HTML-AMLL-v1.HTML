@@ -267,8 +267,9 @@
         const MIN_AMLL_BACKGROUND_BRIGHTNESS = 0.4;
         const MAX_AMLL_BACKGROUND_BRIGHTNESS = 1.6;
         const DEFAULT_AMLL_BEAT_ENABLED = true;
-        const AMLL_STATE_URL = '/amll/state';
-        const AMLL_STREAM_URL = '/amll/stream';
+        const AMLL_PAGE_QUERY = window.location.search || '?char_split=off';
+        const AMLL_STATE_URL = '/amll/state' + AMLL_PAGE_QUERY;
+        const AMLL_STREAM_URL = '/amll/stream' + AMLL_PAGE_QUERY;
         const PROGRESS_RESYNC_INTERVAL_MS = 3000;
         const LAST_SONG_STORAGE_KEY = 'amll_last_song_meta';
         const LYRICS_REFETCH_INTERVAL_MS = 1200;

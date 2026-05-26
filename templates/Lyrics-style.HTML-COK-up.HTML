@@ -961,6 +961,30 @@
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
             const amllBackgroundState = { promise: null, host: null, element: null };
             const urlParams = new URLSearchParams(window.location.search);
+
+            function parseCharSplitOptions(params) {
+                const searchParams = params instanceof URLSearchParams
+                    ? params
+                    : new URLSearchParams(params || '');
+                let thresholdMs = 2000;
+                const thRaw = searchParams.get('char_split_threshold_ms');
+                if (thRaw !== null && String(thRaw).trim() !== '') {
+                    const parsed = parseInt(thRaw, 10);
+                    if (Number.isFinite(parsed) && parsed >= 0) {
+                        thresholdMs = parsed;
+                    }
+                }
+                const raw = searchParams.get('char_split');
+                if (raw === null || String(raw).trim() === '') {
+                    return { mode: 'off', thresholdMs };
+                }
+                const val = String(raw).trim().toLowerCase();
+                if (val === 'on') {
+                    return { mode: 'on', thresholdMs };
+                }
+                return { mode: 'off', thresholdMs };
+            }
+
             const queryFile = urlParams.get('file') || null;
             const queryLys = urlParams.get('lys') || null;
             const queryLrc = urlParams.get('lrc') || null;
@@ -3573,8 +3597,8 @@
                 return result;
             }
 
-            // 将持续时间超过 1s 的英文词拆分为逐字符的子音节，按等份时间平分
-        function splitLongWordSyllables(lines, minDurationSec = 1, predicate = () => true) {
+            // Split long English words into per-character syllables when duration exceeds thresholdMs.
+        function splitLongWordSyllables(lines, thresholdMs, predicate = () => true) {
             if (!Array.isArray(lines)) return [];
 
             return lines.map((line) => {
@@ -3588,19 +3612,20 @@
                         if (!syllable) return;
                         const rawText = syllable.text || '';
                         const text = rawText.trim();
-                        const duration = Number.parseFloat(syllable.duration);
+                        const durationSec = Number.parseFloat(syllable.duration);
                         const start = Number.parseFloat(syllable.startTime);
+                        const durationMs = durationSec * 1000;
                         const looksLikeWord = /^[A-Za-z][A-Za-z,'-]*[A-Za-z]?[.,!?]?$/.test(text) && !text.includes(' ');
 
                         if (
-                            Number.isFinite(duration) &&
+                            Number.isFinite(durationSec) &&
                             Number.isFinite(start) &&
-                            duration > minDurationSec &&
+                            durationMs > thresholdMs &&
                             text.length > 1 &&
                             looksLikeWord
                         ) {
                             const chars = Array.from(rawText);
-                            const partDuration = duration / chars.length;
+                            const partDuration = durationSec / chars.length;
                             chars.forEach((char, idx) => {
                                 const splitStart = start + partDuration * idx;
                                 newSyllables.push({
@@ -3610,6 +3635,11 @@
                                     duration: partDuration
                                 });
                             });
+                            const last = newSyllables[newSyllables.length - 1];
+                            if (last) {
+                                const end = start + durationSec;
+                                last.duration = Math.max(0, end - Number.parseFloat(last.startTime));
+                            }
                         } else {
                             newSyllables.push(syllable);
                         }
@@ -3619,7 +3649,7 @@
             });
         }
 
-        function splitMultiWordSyllables(lines, minDurationSec = 1, predicate = () => true) {
+        function splitMultiWordSyllables(lines, thresholdMs, predicate = () => true) {
             if (!Array.isArray(lines)) return [];
 
             return lines.map((line) => {
@@ -3632,9 +3662,10 @@
                 const rawText = syllable.text || '';
                 if (!/\s/.test(rawText)) return line;
 
-                const duration = Number.parseFloat(syllable.duration);
+                const durationSec = Number.parseFloat(syllable.duration);
                 const start = Number.parseFloat(syllable.startTime);
-                if (!Number.isFinite(duration) || !Number.isFinite(start) || duration <= minDurationSec) {
+                const durationMs = durationSec * 1000;
+                if (!Number.isFinite(durationSec) || !Number.isFinite(start) || durationMs <= thresholdMs) {
                     return line;
                 }
 
@@ -3650,7 +3681,7 @@
 
                 let cursor = start;
                 const newSyllables = tokens.map((token, idx) => {
-                    const partDuration = duration * (weights[idx] / totalWeight);
+                    const partDuration = durationSec * (weights[idx] / totalWeight);
                     const next = {
                         ...syllable,
                         text: token,
@@ -3662,7 +3693,7 @@
                 });
 
                 const last = newSyllables[newSyllables.length - 1];
-                const end = start + duration;
+                const end = start + durationSec;
                 last.duration = Math.max(0, end - Number.parseFloat(last.startTime));
 
                 return { ...line, syllables: newSyllables, line: tokens.join('') };
@@ -3812,13 +3843,16 @@
                     const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
                     const lyricsJson = await lyricsRes.json();
                     lyricsData = lyricsJson.lyrics || [];
-                    // 长词拆分仅应用于非自定义字体行或音节，避免特殊字体被拆成单字符
-                    lyricsData = splitLongWordSyllables(
-                        lyricsData,
-                        1,
-                        (line) => !isLineUsingSpecialFont(line)
-                    );
-                    lyricsData = splitMultiWordSyllables(lyricsData, 1);
+                    const charSplit = parseCharSplitOptions(urlParams);
+                    if (charSplit.mode === 'on') {
+                        // 长词拆分仅应用于非自定义字体行或音节，避免特殊字体被拆成单字符
+                        lyricsData = splitLongWordSyllables(
+                            lyricsData,
+                            charSplit.thresholdMs,
+                            (line) => !isLineUsingSpecialFont(line)
+                        );
+                        lyricsData = splitMultiWordSyllables(lyricsData, charSplit.thresholdMs);
+                    }
                     // 对特殊字体行：按单词合并音节（空格/标点分词），避免跨词遮挡
                     lyricsData = mergeSpecialFontWords(lyricsData);
 

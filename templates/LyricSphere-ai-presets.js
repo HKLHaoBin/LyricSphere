@@ -2173,7 +2173,49 @@ async function probeAIConnection(mode = 'translation', btn = null) {
     }
 }
 
+const AMLL_CHAR_SPLIT_ENABLED_KEY = 'amll_char_split_enabled_v1';
+const AMLL_CHAR_SPLIT_THRESHOLD_KEY = 'amll_char_split_threshold_ms_v1';
+const DEFAULT_AMLL_CHAR_SPLIT_THRESHOLD_MS = 2000;
+
+function readAmllCharSplitEnabled() {
+    try {
+        const raw = window.localStorage.getItem(AMLL_CHAR_SPLIT_ENABLED_KEY);
+        if (raw === '0' || raw === 'false') return false;
+        if (raw === '1' || raw === 'true') return true;
+    } catch (error) {
+        // ignore storage errors
+    }
+    return true;
+}
+
+function readAmllCharSplitThresholdMs() {
+    try {
+        const raw = window.localStorage.getItem(AMLL_CHAR_SPLIT_THRESHOLD_KEY);
+        const parsed = parseInt(raw, 10);
+        if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    } catch (error) {
+        // ignore storage errors
+    }
+    return DEFAULT_AMLL_CHAR_SPLIT_THRESHOLD_MS;
+}
+
+function appendCharSplitQueryParams(params, enabled = readAmllCharSplitEnabled(), thresholdMs = readAmllCharSplitThresholdMs()) {
+    params.set('char_split', enabled ? 'on' : 'off');
+    params.set('char_split_threshold_ms', String(thresholdMs));
+}
+
+function buildLyricsAmllUrl(enabled = readAmllCharSplitEnabled(), thresholdMs = readAmllCharSplitThresholdMs()) {
+    const params = new URLSearchParams();
+    appendCharSplitQueryParams(params, enabled, thresholdMs);
+    return `/lyrics-amll?${params.toString()}`;
+}
+
 async function openLyricsAnimate(filename, style) {
+    const applyCokCharSplitParams = (params) => {
+        if (String(style).trim() !== 'C_ok') return;
+        appendCharSplitQueryParams(params);
+    };
+
     const fallbackOpen = (extra = {}) => {
         const params = new URLSearchParams({ file: filename, style });
         Object.entries(extra).forEach(([key, value]) => {
@@ -2181,6 +2223,7 @@ async function openLyricsAnimate(filename, style) {
                 params.set(key, value);
             }
         });
+        applyCokCharSplitParams(params);
         params.set('for_player', '1');
         window.open('/lyrics-animate?' + params.toString(), '_blank');
     };
@@ -2349,6 +2392,7 @@ async function openLyricsAnimate(filename, style) {
                     params.set(key, value);
                 }
             });
+            applyCokCharSplitParams(params);
             params.set('for_player', '1');
             window.open('/lyrics-animate?' + params.toString(), '_blank');
         };
@@ -2422,6 +2466,74 @@ async function openLyricsAnimate(filename, style) {
     }
 }
 
+function writeAmllCharSplitEnabled(enabled) {
+    try {
+        window.localStorage.setItem(AMLL_CHAR_SPLIT_ENABLED_KEY, enabled ? '1' : '0');
+    } catch (error) {
+        // ignore storage errors
+    }
+}
+
 function openAMLL() {
-    window.open('/lyrics-amll', '_blank');
+    window.open(buildLyricsAmllUrl(), '_blank');
+}
+
+function hideAmllCharSplitContextMenu() {
+    const menu = document.getElementById('amllCharSplitContextMenu');
+    const backdrop = document.getElementById('amllCharSplitContextBackdrop');
+    if (menu) menu.hidden = true;
+    if (backdrop) backdrop.hidden = true;
+}
+
+function showAmllCharSplitContextMenu(clientX, clientY) {
+    const menu = document.getElementById('amllCharSplitContextMenu');
+    const backdrop = document.getElementById('amllCharSplitContextBackdrop');
+    const toggle = document.getElementById('amllCharSplitToggle');
+    if (!menu || !backdrop || !toggle) return;
+    toggle.checked = readAmllCharSplitEnabled();
+    menu.style.left = `${clientX}px`;
+    menu.style.top = `${clientY}px`;
+    menu.hidden = false;
+    backdrop.hidden = false;
+}
+
+function shouldPreserveNativeContextMenu(target) {
+    if (!target || !(target instanceof Element)) return false;
+    return Boolean(target.closest(
+        'input, textarea, select, option, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"], a[href]'
+    ));
+}
+
+function initAmllCharSplitContextMenu() {
+    const menu = document.getElementById('amllCharSplitContextMenu');
+    const backdrop = document.getElementById('amllCharSplitContextBackdrop');
+    const toggle = document.getElementById('amllCharSplitToggle');
+    const menuRoot = document.body;
+    if (!menu || !backdrop || !toggle || !menuRoot) return;
+
+    menuRoot.addEventListener('contextmenu', (event) => {
+        if (shouldPreserveNativeContextMenu(event.target)) return;
+        if (menu.contains(event.target) || backdrop.contains(event.target)) return;
+        event.preventDefault();
+        showAmllCharSplitContextMenu(event.clientX, event.clientY);
+    });
+
+    backdrop.addEventListener('click', hideAmllCharSplitContextMenu);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') hideAmllCharSplitContextMenu();
+    });
+
+    toggle.addEventListener('change', () => {
+        writeAmllCharSplitEnabled(Boolean(toggle.checked));
+    });
+
+    menu.addEventListener('click', (event) => {
+        event.stopPropagation();
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAmllCharSplitContextMenu);
+} else {
+    initAmllCharSplitContextMenu();
 }
