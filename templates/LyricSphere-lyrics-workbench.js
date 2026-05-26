@@ -671,9 +671,10 @@ async function extractTimestamps() {
             console.log('成功获取时间戳，数量:', data.timestamps.length);
             const translationEditor = document.getElementById('translationEditor');
             const rawTranslation = translationEditor.value || '';
+            // Separator chars must stay in sync with NUMBERED_TRANSLATION_LINE_PATTERNS in backend.py.
             const translationLines = rawTranslation
                 .split(/\r?\n/)
-                .map(line => line.replace(/^\s*\d+(?:_\d+)?[\.、．:：]?\s*/, '').trim())
+                .map(line => line.replace(/^\s*(?:\[\s*\d+(?:_\d+)?\s*\]|【\s*\d+(?:_\d+)?\s*】|\d+(?:_\d+)?)[\.、．,，:：\)）]?\s*/, '').trim())
                 .filter(line => line.length > 0);
 
             if (translationLines.length === data.timestamps.length && translationLines.length > 0) {
@@ -1167,6 +1168,7 @@ async function translateLyrics() {
         let buffer = '';
         let translationHasTimestamps = true;
         let translationReceived = false;
+        let streamFailed = false;
 
         const translationEditorUpdater = () => {
             const sections = [];
@@ -1255,6 +1257,20 @@ async function translateLyrics() {
             if (line.startsWith('content:')) {
                 try {
                     const content = JSON.parse(line.slice(8));
+                    if (content.status === 'error') {
+                        const errorMessage = content.code === 'no_numbered_translations'
+                            ? t('batch.noNumberedTranslations')
+                            : (content.message || t('batch.translationError'));
+                        if (!translationOutputActivated) {
+                            markDirty(activateStage('translationOutput', t('batch.generatingTranslation')));
+                            translationOutputActivated = true;
+                        }
+                        markDirty(failStage('translationOutput', errorMessage));
+                        flushStages(errorMessage, 'error', { useShine: false });
+                        streamFailed = true;
+                        return;
+                    }
+
                     if (Object.prototype.hasOwnProperty.call(content, 'hasTimestamps')) {
                         translationHasTimestamps = content.hasTimestamps;
                     }
@@ -1316,13 +1332,25 @@ async function translateLyrics() {
             }
         }
 
+        if (streamFailed) {
+            return;
+        }
+
         markDirty(completeStage('translationRequest', t('batch.flowEnded')));
-        markDirty(completeStage('translationOutput', translationReceived ? t('batch.receivedTranslation') : t('batch.translationEmpty')));
+        if (!translationReceived) {
+            const emptyMessage = t('batch.noNumberedTranslations');
+            markDirty(failStage('translationOutput', emptyMessage));
+            flushStages(emptyMessage, 'error', { useShine: false });
+            highlightSuspectLinesInEditor([]);
+            return;
+        }
+
+        markDirty(completeStage('translationOutput', t('batch.receivedTranslation')));
         if (!postProcessingActivated) {
             markDirty(activateStage('postProcessing', t('batch.writingTranslation')));
             postProcessingActivated = true;
         }
-        markDirty(completeStage('postProcessing', translationReceived ? t('batch.translationWritten') : t('batch.translationEmpty')));
+        markDirty(completeStage('postProcessing', t('batch.translationWritten')));
         flushStages();
 
         const successMessage = (!translationHasTimestamps && translationReceived)

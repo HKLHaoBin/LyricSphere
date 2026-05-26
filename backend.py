@@ -4313,7 +4313,24 @@ OUTER_BRACKET_PAIRS = {
     '(': ')',
     '（': '）',
 }
-NUMBERED_TRANSLATION_LINE_PATTERN = re.compile(r'^\s*(\d+)(?:_(\d+))?\.(.*)$')
+_NUMBERED_INDEX = r'(\d+)(?:_(\d+))?'
+# Keep separator set in sync with extractTimestamps() strip regex in
+# templates/LyricSphere-lyrics-workbench.js ([\.、．,，:：\)）] etc.).
+NUMBERED_TRANSLATION_LINE_PATTERNS = [
+    re.compile(rf'^\s*{_NUMBERED_INDEX}\.\s*(.*)$'),
+    re.compile(rf'^\s*{_NUMBERED_INDEX}[、,，]\s*(.*)$'),
+    re.compile(rf'^\s*{_NUMBERED_INDEX}[:：]\s*(.*)$'),
+    re.compile(rf'^\s*{_NUMBERED_INDEX}[\)）]\s*(.*)$'),
+    re.compile(rf'^\s*\[\s*{_NUMBERED_INDEX}\s*\]\s*(.*)$'),
+    re.compile(rf'^\s*【\s*{_NUMBERED_INDEX}\s*】\s*(.*)$'),
+]
+NUMBERED_TRANSLATION_LINE_PATTERN = NUMBERED_TRANSLATION_LINE_PATTERNS[0]
+TRANSLATION_OUTPUT_FORMAT_CONTRACT = (
+    '输出格式要求：\n'
+    '允许在同一次回复中包含歌曲理解等自由文本，但翻译段必须逐行使用与待翻译歌词一致的编号，'
+    '格式为「行号.译文」（例如 1.译文、2_1.子句译文）。\n'
+    '理解段不要使用可被误识别为编号翻译的「N.」开头行；不要用 markdown 代码块包裹译文。'
+)
 FONT_FAMILY_META_REGEX = re.compile(r'^\[font-family:\s*([^\]]*)\s*\]$', re.IGNORECASE)
 
 SCRIPT_CHECKERS = {
@@ -4492,22 +4509,58 @@ def build_subline_prompt_notice() -> str:
 def parse_numbered_translation_line(line: str) -> Optional[Tuple[str, str]]:
     if not line:
         return None
-    match = NUMBERED_TRANSLATION_LINE_PATTERN.match(line.strip())
-    if not match:
-        return None
-    main_index = int(match.group(1))
-    if main_index <= 0:
-        return None
-    sub_raw = match.group(2)
-    if sub_raw:
-        sub_index = int(sub_raw)
-        if sub_index <= 0:
+    stripped = line.strip()
+    for pattern in NUMBERED_TRANSLATION_LINE_PATTERNS:
+        match = pattern.match(stripped)
+        if not match:
+            continue
+        main_index = int(match.group(1))
+        if main_index <= 0:
             return None
-        display_index = f"{main_index}_{sub_index}"
-    else:
-        display_index = str(main_index)
-    content = match.group(3).strip()
-    return display_index, content
+        sub_raw = match.group(2)
+        if sub_raw:
+            sub_index = int(sub_raw)
+            if sub_index <= 0:
+                return None
+            display_index = f"{main_index}_{sub_index}"
+        else:
+            display_index = str(main_index)
+        content = match.group(3).strip()
+        return display_index, content
+    return None
+
+
+def build_translated_dict_from_text(text: str) -> Dict[str, str]:
+    translated_dict: Dict[str, str] = {}
+    if not text:
+        return translated_dict
+    for line in text.split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('思考'):
+            continue
+        parsed_line = parse_numbered_translation_line(line)
+        if not parsed_line:
+            continue
+        display_index, translated_text = parsed_line
+        translated_dict[display_index] = translated_text
+    return translated_dict
+
+
+def merge_translated_dict_into_final_lyrics(
+    translated_dict: Dict[str, str],
+    prompt_lines: List[Dict[str, Any]],
+    line_prefixes: List[str],
+) -> List[str]:
+    final_lyrics: List[str] = []
+    for prompt_line in prompt_lines:
+        translation = translated_dict.get(prompt_line['display_index'])
+        if translation is None:
+            continue
+        entry_idx = max(0, int(prompt_line.get('entry_index', 1)) - 1)
+        prefix = line_prefixes[entry_idx] if entry_idx < len(line_prefixes) else ''
+        final_line = f"{prefix}{translation}" if prefix else translation
+        final_lyrics.append(final_line)
+    return final_lyrics
 
 
 def strip_timing_tags(content: str) -> str:
@@ -11821,6 +11874,7 @@ def translate_lyrics():
             prompt_tokens = 0
             completion_tokens = 0
             total_tokens = 0
+            translation_parse_failed = False
             try:
                 # 构建提示词
                 numbered_lyrics = '\n'.join(
@@ -11908,6 +11962,7 @@ def translate_lyrics():
                     if has_sublines:
                         combined_prompt_parts.append(build_subline_prompt_notice())
                     combined_prompt_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                    combined_prompt_parts.append(TRANSLATION_OUTPUT_FORMAT_CONTRACT)
                     combined_prompt = '\n\n'.join(part for part in combined_prompt_parts if part)
                     messages = [
                         {"role": "user", "content": combined_prompt}
@@ -11920,6 +11975,7 @@ def translate_lyrics():
                     if has_sublines:
                         user_content_parts.append(build_subline_prompt_notice())
                     user_content_parts.append(f"待翻译歌词：\n{numbered_lyrics}")
+                    user_content_parts.append(TRANSLATION_OUTPUT_FORMAT_CONTRACT)
                     user_content = '\n\n'.join(part for part in user_content_parts if part)
                     messages = [
                         {"role": "system", "content": system_prompt},
@@ -11994,29 +12050,11 @@ def translate_lyrics():
                         full_translation += content
                         app.logger.debug(f"收到翻译内容 [ID: {request_id}]: {content}")
 
-                        # 处理翻译内容：使用字典按行号稳定对齐（后到的覆盖先到的）
-                        lines = full_translation.split('\n')
-                        translated_dict: Dict[str, str] = {}
-                        for line in lines:
-                            if line.strip() and not line.startswith('思考'):
-                                parsed_line = parse_numbered_translation_line(line)
-                                if parsed_line:
-                                    display_index, translated_text = parsed_line
-                                    translated_dict[display_index] = translated_text
-
-                        # 使用字典按行号稳定对齐，即使行号乱序或缺失也能正确处理
+                        translated_dict = build_translated_dict_from_text(full_translation)
                         if translated_dict:
-                            # 按原始顺序合并翻译结果；若缺失时间戳则直接返回纯文本
-                            final_lyrics = []
-                            for prompt_line in prompt_lines:
-                                translation = translated_dict.get(prompt_line['display_index'])
-                                if translation is not None:
-                                    entry_idx = max(0, int(prompt_line.get('entry_index', 1)) - 1)
-                                    prefix = line_prefixes[entry_idx] if entry_idx < len(line_prefixes) else ''
-                                    final_line = f"{prefix}{translation}" if prefix else translation
-                                    final_lyrics.append(final_line)
-
-                            # 发送翻译内容（只发送有翻译的行）
+                            final_lyrics = merge_translated_dict_into_final_lyrics(
+                                translated_dict, prompt_lines, line_prefixes
+                            )
                             if final_lyrics:
                                 payload = {
                                     'translations': final_lyrics,
@@ -12024,10 +12062,40 @@ def translate_lyrics():
                                 }
                                 yield f"content:{json.dumps(payload)}\n"
                                 app.logger.debug(f"成功合并 {len(final_lyrics)} 行翻译歌词")
-                        else:
-                            app.logger.warning("未提取到有效的翻译内容")
-                            app.logger.debug(f"当前完整翻译内容预览:\n{full_translation[:500]}..." if len(full_translation) > 500 else f"当前完整翻译内容:\n{full_translation}")
-                
+
+                final_dict = build_translated_dict_from_text(full_translation)
+                if not final_dict:
+                    translation_parse_failed = True
+                    preview = full_translation[:300]
+                    error_payload = {
+                        'status': 'error',
+                        'code': 'no_numbered_translations',
+                        'message': (
+                            '未能从模型输出中识别任何编号翻译行。'
+                            '请确保翻译段使用 N. / N、 / N: / [N] 等可解析的编号格式。'
+                        ),
+                        'preview': preview,
+                        'expected_line_count': len(prompt_lines),
+                    }
+                    app.logger.error(
+                        "翻译流终态无编号译文 [ID: %s], preview=%r, expected_line_count=%s",
+                        request_id,
+                        preview,
+                        len(prompt_lines),
+                    )
+                    yield f"content:{json.dumps(error_payload)}\n"
+                else:
+                    final_lyrics = merge_translated_dict_into_final_lyrics(
+                        final_dict, prompt_lines, line_prefixes
+                    )
+                    if final_lyrics:
+                        payload = {
+                            'translations': final_lyrics,
+                            'hasTimestamps': has_timestamps
+                        }
+                        yield f"content:{json.dumps(payload)}\n"
+                        app.logger.debug(f"终态合并 {len(final_lyrics)} 行翻译歌词")
+
                 # 记录流式响应完成
                 stream_duration = time.time() - stream_start_time
                 app.logger.info(f"流式响应完成 [ID: {request_id}], 耗时: {stream_duration:.2f}秒")
@@ -12045,18 +12113,30 @@ def translate_lyrics():
                     **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
                 })
             else:
-                # 记录翻译成功完成
                 total_duration = time.time() - api_start_time
-                app.logger.info(f"翻译成功完成 [ID: {request_id}], 总耗时: {total_duration:.2f}秒")
-                app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
-                app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}, compat_mode: {compat_mode}")
-                audit_payload.update({
-                    'success': True,
-                    'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
-                    'reasoning_length': len(current_reasoning),
-                    'translation_length': len(full_translation),
-                    **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
-                })
+                if translation_parse_failed:
+                    app.logger.error(
+                        f"翻译完成但未识别编号译文 [ID: {request_id}], 总耗时: {total_duration:.2f}秒"
+                    )
+                    audit_payload.update({
+                        'success': False,
+                        'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                        'error': 'no_numbered_translations',
+                        'reasoning_length': len(current_reasoning),
+                        'translation_length': len(full_translation),
+                        **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                    })
+                else:
+                    app.logger.info(f"翻译成功完成 [ID: {request_id}], 总耗时: {total_duration:.2f}秒")
+                    app.logger.info(f"最终翻译字符数: {len(full_translation)}, 思维链长度: {len(current_reasoning)}")
+                    app.logger.info(f"API配置: {provider}, {base_url}, {model}, expect_reasoning: {expect_reasoning}, compat_mode: {compat_mode}")
+                    audit_payload.update({
+                        'success': True,
+                        'duration_ms': int((time.monotonic() - audit_started_at) * 1000),
+                        'reasoning_length': len(current_reasoning),
+                        'translation_length': len(full_translation),
+                        **_ai_usage_audit_token_payload(prompt_tokens, completion_tokens, total_tokens),
+                    })
             finally:
                 append_ai_usage_log(audit_payload)
 
