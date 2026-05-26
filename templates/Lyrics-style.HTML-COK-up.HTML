@@ -441,6 +441,34 @@
             right: 20px;
             z-index: 1000;
         }
+
+        .audio-delivery-mode-wrap {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.85);
+            background: rgba(0, 0, 0, 0.55);
+            padding: 6px 10px;
+            border-radius: 8px;
+        }
+
+        .audio-delivery-mode-wrap[hidden] {
+            display: none !important;
+        }
+
+        .audio-delivery-mode-wrap select {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
+
         #font-load-tip {
             position: fixed;
             top: 16px;
@@ -506,9 +534,71 @@
     <div class="font-slider-container">
         <input type="range" min="0.5" max="1.5" value="1" step="0.05" id="fontSlider">
     </div>
+    <div id="audio-delivery-mode-wrap" class="audio-delivery-mode-wrap" hidden>
+        <label for="audio-delivery-mode">音频</label>
+        <select id="audio-delivery-mode" aria-label="音频传输模式">
+            <option value="stream">流式</option>
+            <option value="oneshot">单次</option>
+        </select>
+    </div>
 
     <script>
         const AMLL_SETTINGS_STORAGE_KEY = 'amll_background_settings';
+        const FAMYLIAM_AUDIO_MODE_KEY = 'famyliam_audio_mode';
+
+        function applyAudioDeliveryMode(url, mode) {
+            if (!url || !mode) return url;
+            const u = new URL(url, location.origin);
+            u.searchParams.set('mode', mode);
+            return u.pathname + u.search;
+        }
+
+        function stripAudioDeliveryMode(url) {
+            if (!url) return url;
+            const u = new URL(url, location.origin);
+            u.searchParams.delete('mode');
+            return u.pathname + u.search;
+        }
+
+        function audioDeliveryAllowsUserModePick(delivery) {
+            if (!delivery || delivery.error) return false;
+            if (delivery.locked_by_policy) return false;
+            const modes = Array.isArray(delivery.available_modes) ? delivery.available_modes : [];
+            if (modes.length <= 1) return false;
+            return delivery.mode === 'both' || modes.length > 1;
+        }
+
+        function syncAudioDeliveryModeOptions(selectEl, delivery) {
+            if (!selectEl || !delivery) return;
+            const modes = Array.isArray(delivery.available_modes) && delivery.available_modes.length
+                ? delivery.available_modes
+                : ['stream', 'oneshot'];
+            const labels = { stream: '流式', oneshot: '单次' };
+            selectEl.innerHTML = modes.map((mode) => {
+                const label = labels[mode] || mode;
+                return `<option value="${mode}">${label}</option>`;
+            }).join('');
+        }
+
+        function resolveAudioDeliveryMode(songInfo) {
+            const delivery = songInfo?.audio_delivery;
+            if (!delivery || delivery.error) return null;
+            if (delivery.locked_by_policy) {
+                const forced = delivery.default_mode || delivery.mode;
+                return forced === 'stream' || forced === 'oneshot' ? forced : null;
+            }
+            if (!audioDeliveryAllowsUserModePick(delivery)) {
+                if (delivery.mode === 'stream' || delivery.mode === 'oneshot') return delivery.mode;
+                return null;
+            }
+            const modes = delivery.available_modes || ['stream', 'oneshot'];
+            const stored = sessionStorage.getItem(FAMYLIAM_AUDIO_MODE_KEY);
+            if (stored === 'stream' || stored === 'oneshot') {
+                if (modes.includes(stored)) return stored;
+            }
+            const fallback = delivery.default_mode || 'stream';
+            return modes.includes(fallback) ? fallback : modes[0];
+        }
         const AMLL_BACKGROUND_BRIGHTNESS_KEY = 'backgroundBrightness';
         const DEFAULT_AMLL_BACKGROUND_BRIGHTNESS = 1;
         const MIN_AMLL_BACKGROUND_BRIGHTNESS = 0.4;
@@ -941,21 +1031,86 @@
             }, { once: true });
 
             const audioPlayer = document.getElementById('audio-player');
+            audioPlayer.addEventListener('playing', () => scheduleBeatEnhancement(), { once: true });
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
             const backgroundBrightnessOverlay = document.getElementById('background-brightness-overlay');
             const nextLinePreviewHost = document.getElementById('next-line-preview-host');
             const nextLinePreviewHostTop = document.getElementById('next-line-preview-host-top');
             const fontSlider = document.getElementById('fontSlider');
+            const audioDeliveryModeWrap = document.getElementById('audio-delivery-mode-wrap');
+            const audioDeliveryModeSelect = document.getElementById('audio-delivery-mode');
             let lyricsData = [];
             let forceCenterAlign = false; // 新增
             let translationData = [];
             let backgroundCleanup = null;
+            let lastLoadedBackgroundUrl = null;
+            const backgroundMediaCache = new Map();
+            const backgroundMediaInflight = new Map();
+            let beatEnhancementScheduled = false;
             let backgroundVideo = null;
             const VIDEO_SYNC_DRIFT = 0.25;
             let beatCurvePollTimer = null;
             let beatCurveRequestInFlight = false;
             let currentSongInfo = null;
+            let songAudioBaseUrl = '';
+
+            function showAudioDeliveryError(message) {
+                lyricsContainer.textContent = message || '需要设备认证后才能播放音频。';
+            }
+
+            function setupAudioDeliveryModeSelector(songInfo) {
+                if (!audioDeliveryModeWrap || !audioDeliveryModeSelect) return;
+                const delivery = songInfo?.audio_delivery;
+                if (!audioDeliveryAllowsUserModePick(delivery)) {
+                    audioDeliveryModeWrap.hidden = true;
+                    audioDeliveryModeSelect.disabled = Boolean(delivery?.locked_by_policy);
+                    return;
+                }
+                syncAudioDeliveryModeOptions(audioDeliveryModeSelect, delivery);
+                audioDeliveryModeSelect.disabled = false;
+                const selected = resolveAudioDeliveryMode(songInfo) || delivery.default_mode || 'stream';
+                audioDeliveryModeSelect.value = selected;
+                audioDeliveryModeWrap.hidden = false;
+                if (audioDeliveryModeSelect.dataset.bound === '1') return;
+                audioDeliveryModeSelect.dataset.bound = '1';
+                audioDeliveryModeSelect.addEventListener('change', () => {
+                    const mode = audioDeliveryModeSelect.value;
+                    sessionStorage.setItem(FAMYLIAM_AUDIO_MODE_KEY, mode);
+                    if (!songAudioBaseUrl) return;
+                    const wasPlaying = !audioPlayer.paused;
+                    const resumeTime = audioPlayer.currentTime || 0;
+                    audioPlayer.src = applyAudioDeliveryMode(songAudioBaseUrl, mode);
+                    audioPlayer.load();
+                    if (resumeTime > 0) {
+                        audioPlayer.currentTime = resumeTime;
+                    }
+                    if (wasPlaying) {
+                        audioPlayer.play().catch(() => {});
+                    }
+                });
+            }
+
+            function applySongAudioFromInfo(songInfo) {
+                const delivery = songInfo?.audio_delivery;
+                if (delivery?.error === 'device_required') {
+                    showAudioDeliveryError(delivery.message);
+                    audioPlayer.removeAttribute('src');
+                    if (audioDeliveryModeWrap) audioDeliveryModeWrap.hidden = true;
+                    return false;
+                }
+                const baseUrl = stripAudioDeliveryMode(songInfo?.song || '');
+                if (!baseUrl) {
+                    showAudioDeliveryError('无法加载音频。');
+                    audioPlayer.removeAttribute('src');
+                    return false;
+                }
+                songAudioBaseUrl = baseUrl;
+                const mode = resolveAudioDeliveryMode(songInfo);
+                audioPlayer.src = mode ? applyAudioDeliveryMode(baseUrl, mode) : baseUrl;
+                setupAudioDeliveryModeSelector(songInfo);
+                return true;
+            }
 
             const AMLL_MODULE_URL = "{{ (amll_entry.js if amll_entry else '') or url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
@@ -1279,6 +1434,24 @@
             }
 
             window.ensureAmllBeatSignalReady = ensureAmllBeatSignalReady;
+
+            function scheduleNonCriticalInit(fn) {
+                if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => fn(), { timeout: 2000 });
+                } else {
+                    setTimeout(fn, 0);
+                }
+            }
+
+            function scheduleBeatEnhancement() {
+                if (beatEnhancementScheduled) {
+                    return;
+                }
+                beatEnhancementScheduled = true;
+                void ensureAmllBeatSignalReady().then(() => {
+                    ensureBeatCurveAuto();
+                });
+            }
 
             function startAmllBeatGuard() {
                 return;
@@ -2243,6 +2416,23 @@
                 return normalized.startsWith('/') ? normalized : '/' + normalized;
             }
 
+            function dedupeResolvedMediaUrls(candidates) {
+                const seen = new Set();
+                const out = [];
+                for (const raw of candidates) {
+                    if (!raw || raw === '!') {
+                        continue;
+                    }
+                    const url = resolveMediaUrl(raw);
+                    if (!url || seen.has(url)) {
+                        continue;
+                    }
+                    seen.add(url);
+                    out.push(url);
+                }
+                return out;
+            }
+
             async function prepareAmllBackground() {
                 if (amllBackgroundState.promise) {
                     return amllBackgroundState.promise;
@@ -2313,51 +2503,78 @@
                     return false;
                 }
 
-                const background = await prepareAmllBackground();
-                if (!background || !amllBackgroundState.element) {
+                if (backgroundMediaCache.get(url) === 'ok' && lastLoadedBackgroundUrl === url) {
+                    if (!audioPlayer.paused) {
+                        scheduleBeatEnhancement();
+                    }
+                    return true;
+                }
+                if (backgroundMediaCache.get(url) === 'fail') {
                     return false;
                 }
+                if (backgroundMediaInflight.has(url)) {
+                    return backgroundMediaInflight.get(url);
+                }
 
-                removeExistingBackground();
+                const loadPromise = (async () => {
+                    const background = await prepareAmllBackground();
+                    if (!background || !amllBackgroundState.element) {
+                        backgroundMediaCache.set(url, 'fail');
+                        return false;
+                    }
 
-                const container = document.createElement('div');
-                container.className = 'background-container';
-                container.appendChild(amllBackgroundState.element);
-                document.body.appendChild(container);
+                    removeExistingBackground();
 
-                backgroundCleanup = () => {
+                    const container = document.createElement('div');
+                    container.className = 'background-container';
+                    container.appendChild(amllBackgroundState.element);
+                    document.body.appendChild(container);
+
+                    backgroundCleanup = () => {
+                        try {
+                            background.pause();
+                        } catch (error) { /* 忽略 */ }
+                        if (amllBackgroundState.element.parentElement) {
+                            amllBackgroundState.element.parentElement.removeChild(amllBackgroundState.element);
+                        }
+                        if (amllBackgroundState.host) {
+                            amllBackgroundState.host.appendChild(amllBackgroundState.element);
+                        }
+                        container.remove();
+                    };
+
                     try {
-                        background.pause();
-                    } catch (error) { /* 忽略 */ }
-                    if (amllBackgroundState.element.parentElement) {
-                        amllBackgroundState.element.parentElement.removeChild(amllBackgroundState.element);
+                        await background.setAlbum(url);
+                        background.setStaticMode(false);
+                        background.setFlowSpeed(4);
+                        const dpr = window.devicePixelRatio || 1;
+                        background.setRenderScale(dpr);
+                        background.resume();
+                        amllColorState.background = background;
+                        backgroundMediaCache.set(url, 'ok');
+                        updateWindowBeatStatus();
+                        applyAmllBeatTargetState(amllBeatEnabled, 'background-init');
+                        scheduleNonCriticalInit(() => triggerInitialBeatToggleSequence());
+                        if (!audioPlayer.paused) {
+                            scheduleBeatEnhancement();
+                        }
+                        return true;
+                    } catch (error) {
+                        console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
+                        backgroundMediaCache.set(url, 'fail');
+                        if (backgroundCleanup) {
+                            backgroundCleanup();
+                            backgroundCleanup = null;
+                        }
+                        return false;
                     }
-                    if (amllBackgroundState.host) {
-                        amllBackgroundState.host.appendChild(amllBackgroundState.element);
-                    }
-                    container.remove();
-                };
+                })();
 
+                backgroundMediaInflight.set(url, loadPromise);
                 try {
-                    await background.setAlbum(url);
-                    background.setStaticMode(false);
-                    background.setFlowSpeed(4);
-                    const dpr = window.devicePixelRatio || 1;
-                    background.setRenderScale(dpr);
-                    background.resume();
-                    amllColorState.background = background;
-                    await ensureAmllBeatSignalReady();
-                    updateWindowBeatStatus();
-                    applyAmllBeatTargetState(amllBeatEnabled, 'background-init');
-                    triggerInitialBeatToggleSequence();
-                    return true;
-                } catch (error) {
-                    console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
-                    if (backgroundCleanup) {
-                        backgroundCleanup();
-                        backgroundCleanup = null;
-                    }
-                    return false;
+                    return await loadPromise;
+                } finally {
+                    backgroundMediaInflight.delete(url);
                 }
             }
 
@@ -2392,14 +2609,25 @@
                     return false;
                 }
 
-                removeExistingBackground();
+                if (backgroundMediaCache.get(url) === 'ok') {
+                    return true;
+                }
+                if (backgroundMediaCache.get(url) === 'fail') {
+                    return false;
+                }
+                if (backgroundMediaInflight.has(url)) {
+                    return backgroundMediaInflight.get(url);
+                }
 
-                return new Promise((resolve) => {
+                const loadPromise = new Promise((resolve) => {
+                    removeExistingBackground();
+
                     const container = document.createElement('div');
                     container.className = 'background-container';
                     document.body.appendChild(container);
 
                     const handleFailure = () => {
+                        backgroundMediaCache.set(url, 'fail');
                         container.remove();
                         backgroundCleanup = null;
                         resolve(false);
@@ -2426,6 +2654,8 @@
                                 video.load();
                                 container.remove();
                             };
+                            backgroundMediaCache.set(url, 'ok');
+                            lastLoadedBackgroundUrl = url;
                             resolve(true);
                             video.play().catch(() => {});
                         }, { once: true });
@@ -2439,12 +2669,21 @@
                             backgroundCleanup = () => {
                                 container.remove();
                             };
+                            backgroundMediaCache.set(url, 'ok');
+                            lastLoadedBackgroundUrl = url;
                             resolve(true);
                         }, { once: true });
                         img.addEventListener('error', handleFailure, { once: true });
                         container.appendChild(img);
                     }
                 });
+
+                backgroundMediaInflight.set(url, loadPromise);
+                try {
+                    return await loadPromise;
+                } finally {
+                    backgroundMediaInflight.delete(url);
+                }
             }
 
             // 动画时长控制（前端硬编码，同时由后端解析保持一致）
@@ -3775,128 +4014,133 @@
             });
         }
 
+            async function loadLyricsEnhancement(songInfo) {
+                const lyricsParams = new URLSearchParams();
+                if (queryFile) lyricsParams.append('file', queryFile);
+                if (queryLys) lyricsParams.append('lys', queryLys);
+                if (queryLrc) lyricsParams.append('lrc', queryLrc);
+                const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
+
+                const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
+                const lyricsJson = await lyricsRes.json();
+                lyricsData = lyricsJson.lyrics || [];
+                const charSplit = parseCharSplitOptions(urlParams);
+                if (charSplit.mode === 'on') {
+                    lyricsData = splitLongWordSyllables(
+                        lyricsData,
+                        charSplit.thresholdMs,
+                        (line) => !isLineUsingSpecialFont(line)
+                    );
+                    lyricsData = splitMultiWordSyllables(lyricsData, charSplit.thresholdMs);
+                }
+                lyricsData = mergeSpecialFontWords(lyricsData);
+
+                forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
+
+                translationData = Array.isArray(lyricsJson.translation) ? lyricsJson.translation.map(t => {
+                    const m = /^([0-9]{2}):([0-9]{2})\.([0-9]{2,3})$/.exec(t.time);
+                    if (m) {
+                        let ms = m[3].length === 2 ? parseInt(m[3], 10) * 10 : parseInt(m[3], 10);
+                        t.timeMs = parseInt(m[1], 10) * 60 * 1000 + parseInt(m[2], 10) * 1000 + ms;
+                    } else {
+                        t.timeMs = 0;
+                    }
+                    return t;
+                }) : [];
+
+                if (translationData.length === 0 && songInfo.meta && songInfo.meta.lyrics) {
+                    const parts = songInfo.meta.lyrics.split('::');
+                    if (parts.length >= 3 && parts[2] && parts[2] !== '!') {
+                        let transPath = parts[2];
+                        if (transPath.startsWith('http://127.0.0.1:5000/songs/')) {
+                            transPath = transPath.replace('http://127.0.0.1:5000/songs/', '');
+                        }
+                        if (transPath.endsWith('.lrc')) {
+                            try {
+                                const resp = await fetch(transPath.startsWith('/') ? transPath : '/' + transPath);
+                                if (resp.ok) {
+                                    const lrcText = await resp.text();
+                                    translationData = parseLrcTranslation(lrcText);
+                                }
+                            } catch (e) { /* 忽略 */ }
+                        }
+                    }
+                }
+
+                if (!amllColorState.background) {
+                    scheduleNonCriticalInit(() => triggerInitialBeatToggleSequence());
+                }
+
+                initLyrics();
+            }
+
+            async function loadBackgroundEnhancement(songInfo) {
+                const referenceCover = queryCover || songInfo.amll_reference_cover_url || null;
+                amllColorState.beatCurve = null;
+                clearBeatCurvePolling();
+
+                removeExistingBackground();
+
+                let backgroundApplied = false;
+                if (songInfo.meta && songInfo.meta['Background-image']) {
+                    backgroundApplied = await loadBackground(songInfo.meta['Background-image']);
+                }
+
+                if (!backgroundApplied) {
+                    const coverCandidates = [
+                        referenceCover,
+                        songInfo.meta?.albumImgSrc,
+                        songInfo.meta?.cover,
+                        songInfo.meta?.coverUrl,
+                        songInfo.cover,
+                        songInfo.coverUrl
+                    ];
+                    const dedupedUrls = dedupeResolvedMediaUrls(coverCandidates);
+                    if (dedupedUrls.length > 0) {
+                        const firstUrl = dedupedUrls[0];
+                        const coverSource = coverCandidates.find(
+                            (candidate) => candidate && candidate !== '!' && resolveMediaUrl(candidate) === firstUrl
+                        );
+                        if (coverSource) {
+                            backgroundApplied = await initAmllBackgroundFromAlbum(coverSource);
+                        }
+                    }
+                }
+
+                return backgroundApplied;
+            }
+
             async function loadData() {
                 try {
-                    // 构建完整的查询参数
                     const params = new URLSearchParams();
                     if (queryFile) params.append('file', queryFile);
                     const fileParam = params.toString() ? `?${params.toString()}` : '';
-                    
+
                     const songInfoRes = await fetch(`/song-info${fileParam}`);
                     const songInfo = await songInfoRes.json();
                     currentSongInfo = songInfo;
-                    audioPlayer.src = songInfo.song;
-                    await ensureAmllBeatSignalReady();
 
                     if (!songInfo.meta || typeof songInfo.meta !== 'object') {
                         songInfo.meta = {};
                     }
 
                     const directBackground = queryBackground || songInfo.amll_direct_background_url || null;
-                    const referenceCover = queryCover || songInfo.amll_reference_cover_url || null;
-
                     if (directBackground) {
                         songInfo.meta['Background-image'] = directBackground;
                     }
 
+                    const audioReady = applySongAudioFromInfo(songInfo);
                     applyCoverPalette(songInfo.cover_palette);
-                    amllColorState.beatCurve = null;
-                    clearBeatCurvePolling();
-                    ensureBeatCurveAuto();
-                    await ensureAmllBeatSignalReady();
 
-                    removeExistingBackground();
 
-                    // 检查并加载背景图片/视频
-                    let backgroundApplied = false;
-                    if (songInfo.meta && songInfo.meta["Background-image"]) {
-                        backgroundApplied = await loadBackground(songInfo.meta["Background-image"]);
-                    }
-
-                    if (!backgroundApplied) {
-                        const coverCandidates = [
-                            referenceCover,
-                            songInfo.meta?.albumImgSrc,
-                            songInfo.meta?.cover,
-                            songInfo.meta?.coverUrl,
-                            songInfo.cover,
-                            songInfo.coverUrl
-                        ];
-                        const coverSource = coverCandidates.find((candidate) => candidate && candidate !== '!');
-                        if (coverSource) {
-                            backgroundApplied = await initAmllBackgroundFromAlbum(coverSource);
-                        }
-                    }
-                    
-                    // 进入页面自动播放
-                    setTimeout(() => {
+                    if (audioReady) {
                         audioPlayer.play().catch(() => {});
-                    }, 0);
-
-                    // 为 /lyrics 构建完整的查询参数（包含 lys/lrc 覆盖参数）
-                    const lyricsParams = new URLSearchParams();
-                    if (queryFile) lyricsParams.append('file', queryFile);
-                    if (queryLys) lyricsParams.append('lys', queryLys);
-                    if (queryLrc) lyricsParams.append('lrc', queryLrc);
-                    const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
-                    
-                    const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
-                    const lyricsJson = await lyricsRes.json();
-                    lyricsData = lyricsJson.lyrics || [];
-                    const charSplit = parseCharSplitOptions(urlParams);
-                    if (charSplit.mode === 'on') {
-                        // 长词拆分仅应用于非自定义字体行或音节，避免特殊字体被拆成单字符
-                        lyricsData = splitLongWordSyllables(
-                            lyricsData,
-                            charSplit.thresholdMs,
-                            (line) => !isLineUsingSpecialFont(line)
-                        );
-                        lyricsData = splitMultiWordSyllables(lyricsData, charSplit.thresholdMs);
-                    }
-                    // 对特殊字体行：按单词合并音节（空格/标点分词），避免跨词遮挡
-                    lyricsData = mergeSpecialFontWords(lyricsData);
-
-                    // 判断是否所有歌词行都不是 right（没有对唱标记）
-                    forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
-
-                    // 优先使用后端返回的 translation 字段
-                    translationData = Array.isArray(lyricsJson.translation) ? lyricsJson.translation.map(t => {
-                        // 转换 time 为毫秒
-                        const m = /^([0-9]{2}):([0-9]{2})\.([0-9]{2,3})$/.exec(t.time);
-                        if (m) {
-                            let ms = m[3].length === 2 ? parseInt(m[3], 10) * 10 : parseInt(m[3], 10);
-                            t.timeMs = parseInt(m[1], 10) * 60 * 1000 + parseInt(m[2], 10) * 1000 + ms;
-                        } else {
-                            t.timeMs = 0;
-                        }
-                        return t;
-                    }) : [];
-
-                    // 如果没有 translation 字段，回退到原有 LRC 解析
-                    if (translationData.length === 0 && songInfo.meta && songInfo.meta.lyrics) {
-                        const parts = songInfo.meta.lyrics.split('::');
-                        if (parts.length >= 3 && parts[2] && parts[2] !== '!') {
-                            let transPath = parts[2];
-                            if (transPath.startsWith('http://127.0.0.1:5000/songs/')) {
-                                transPath = transPath.replace('http://127.0.0.1:5000/songs/', '');
-                            }
-                            if (transPath.endsWith('.lrc')) {
-                                try {
-                                    const resp = await fetch(transPath.startsWith('/') ? transPath : '/' + transPath);
-                                    if (resp.ok) {
-                                        const lrcText = await resp.text();
-                                        translationData = parseLrcTranslation(lrcText);
-                                    }
-                                } catch (e) { /* 忽略 */ }
-                            }
-                        }
                     }
 
-                    if (!amllColorState.background) {
-                        triggerInitialBeatToggleSequence();
-                    }
-
-                    initLyrics();
+                    await Promise.all([
+                        loadLyricsEnhancement(songInfo),
+                        loadBackgroundEnhancement(songInfo).catch(() => false),
+                    ]);
                 } catch (error) {
                     lyricsContainer.textContent = '无法加载歌词。';
                     console.error('Error loading data:', error);
@@ -5413,8 +5657,18 @@
                 previewHostObserver.observe(lyricsContainer);
             }
 
-            await syncAnimationConfig();
+            function safeAnimate(element, keyframes, options) {
+                if (element.animate) {
+                    return element.animate(keyframes, options);
+                }
+                Object.assign(element.style, keyframes[keyframes.length - 1]);
+                return { onfinish: () => {} };
+            }
+
             await loadData();
+            scheduleNonCriticalInit(() => {
+                syncAnimationConfig();
+            });
             scheduleAutoScale();
             
             // 页面加载后自动启动动画循环（如果音频正在播放）
@@ -5441,17 +5695,6 @@
                     userLyricScale = parsedScale;
                     fontSlider.value = savedScale;
                     setLyricScale(computeAutoScaleTarget());
-                }
-            }
-
-            // Safari animate 兼容降级
-            function safeAnimate(element, keyframes, options) {
-                if (element.animate) {
-                    return element.animate(keyframes, options);
-                } else {
-                    // Safari 旧版降级：直接设置最终样式
-                    Object.assign(element.style, keyframes[keyframes.length - 1]);
-                    return { onfinish: () => {} };
                 }
             }
 

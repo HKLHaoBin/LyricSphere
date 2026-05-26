@@ -50,6 +50,7 @@
                         <button onclick="showTrustedDevices()" data-i18n="btn.viewDevices" data-write-lock>📋 查看认证设备</button>
                         <button onclick="showSetPasswordModal()" data-i18n="btn.setPassword" data-write-lock>🔐 系统密码</button>
                         <button onclick="showCredentialManagerModal()" data-i18n="btn.credentialManage" data-write-lock>🔑 共享凭据管理</button>
+                        <button id="mediaConfigMenuBtn" onclick="showMediaConfigModal()" data-write-lock style="display:none;">🎵 全局媒体设置</button>
                         <button onclick="showAiUsageMonitorModal()" data-write-lock>📈 AI 使用监控</button>
                         <button onclick="showRevokeDeviceModal()" data-i18n="btn.revokeDevice" data-write-lock>🚫 吊销认证设备</button>
                         <button onclick="revokeAllDevices()" data-i18n="btn.clearDevices" data-write-lock>🗑️ 清空认证设备</button>
@@ -989,6 +990,18 @@
                             <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">达到上限后不能继续使用，0 表示不限。</div>
                         </div>
                     </div>
+                    <div>
+                        <label for="credentialManagerMediaPlaybackPolicy">播放模式策略</label>
+                        <select id="credentialManagerMediaPlaybackPolicy" class="file-path-input">
+                            <option value="inherit">继承全局设置</option>
+                            <option value="stream_only">仅流式传输</option>
+                            <option value="oneshot_only">仅单次传输</option>
+                            <option value="user_select">用户自选（流式/单次）</option>
+                        </select>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+                            优先级高于全局媒体配置；「用户自选」对该凭据登录的设备始终提供流式/单次切换。
+                        </div>
+                    </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; font-size: 12px;">
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <label><input type="checkbox" id="credentialPermAiUse"> AI 使用</label>
@@ -1027,6 +1040,37 @@
                         <button onclick="clearCredentialForm()">清空表单</button>
                         <button onclick="closeCredentialManagerModal()">关闭</button>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全局媒体设置（系统管理员 / 本机） -->
+    <div id="mediaConfigModal" class="modal">
+        <div class="modal-content" style="max-width: 640px;">
+            <h2>🎵 全局媒体设置</h2>
+            <div id="mediaConfigStatus" class="admin-modal-status">正在加载...</div>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+                <div>
+                    <label for="mediaConfigAudioDeliveryMode">默认音频传输模式</label>
+                    <select id="mediaConfigAudioDeliveryMode" class="file-path-input">
+                        <option value="stream">流式（支持 Range）</option>
+                        <option value="oneshot">单次（整文件）</option>
+                        <option value="both">用户可选（流式/单次）</option>
+                    </select>
+                </div>
+                <label style="display:flex; gap:8px; align-items:flex-start;">
+                    <input type="checkbox" id="mediaConfigEnforceGateway">
+                    <span>强制经 /media/audio 网关播放（禁止直接访问 /songs/* 音频）</span>
+                </label>
+                <label style="display:flex; gap:8px; align-items:flex-start;">
+                    <input type="checkbox" id="mediaConfigStrictDeviceBinding">
+                    <span>严格设备绑定（非本机访问需 FEW_DEVICE_ID Cookie）</span>
+                </label>
+                <div id="mediaConfigPolicyNotes" style="font-size:12px; color:var(--text-secondary); line-height:1.6; white-space:pre-wrap;"></div>
+                <div class="editor-buttons">
+                    <button type="button" onclick="saveMediaConfigFromForm()">保存设置</button>
+                    <button type="button" onclick="closeMediaConfigModal()">关闭</button>
                 </div>
             </div>
         </div>

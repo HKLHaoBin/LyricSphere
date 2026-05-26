@@ -2,8 +2,10 @@
 import base64
 import struct
 import hashlib
+import hmac
 import json
 import copy
+from collections import deque
 import functools
 import bcrypt
 import logging
@@ -45,7 +47,7 @@ import socket
 import asyncio
 import websockets
 import queue
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, urlencode
 import requests
 from PIL import Image
 
@@ -1974,8 +1976,29 @@ def _match_cors_origin(origin: Optional[str]) -> Optional[str]:
     return None
 
 
+def _maybe_block_static_audio_gateway(starlette_request: StarletteRequest) -> Optional[StarletteResponse]:
+    """Block direct /songs/* audio when enforce_media_gateway_for_audio is enabled."""
+    try:
+        media_cfg = get_media_config()
+    except Exception:
+        return None
+    if not media_cfg.get('enforce_media_gateway_for_audio'):
+        return None
+    path = starlette_request.url.path or ''
+    if not path.startswith('/songs/'):
+        return None
+    suffix = Path(path).suffix.lower()
+    if suffix not in MEDIA_AUDIO_EXTENSIONS:
+        return None
+    return JSONResponse({'error': 'Direct audio access disabled'}, status_code=403)
+
+
 @app.middleware("http")
 async def _request_context_middleware(request_in: StarletteRequest, call_next):
+    blocked = _maybe_block_static_audio_gateway(request_in)
+    if blocked is not None:
+        return blocked
+
     body = await request_in.body()
     form: Optional[FormData] = None
     content_type = request_in.headers.get("content-type", "")
@@ -2620,6 +2643,21 @@ def default_device_permissions(write_access: bool = True) -> Dict[str, bool]:
     return permissions
 
 
+CREDENTIAL_MEDIA_PLAYBACK_MODE_POLICIES = frozenset({
+    'inherit',
+    'stream_only',
+    'oneshot_only',
+    'user_select',
+})
+
+
+def normalize_credential_media_playback_mode_policy(value: Any) -> str:
+    policy = str(value or 'inherit').strip().lower()
+    if policy not in CREDENTIAL_MEDIA_PLAYBACK_MODE_POLICIES:
+        return 'inherit'
+    return policy
+
+
 def normalize_security_credential(raw_credential: Any, fallback_id: Optional[str] = None) -> Dict[str, Any]:
     credential = raw_credential if isinstance(raw_credential, dict) else {}
     credential_id = str(credential.get('credential_id') or fallback_id or f'cred_{uuid.uuid4().hex[:12]}').strip()
@@ -2632,6 +2670,9 @@ def normalize_security_credential(raw_credential: Any, fallback_id: Optional[str
     remark = str(credential.get('remark') or '').strip()
     expires_at = str(credential.get('expires_at') or '').strip()
     revoked = parse_bool(credential.get('revoked'), False)
+    media_playback_mode_policy = normalize_credential_media_playback_mode_policy(
+        credential.get('media_playback_mode_policy')
+    )
     return {
         'credential_id': credential_id,
         'password_hash': password_hash,
@@ -2641,6 +2682,7 @@ def normalize_security_credential(raw_credential: Any, fallback_id: Optional[str
         'used_count': used_count,
         'revoked': revoked,
         'permissions': permissions,
+        'media_playback_mode_policy': media_playback_mode_policy,
         'created_at': created_at,
         'updated_at': updated_at,
     }
@@ -8026,7 +8068,7 @@ def songs_library_snapshot():
         'total': len(summaries),
         'sortType': sort_type,
         'sortAsc': sort_asc,
-        'songs': summaries,
+        'songs': _rewrite_client_song_summaries(summaries),
     }
     return _no_store(jsonify(payload))
 
@@ -8101,7 +8143,7 @@ def list_song_summaries():
         if not summary:
             return _single_error('Failed to read or parse song JSON', 422)
 
-        payload = _paging_payload([summary], 1, 50, 1, rev)
+        payload = _paging_payload([_rewrite_client_song_summary(summary)], 1, 50, 1, rev)
         response = jsonify(payload)
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
@@ -8132,7 +8174,7 @@ def list_song_summaries():
     payload = {
         'status': 'success',
         'revision': rev,
-        'songs': summaries,
+        'songs': _rewrite_client_song_summaries(summaries),
         'page': page,
         'pageSize': page_size_eff,
         'total': total,
@@ -8202,7 +8244,7 @@ def batch_song_summaries():
             songs_out.append(None)
             errors_out.append(f'{label} failed to read or parse JSON')
             continue
-        songs_out.append(built)
+        songs_out.append(_rewrite_client_song_summary(built))
         errors_out.append(None)
 
     body: Dict[str, Any] = {
@@ -8315,7 +8357,7 @@ def list_songs_by_artist():
         'hasMore': has_more,
         'nextPage': next_page,
         'loaded': len(slice_songs),
-        'songs': slice_songs,
+        'songs': _rewrite_client_song_summaries(slice_songs),
     }
     return _no_store(jsonify(payload))
 
@@ -8384,7 +8426,7 @@ def search_song_library():
         'hasMore': has_more,
         'nextPage': next_page,
         'loaded': len(slice_songs),
-        'songs': slice_songs,
+        'songs': _rewrite_client_song_summaries(slice_songs),
     }
     return _no_store(jsonify(payload))
 
@@ -13708,6 +13750,9 @@ def _submit_beat_curve_job(
 
 @app.route('/song-info')
 def song_info():
+    if not is_request_allowed():
+        return jsonify({'error': 'Forbidden'}), 403
+
     requested_file = (request.args.get('file') or '').strip()
     
     # 问题 1 & 2 修复：显式指定 file 时严格验证，不回退
@@ -13807,6 +13852,24 @@ def song_info():
         palette_payload = _build_cover_palette_payload(data, meta)
         if palette_payload:
             data['cover_palette'] = palette_payload
+
+        if isinstance(data, dict) and data.get('song'):
+            original_song = str(data['song'])
+            playback_blocked = _song_info_device_playback_blocked()
+            if not playback_blocked:
+                gateway_url = build_media_audio_url(original_song)
+                if gateway_url is not None:
+                    data['song'] = gateway_url
+                elif _media_token_requires_device():
+                    playback_blocked = True
+                    app.logger.warning(
+                        'media_gateway: song-info blocked static song URL (device cookie required)',
+                    )
+            if playback_blocked:
+                data['song'] = ''
+                data['audio_delivery'] = _audio_delivery_device_required()
+            else:
+                data['audio_delivery'] = build_audio_delivery_info()
 
         return jsonify(data)
     except FileNotFoundError:
@@ -14315,7 +14378,39 @@ def is_loopback_request() -> bool:
 
 PORT_STATUS_FILE = BASE_PATH / 'port_status.json'
 SECURITY_CONFIG_FILE = BASE_PATH / 'security_config.json'
+MEDIA_CONFIG_FILE = BASE_PATH / 'media_config.json'
+SERVER_SECRET_FILE = BASE_PATH / 'server_secret.key'
 TRUSTED_DEVICES_FILE = BASE_PATH / 'trusted_devices.json'
+
+MEDIA_AUDIO_EXTENSIONS = frozenset({
+    '.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.opus', '.webm', '.mp4',
+})
+
+DEFAULT_MEDIA_CONFIG = {
+    'audio_delivery_mode': 'stream',
+    'enforce_media_gateway_for_audio': False,
+    'strict_device_binding': False,
+    'media_token_ttl_seconds': 7200,
+    'initial_chunk_bytes': 524288,
+}
+
+_MEDIA_AUDIO_MIMETYPES = {
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4',
+    '.aac': 'audio/aac',
+    '.opus': 'audio/opus',
+    '.webm': 'audio/webm',
+    '.mp4': 'audio/mp4',
+}
+
+_MEDIA_AUDIT_LOG: deque = deque(maxlen=500)
+_MEDIA_RATE_LIMIT: Dict[Tuple[str, str], List[float]] = {}
+_MEDIA_RATE_LIMIT_LOCK = threading.Lock()
+_MEDIA_RATE_LIMIT_WINDOW_SEC = 60
+_MEDIA_RATE_LIMIT_MAX_PER_WINDOW = 120
 
 # 安全配置默认值
 DEFAULT_SECURITY_CONFIG = {
@@ -14347,6 +14442,393 @@ def save_security_config(config):
     normalized_config, _ = normalize_security_config(config)
     with open(SECURITY_CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(normalized_config, f, ensure_ascii=False, indent=2)
+
+
+def normalize_media_config(config: Any) -> Tuple[Dict[str, Any], bool]:
+    raw = config if isinstance(config, dict) else {}
+    normalized = dict(DEFAULT_MEDIA_CONFIG)
+    normalized.update(raw)
+    migrated = False
+
+    mode = str(normalized.get('audio_delivery_mode') or 'stream').strip().lower()
+    if mode not in ('oneshot', 'stream', 'both'):
+        mode = DEFAULT_MEDIA_CONFIG['audio_delivery_mode']
+        migrated = True
+    normalized['audio_delivery_mode'] = mode
+
+    normalized['enforce_media_gateway_for_audio'] = parse_bool(
+        normalized.get('enforce_media_gateway_for_audio'),
+        DEFAULT_MEDIA_CONFIG['enforce_media_gateway_for_audio'],
+    )
+
+    normalized['strict_device_binding'] = parse_bool(
+        normalized.get('strict_device_binding'),
+        DEFAULT_MEDIA_CONFIG['strict_device_binding'],
+    )
+
+    ttl = coerce_int(normalized.get('media_token_ttl_seconds'), DEFAULT_MEDIA_CONFIG['media_token_ttl_seconds'])
+    if ttl is None or ttl < 60:
+        ttl = DEFAULT_MEDIA_CONFIG['media_token_ttl_seconds']
+        migrated = True
+    normalized['media_token_ttl_seconds'] = ttl
+
+    chunk = coerce_int(normalized.get('initial_chunk_bytes'), DEFAULT_MEDIA_CONFIG['initial_chunk_bytes'])
+    if chunk is None or chunk < 4096:
+        chunk = DEFAULT_MEDIA_CONFIG['initial_chunk_bytes']
+        migrated = True
+    normalized['initial_chunk_bytes'] = chunk
+
+    if normalized != raw:
+        migrated = True
+    return normalized, migrated
+
+
+def get_media_config() -> Dict[str, Any]:
+    migrated = False
+    if MEDIA_CONFIG_FILE.exists():
+        try:
+            with open(MEDIA_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+        except Exception:
+            config = {}
+    else:
+        config = {}
+
+    normalized_config, migrated = normalize_media_config(config)
+    if migrated:
+        save_media_config(normalized_config)
+    return normalized_config
+
+
+def save_media_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_config, _ = normalize_media_config(config)
+    with open(MEDIA_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(normalized_config, f, ensure_ascii=False, indent=2)
+    return normalized_config
+
+
+def get_media_config_policy_notes() -> Dict[str, str]:
+    """Human-readable policy hints for GET /media/config (additive JSON keys only)."""
+    return {
+        'enforce_media_gateway_for_audio': (
+            'Default false: /songs/*.audio stays directly reachable until enabled; '
+            'when true, clients must use the signed /media/audio gateway and cannot fetch audio from /songs/* directly.'
+        ),
+        'audio_delivery_mode': (
+            'stream: FileResponse with native Range support; '
+            'oneshot: entire file in one response; '
+            'both: clients append ?mode=stream or ?mode=oneshot on /media/audio URLs (default stream when omitted); '
+            'GET /song-info includes audio_delivery metadata when mode is both. '
+            'Lyrics-style frontends read audio_delivery and let the user pick stream vs oneshot (?mode= query).'
+        ),
+        'strict_device_binding': (
+            'Default false. When true and the request is not from loopback: signed URLs require FEW_DEVICE_ID '
+            '(build_media_audio_url skips signing without the cookie); /media/audio returns 403 device_required '
+            'without the cookie and rejects tokens not bound to the matching device. '
+            'With security_enabled and enforce_media_gateway_for_audio, GET /song-info omits a playable song URL '
+            'and returns audio_delivery.error=device_required when the cookie is missing.'
+        ),
+        'require_device_for_media_token': (
+            'Alias concept: same as strict_device_binding for gateway tokens—no anonymous empty-device tokens '
+            'on non-loopback clients when strict binding is enabled.'
+        ),
+        'initial_chunk_bytes': (
+            'Reserved tuning knob; stream mode uses FileResponse and does not truncate to this size.'
+        ),
+        'credential_media_playback_mode_policy': (
+            'Per shared-credential override for audio delivery. Priority: credential policy > global '
+            'audio_delivery_mode > ?mode= on /media/audio. inherit uses global config; stream_only and '
+            'oneshot_only force a single mode and ignore client ?mode=; user_select always exposes stream '
+            'and oneshot (like global both). System/local admin sessions without a credential use inherit '
+            '(full access to global settings).'
+        ),
+    }
+
+
+def _get_media_signing_secret() -> str:
+    if SERVER_SECRET_FILE.exists():
+        try:
+            secret = SERVER_SECRET_FILE.read_text(encoding='utf-8').strip()
+            if secret:
+                return secret
+        except Exception:
+            pass
+    return str(app.secret_key)
+
+
+def _media_token_sign_payload(relative_path: str, exp: int, device_id: str) -> str:
+    return f"{relative_path}|{int(exp)}|{device_id or ''}"
+
+
+def sign_media_audio_token(relative_path: str, exp: int, device_id: str = '') -> str:
+    secret = _get_media_signing_secret()
+    payload = _media_token_sign_payload(relative_path, exp, device_id)
+    digest = hmac.new(secret.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode('ascii').rstrip('=')
+
+
+def verify_media_audio_token(relative_path: str, exp: int, token: str, device_id: str = '') -> bool:
+    if not token:
+        return False
+    expected = sign_media_audio_token(relative_path, exp, device_id)
+    return hmac.compare_digest(expected, token.strip())
+
+
+def _media_device_id_for_signing() -> str:
+    if has_request_context():
+        return request.cookies.get('FEW_DEVICE_ID') or ''
+    return ''
+
+
+def _strict_device_binding_active() -> bool:
+    media_cfg = get_media_config()
+    return bool(media_cfg.get('strict_device_binding')) and not is_local_remote()
+
+
+def _media_token_requires_device() -> bool:
+    """Fail closed when issuing signed URLs without FEW_DEVICE_ID."""
+    return _strict_device_binding_active()
+
+
+_SONG_INFO_DEVICE_REQUIRED_MESSAGE = (
+    'Audio playback requires a trusted device (FEW_DEVICE_ID cookie). '
+    'Register or sign in on this device first.'
+)
+
+
+def _song_info_device_playback_blocked() -> bool:
+    """True when song-info must not expose a playable URL (strict binding, no device cookie)."""
+    if not _strict_device_binding_active():
+        return False
+    security_cfg = get_security_config()
+    if not security_cfg.get('security_enabled', True):
+        return False
+    if is_local_remote():
+        return False
+    return not bool(_media_device_id_for_signing())
+
+
+def _audio_delivery_device_required() -> Dict[str, str]:
+    return {
+        'error': 'device_required',
+        'message': _SONG_INFO_DEVICE_REQUIRED_MESSAGE,
+    }
+
+
+def _default_media_audio_url_mode() -> str:
+    return 'stream'
+
+
+def _get_credential_media_playback_policy_from_auth() -> Tuple[str, str]:
+    """Return (credential_policy, policy_source) for the current request."""
+    if not has_request_context():
+        return ('inherit', 'global')
+
+    auth = get_current_device_auth_context()
+    credential = auth.get('credential')
+    if isinstance(credential, dict):
+        policy = normalize_credential_media_playback_mode_policy(
+            credential.get('media_playback_mode_policy')
+        )
+        if policy != 'inherit':
+            return (policy, 'credential')
+    return ('inherit', 'global')
+
+
+def _parse_request_media_mode() -> Optional[str]:
+    if not has_request_context():
+        return None
+    requested = (request.args.get('mode') or '').strip().lower()
+    if requested in ('stream', 'oneshot'):
+        return requested
+    return None
+
+
+def resolve_effective_media_playback_policy() -> Dict[str, Any]:
+    """Resolve audio delivery policy: credential > global audio_delivery_mode > request ?mode=."""
+    credential_policy, policy_source = _get_credential_media_playback_policy_from_auth()
+    global_mode = str(get_media_config().get('audio_delivery_mode') or 'stream').strip().lower()
+    if global_mode not in ('stream', 'oneshot', 'both'):
+        global_mode = DEFAULT_MEDIA_CONFIG['audio_delivery_mode']
+
+    default_mode = _default_media_audio_url_mode()
+    requested_mode = _parse_request_media_mode()
+    locked_by_policy = False
+    available_modes = ['stream', 'oneshot']
+
+    if credential_policy == 'stream_only':
+        effective_policy = 'stream_only'
+        client_mode = 'stream'
+        available_modes = ['stream']
+        locked_by_policy = True
+        policy_source = 'credential'
+    elif credential_policy == 'oneshot_only':
+        effective_policy = 'oneshot_only'
+        client_mode = 'oneshot'
+        available_modes = ['oneshot']
+        locked_by_policy = True
+        policy_source = 'credential'
+    elif credential_policy == 'user_select':
+        effective_policy = 'user_select'
+        client_mode = 'both'
+        available_modes = ['stream', 'oneshot']
+        policy_source = 'credential'
+    else:
+        effective_policy = global_mode
+        policy_source = 'global'
+        if global_mode == 'stream':
+            client_mode = 'stream'
+            available_modes = ['stream']
+        elif global_mode == 'oneshot':
+            client_mode = 'oneshot'
+            available_modes = ['oneshot']
+        else:
+            client_mode = 'both'
+            available_modes = ['stream', 'oneshot']
+
+    resolved_url_mode: Optional[str] = None
+    if locked_by_policy:
+        resolved_url_mode = client_mode if client_mode in ('stream', 'oneshot') else default_mode
+    elif client_mode == 'both':
+        if requested_mode and requested_mode in available_modes:
+            resolved_url_mode = requested_mode
+        else:
+            resolved_url_mode = default_mode
+    elif client_mode in ('stream', 'oneshot'):
+        resolved_url_mode = client_mode
+
+    return {
+        'mode': client_mode,
+        'available_modes': available_modes,
+        'default_mode': default_mode,
+        'locked_by_policy': locked_by_policy,
+        'policy_source': policy_source,
+        'effective_policy': effective_policy,
+        'credential_policy': credential_policy,
+        'global_mode': global_mode,
+        'resolved_url_mode': resolved_url_mode,
+    }
+
+
+def _resolve_media_audio_url_mode(mode: Optional[str] = None) -> Optional[str]:
+    """Return mode query value for signed /media/audio URLs."""
+    policy = resolve_effective_media_playback_policy()
+    if policy.get('locked_by_policy'):
+        return policy.get('resolved_url_mode')
+
+    if policy.get('mode') == 'both':
+        if mode:
+            requested = str(mode).strip().lower()
+            if requested in policy.get('available_modes', []):
+                return requested
+        return policy.get('resolved_url_mode')
+
+    resolved = policy.get('resolved_url_mode')
+    return resolved if resolved in ('stream', 'oneshot') else None
+
+
+def build_audio_delivery_info() -> Dict[str, Any]:
+    policy = resolve_effective_media_playback_policy()
+    return {
+        'mode': policy['mode'],
+        'available_modes': policy['available_modes'],
+        'default_mode': policy['default_mode'],
+        'locked_by_policy': policy['locked_by_policy'],
+        'policy_source': policy['policy_source'],
+        'effective_policy': policy['effective_policy'],
+    }
+
+
+def build_media_audio_url(
+    song_value: str,
+    device_id: Optional[str] = None,
+    base_url: Optional[str] = None,
+    mode: Optional[str] = None,
+) -> Optional[str]:
+    relative = _extract_single_song_relative(song_value)
+    if not relative:
+        return str(song_value or '').strip()
+
+    if device_id is None:
+        device_id = _media_device_id_for_signing()
+    if _media_token_requires_device() and not device_id:
+        app.logger.warning(
+            'media_gateway: skipped signed audio URL for %s (FEW_DEVICE_ID required)',
+            relative,
+        )
+        return None
+
+    media_cfg = get_media_config()
+    ttl = int(media_cfg.get('media_token_ttl_seconds') or DEFAULT_MEDIA_CONFIG['media_token_ttl_seconds'])
+    exp = int(time.time()) + ttl
+    token = sign_media_audio_token(relative, exp, device_id)
+    root = (base_url or get_public_base_url()).rstrip('/')
+    query_params: Dict[str, str] = {
+        'file': relative,
+        'exp': str(exp),
+        'token': token,
+    }
+    resolved_mode = _resolve_media_audio_url_mode(mode)
+    if resolved_mode:
+        query_params['mode'] = resolved_mode
+    query = urlencode(query_params)
+    return f"{root}/media/audio?{query}"
+
+
+def _rewrite_client_song_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(summary, dict):
+        return summary
+    song_value = summary.get('song')
+    if not song_value:
+        return summary
+    out = dict(summary)
+    playback_blocked = _song_info_device_playback_blocked()
+    if not playback_blocked:
+        gateway_url = build_media_audio_url(str(song_value))
+        if gateway_url is not None:
+            out['song'] = gateway_url
+        elif _media_token_requires_device():
+            playback_blocked = True
+    if playback_blocked:
+        out['song'] = ''
+        out['audio_delivery'] = _audio_delivery_device_required()
+        return out
+    out['audio_delivery'] = build_audio_delivery_info()
+    return out
+
+
+def _rewrite_client_song_summaries(summaries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [_rewrite_client_song_summary(item) for item in summaries]
+
+
+def _guess_audio_mimetype(path: Path) -> str:
+    return _MEDIA_AUDIO_MIMETYPES.get(path.suffix.lower(), 'application/octet-stream')
+
+
+def _append_media_audit(entry: Dict[str, Any]) -> None:
+    entry = dict(entry)
+    entry.setdefault('ts', now_iso())
+    _MEDIA_AUDIT_LOG.appendleft(entry)
+    app.logger.info('media_gateway %s', json.dumps(entry, ensure_ascii=False))
+
+
+def _check_media_rate_limit(remote_addr: str, relative_path: str) -> bool:
+    key = (remote_addr or 'unknown', relative_path)
+    now = time.time()
+    with _MEDIA_RATE_LIMIT_LOCK:
+        bucket = _MEDIA_RATE_LIMIT.get(key, [])
+        bucket = [ts for ts in bucket if now - ts < _MEDIA_RATE_LIMIT_WINDOW_SEC]
+        if len(bucket) >= _MEDIA_RATE_LIMIT_MAX_PER_WINDOW:
+            _MEDIA_RATE_LIMIT[key] = bucket
+            return False
+        bucket.append(now)
+        _MEDIA_RATE_LIMIT[key] = bucket
+    return True
+
+
+def _can_manage_media_config() -> bool:
+    return can_manage_system() or is_loopback_request()
+
 
 # 受信任设备数据结构和操作函数
 
@@ -14501,6 +14983,8 @@ def is_request_allowed():
     if request.path == '/songs/snapshot':
         return True
     if request.path == '/songs/search':
+        return True
+    if request.path == '/song-info':
         return True
     if request.path == '/songs/summary/batch' and request.method == 'POST':
         return True
@@ -14801,6 +15285,9 @@ def serialize_security_credential(credential: Dict[str, Any]) -> Dict[str, Any]:
         'usable': is_credential_usable(credential),
         'status': get_credential_status(credential),
         'permissions': normalize_device_permissions(credential.get('permissions')),
+        'media_playback_mode_policy': normalize_credential_media_playback_mode_policy(
+            credential.get('media_playback_mode_policy')
+        ),
         'created_at': credential.get('created_at', ''),
         'updated_at': credential.get('updated_at', ''),
         'has_password': bool(credential.get('password_hash')),
@@ -14843,6 +15330,7 @@ def auth_credentials_collection():
         'used_count': 0,
         'revoked': False,
         'permissions': permissions,
+        'media_playback_mode_policy': data.get('media_playback_mode_policy'),
     }, credential_id)
 
     existing = [item for item in security_config.get('device_credentials', []) if item.get('credential_id') != credential_id]
@@ -14884,6 +15372,10 @@ def auth_credential_item(credential_id):
         target['revoked'] = parse_bool(data.get('revoked'), target.get('revoked', False))
     if 'permissions' in data:
         target['permissions'] = normalize_device_permissions(data.get('permissions'))
+    if 'media_playback_mode_policy' in data:
+        target['media_playback_mode_policy'] = normalize_credential_media_playback_mode_policy(
+            data.get('media_playback_mode_policy')
+        )
     if data.get('password'):
         password = str(data.get('password'))
         password_conflict = find_password_conflict(security_config, password, exclude_credential_id=credential_id)
@@ -15477,6 +15969,230 @@ def amll_create_song():
         app.logger.error(f"AMLL 创建歌曲失败: {exc}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'创建失败: {exc}'})
 
+def _resolve_media_audio_delivery_mode() -> str:
+    policy = resolve_effective_media_playback_policy()
+    if policy.get('locked_by_policy'):
+        resolved = policy.get('resolved_url_mode')
+        if resolved in ('stream', 'oneshot'):
+            return resolved
+
+    if policy.get('mode') == 'both':
+        requested = _parse_request_media_mode()
+        if requested and requested in policy.get('available_modes', []):
+            return requested
+        return policy.get('default_mode', _default_media_audio_url_mode())
+
+    resolved = policy.get('resolved_url_mode')
+    if resolved in ('stream', 'oneshot'):
+        return resolved
+    return _default_media_audio_url_mode()
+
+
+@app.route('/media/audio')
+def media_audio():
+    if not is_request_allowed():
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'request_not_allowed',
+            'file': request.args.get('file'),
+            'remote_addr': request.remote_addr,
+        })
+        return abort(403)
+
+    relative_raw = (request.args.get('file') or '').strip()
+    exp_raw = (request.args.get('exp') or '').strip()
+    token = (request.args.get('token') or '').strip()
+
+    if not relative_raw or not exp_raw or not token:
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'missing_params',
+            'file': relative_raw,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Missing file, exp, or token'}), 400
+
+    try:
+        relative_path = _normalize_relative_path(unquote(relative_raw))
+    except ValueError:
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'path_traversal',
+            'file': relative_raw,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Invalid file path'}), 400
+
+    try:
+        exp = int(exp_raw)
+    except ValueError:
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'bad_exp',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Invalid exp'}), 400
+
+    if exp < int(time.time()):
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'token_expired',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Token expired'}), 401
+
+    device_id = request.cookies.get('FEW_DEVICE_ID') or ''
+    security_cfg = get_security_config()
+    strict_binding = _strict_device_binding_active()
+    security_strict = bool(security_cfg.get('security_enabled', True)) and not is_local_remote()
+    enforce_device = strict_binding or security_strict
+
+    if strict_binding and not device_id:
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'device_required',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'device_required'}), 403
+
+    if enforce_device:
+        if not device_id:
+            _append_media_audit({
+                'event': 'media_audio_denied',
+                'reason': 'device_required',
+                'file': relative_path,
+                'remote_addr': request.remote_addr,
+            })
+            return jsonify({'error': 'device_required'}), 403
+        token_ok = verify_media_audio_token(relative_path, exp, token, device_id)
+        if not token_ok:
+            _append_media_audit({
+                'event': 'media_audio_denied',
+                'reason': 'device_mismatch',
+                'file': relative_path,
+                'remote_addr': request.remote_addr,
+            })
+            return jsonify({'error': 'Invalid token'}), 403
+    else:
+        token_ok = verify_media_audio_token(relative_path, exp, token, device_id)
+        if not token_ok:
+            token_ok = verify_media_audio_token(relative_path, exp, token, '')
+        if not token_ok:
+            _append_media_audit({
+                'event': 'media_audio_denied',
+                'reason': 'bad_sig',
+                'file': relative_path,
+                'remote_addr': request.remote_addr,
+            })
+            return jsonify({'error': 'Invalid token'}), 403
+
+    if not _check_media_rate_limit(request.remote_addr or '', relative_path):
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'rate_limited',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Too many requests'}), 429
+
+    try:
+        audio_path = resolve_resource_path(f'/songs/{relative_path}', 'songs')
+    except ValueError:
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'path_traversal',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'Invalid file path'}), 400
+
+    if not audio_path.is_file():
+        _append_media_audit({
+            'event': 'media_audio_denied',
+            'reason': 'not_found',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+        })
+        return jsonify({'error': 'File not found'}), 404
+
+    delivery_mode = _resolve_media_audio_delivery_mode()
+    mimetype = _guess_audio_mimetype(audio_path)
+    cache_headers = {'Cache-Control': 'private, no-store'}
+    has_range = bool(request.headers.get('Range'))
+
+    if delivery_mode == 'oneshot':
+        content = audio_path.read_bytes()
+        _append_media_audit({
+            'event': 'media_audio_served',
+            'file': relative_path,
+            'remote_addr': request.remote_addr,
+            'status': 200,
+            'has_range': has_range,
+            'bytes': len(content),
+            'mode': 'oneshot',
+        })
+        return StarletteResponse(
+            content=content,
+            status_code=200,
+            media_type=mimetype,
+            headers=cache_headers,
+        )
+
+    # stream: FileResponse serves the full file and honors Range natively (with or without Range header)
+    response = FileResponse(audio_path, media_type=mimetype)
+    response.headers.update(cache_headers)
+    _append_media_audit({
+        'event': 'media_audio_served',
+        'file': relative_path,
+        'remote_addr': request.remote_addr,
+        'status': 206 if has_range else 200,
+        'has_range': has_range,
+        'mode': 'stream',
+    })
+    return response
+
+
+@app.route('/media/config', methods=['GET'])
+def get_media_config_route():
+    if not _can_manage_media_config():
+        return abort(403)
+    payload = dict(get_media_config())
+    payload['policy_notes'] = get_media_config_policy_notes()
+    return jsonify(payload)
+
+
+@app.route('/media/config', methods=['POST'])
+def post_media_config_route():
+    if not _can_manage_media_config():
+        return abort(403)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({'error': 'JSON body required'}), 400
+    current = get_media_config()
+    merged = dict(current)
+    for key in DEFAULT_MEDIA_CONFIG:
+        if key in payload:
+            merged[key] = payload[key]
+    saved = save_media_config(merged)
+    return jsonify({
+        'status': 'success',
+        'config': {**saved, 'policy_notes': get_media_config_policy_notes()},
+    })
+
+
+@app.route('/media/audit/recent')
+def media_audit_recent():
+    if not _can_manage_media_config():
+        return abort(403)
+    limit = coerce_int(request.args.get('limit'), 50) or 50
+    limit = max(1, min(limit, 200))
+    entries = list(_MEDIA_AUDIT_LOG)[:limit]
+    return jsonify({'status': 'success', 'entries': entries})
+
+
 # Mount static directory at root to mirror Flask static_url_path=''
 app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -15746,6 +16462,45 @@ def _is_video_file(filename: Optional[str]) -> bool:
     # 处理本地文件
     return Path(str(filename).lower()).suffix in {'.mp4', '.webm', '.ogg', '.m4v', '.mov'}
 
+_COVER_PALETTE_CACHE_MAX = 128
+_cover_palette_cache: dict = {}
+_cover_palette_cache_order: list = []
+
+def _cover_palette_cache_key(cover_url: Optional[str], cover_data_url: Optional[str]):
+    if cover_data_url:
+        digest = hashlib.sha256(str(cover_data_url).encode("utf-8", errors="replace")).hexdigest()
+        return ("data_url", digest)
+    if not cover_url:
+        return None
+    cover_url = str(cover_url).strip()
+    if cover_url.startswith("data:"):
+        digest = hashlib.sha256(cover_url.encode("utf-8", errors="replace")).hexdigest()
+        return ("data_url", digest)
+    relative = _extract_single_song_relative(cover_url)
+    if not relative:
+        return None
+    cover_path = SONGS_DIR / relative
+    if not cover_path.exists():
+        return None
+    try:
+        stat = cover_path.stat()
+        return ("file", str(cover_path.resolve()), stat.st_mtime_ns, stat.st_size)
+    except Exception:
+        return None
+
+def _cover_palette_cache_get(key):
+    return _cover_palette_cache.get(key)
+
+def _cover_palette_cache_set(key, value: dict) -> None:
+    if key in _cover_palette_cache:
+        _cover_palette_cache[key] = value
+        return
+    while len(_cover_palette_cache_order) >= _COVER_PALETTE_CACHE_MAX:
+        oldest = _cover_palette_cache_order.pop(0)
+        _cover_palette_cache.pop(oldest, None)
+    _cover_palette_cache_order.append(key)
+    _cover_palette_cache[key] = value
+
 def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
     cover_data_url = ""
     if isinstance(data, dict):
@@ -15768,22 +16523,29 @@ def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
             cover_url = candidate
             break
 
+    cache_key = _cover_palette_cache_key(cover_url, cover_data_url)
+    if cache_key is not None:
+        cached = _cover_palette_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
     image_bytes = _load_cover_image_bytes(cover_url, cover_data_url)
     if not image_bytes:
-        return {}
-    palette = _extract_palette_from_bytes(image_bytes)
-    if not palette:
-        return {}
+        result: dict = {}
+    else:
+        palette = _extract_palette_from_bytes(image_bytes)
+        if not palette:
+            result = {}
+        else:
+            result = {
+                "colors": palette["colors"],
+                "counts": palette["counts"],
+                "color_count": palette["color_count"],
+            }
 
-    base_colors = palette["colors"]
-    base_counts = palette["counts"]
-    full_colors = base_colors
-    full_counts = base_counts
-    return {
-        "colors": full_colors,
-        "counts": full_counts,
-        "color_count": palette["color_count"]
-    }
+    if cache_key is not None:
+        _cover_palette_cache_set(cache_key, result)
+    return result
 
 def _extract_song_payload_from_state(state_val: dict) -> dict:
     """兼容新版 AMLL state 消息里的歌曲元数据载荷。"""

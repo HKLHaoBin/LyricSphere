@@ -180,6 +180,33 @@
             right: 20px;
             z-index: 1000;
         }
+
+        .audio-delivery-mode-wrap {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.85);
+            background: rgba(0, 0, 0, 0.55);
+            padding: 6px 10px;
+            border-radius: 8px;
+        }
+
+        .audio-delivery-mode-wrap[hidden] {
+            display: none !important;
+        }
+
+        .audio-delivery-mode-wrap select {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
         
         /* 仅在手机等小屏幕设备上显示滑块 */
         @media (max-width: 768px) {
@@ -233,16 +260,142 @@
     <div class="font-slider-container">
         <input type="range" min="0.5" max="1.5" value="1" step="0.05" id="fontSlider">
     </div>
+    <div id="audio-delivery-mode-wrap" class="audio-delivery-mode-wrap" hidden>
+        <label for="audio-delivery-mode">音频</label>
+        <select id="audio-delivery-mode" aria-label="音频传输模式">
+            <option value="stream">流式</option>
+            <option value="oneshot">单次</option>
+        </select>
+    </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const audioPlayer = document.getElementById('audio-player');
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
             const fontSlider = document.getElementById('fontSlider');
+            const audioDeliveryModeWrap = document.getElementById('audio-delivery-mode-wrap');
+            const audioDeliveryModeSelect = document.getElementById('audio-delivery-mode');
+            const FAMYLIAM_AUDIO_MODE_KEY = 'famyliam_audio_mode';
+            let songAudioBaseUrl = '';
+
+            function applyAudioDeliveryMode(url, mode) {
+                if (!url || !mode) return url;
+                const u = new URL(url, location.origin);
+                u.searchParams.set('mode', mode);
+                return u.pathname + u.search;
+            }
+
+            function stripAudioDeliveryMode(url) {
+                if (!url) return url;
+                const u = new URL(url, location.origin);
+                u.searchParams.delete('mode');
+                return u.pathname + u.search;
+            }
+
+            function audioDeliveryAllowsUserModePick(delivery) {
+                if (!delivery || delivery.error) return false;
+                if (delivery.locked_by_policy) return false;
+                const modes = Array.isArray(delivery.available_modes) ? delivery.available_modes : [];
+                if (modes.length <= 1) return false;
+                return delivery.mode === 'both' || modes.length > 1;
+            }
+
+            function syncAudioDeliveryModeOptions(delivery) {
+                if (!audioDeliveryModeSelect || !delivery) return;
+                const modes = Array.isArray(delivery.available_modes) && delivery.available_modes.length
+                    ? delivery.available_modes
+                    : ['stream', 'oneshot'];
+                const labels = { stream: '流式', oneshot: '单次' };
+                audioDeliveryModeSelect.innerHTML = modes.map((mode) => {
+                    const label = labels[mode] || mode;
+                    return `<option value="${mode}">${label}</option>`;
+                }).join('');
+            }
+
+            function resolveAudioDeliveryMode(songInfo) {
+                const delivery = songInfo?.audio_delivery;
+                if (!delivery || delivery.error) return null;
+                if (delivery.locked_by_policy) {
+                    const forced = delivery.default_mode || delivery.mode;
+                    return forced === 'stream' || forced === 'oneshot' ? forced : null;
+                }
+                if (!audioDeliveryAllowsUserModePick(delivery)) {
+                    if (delivery.mode === 'stream' || delivery.mode === 'oneshot') return delivery.mode;
+                    return null;
+                }
+                const modes = delivery.available_modes || ['stream', 'oneshot'];
+                const stored = sessionStorage.getItem(FAMYLIAM_AUDIO_MODE_KEY);
+                if (stored === 'stream' || stored === 'oneshot') {
+                    if (modes.includes(stored)) return stored;
+                }
+                const fallback = delivery.default_mode || 'stream';
+                return modes.includes(fallback) ? fallback : modes[0];
+            }
+
+            function showAudioDeliveryError(message) {
+                lyricsContainer.textContent = message || '需要设备认证后才能播放音频。';
+            }
+
+            function setupAudioDeliveryModeSelector(songInfo) {
+                if (!audioDeliveryModeWrap || !audioDeliveryModeSelect) return;
+                const delivery = songInfo?.audio_delivery;
+                if (!audioDeliveryAllowsUserModePick(delivery)) {
+                    audioDeliveryModeWrap.hidden = true;
+                    audioDeliveryModeSelect.disabled = Boolean(delivery?.locked_by_policy);
+                    return;
+                }
+                syncAudioDeliveryModeOptions(delivery);
+                audioDeliveryModeSelect.disabled = false;
+                const selected = resolveAudioDeliveryMode(songInfo) || delivery.default_mode || 'stream';
+                audioDeliveryModeSelect.value = selected;
+                audioDeliveryModeWrap.hidden = false;
+                if (audioDeliveryModeSelect.dataset.bound === '1') return;
+                audioDeliveryModeSelect.dataset.bound = '1';
+                audioDeliveryModeSelect.addEventListener('change', () => {
+                    const mode = audioDeliveryModeSelect.value;
+                    sessionStorage.setItem(FAMYLIAM_AUDIO_MODE_KEY, mode);
+                    if (!songAudioBaseUrl) return;
+                    const wasPlaying = !audioPlayer.paused;
+                    const resumeTime = audioPlayer.currentTime || 0;
+                    audioPlayer.src = applyAudioDeliveryMode(songAudioBaseUrl, mode);
+                    audioPlayer.load();
+                    if (resumeTime > 0) {
+                        audioPlayer.currentTime = resumeTime;
+                    }
+                    if (wasPlaying) {
+                        audioPlayer.play().catch(() => {});
+                    }
+                });
+            }
+
+            function applySongAudioFromInfo(songInfo) {
+                const delivery = songInfo?.audio_delivery;
+                if (delivery?.error === 'device_required') {
+                    showAudioDeliveryError(delivery.message);
+                    audioPlayer.removeAttribute('src');
+                    if (audioDeliveryModeWrap) audioDeliveryModeWrap.hidden = true;
+                    return false;
+                }
+                const baseUrl = stripAudioDeliveryMode(songInfo?.song || '');
+                if (!baseUrl) {
+                    showAudioDeliveryError('无法加载音频。');
+                    audioPlayer.removeAttribute('src');
+                    return false;
+                }
+                songAudioBaseUrl = baseUrl;
+                const mode = resolveAudioDeliveryMode(songInfo);
+                audioPlayer.src = mode ? applyAudioDeliveryMode(baseUrl, mode) : baseUrl;
+                setupAudioDeliveryModeSelector(songInfo);
+                return true;
+            }
             let lyricsData = [];
             let forceCenterAlign = false; // 新增
             let translationData = [];
+            let backgroundCleanup = null;
+            let lastLoadedBackgroundUrl = null;
+            const backgroundMediaCache = new Map();
+            const backgroundMediaInflight = new Map();
             
             // 提取 URL 参数
             const urlParams = new URLSearchParams(window.location.search);
@@ -265,6 +418,23 @@
 
             const ERROR_MARGIN = 0.1; // 100ms 容忍区间
             const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
+
+            function scheduleNonCriticalInit(fn) {
+                if (typeof requestIdleCallback === 'function') {
+                    requestIdleCallback(() => fn(), { timeout: 2000 });
+                } else {
+                    setTimeout(fn, 0);
+                }
+            }
+
+            // Safari animate 兼容降级
+            function safeAnimate(element, keyframes, options) {
+                if (element.animate) {
+                    return element.animate(keyframes, options);
+                }
+                Object.assign(element.style, keyframes[keyframes.length - 1]);
+                return { onfinish: () => {} };
+            }
 
             function clearMoveTransition(element) {
                 if (!element) {
@@ -371,77 +541,225 @@
                 return result;
             }
 
+            function resolveMediaUrl(rawPath) {
+                if (!rawPath || typeof rawPath !== 'string') {
+                    return null;
+                }
+                const trimmed = rawPath.trim();
+                if (!trimmed) {
+                    return null;
+                }
+                const normalized = trimmed.replace(/^\.\//, '');
+                if (/^https?:\/\//i.test(normalized) || normalized.startsWith('data:') || normalized.startsWith('blob:')) {
+                    return normalized;
+                }
+                return normalized.startsWith('/') ? normalized : '/' + normalized;
+            }
+
+            function dedupeResolvedMediaUrls(candidates) {
+                const seen = new Set();
+                const out = [];
+                for (const raw of candidates) {
+                    if (!raw || raw === '!') {
+                        continue;
+                    }
+                    const url = resolveMediaUrl(raw);
+                    if (!url || seen.has(url)) {
+                        continue;
+                    }
+                    seen.add(url);
+                    out.push(url);
+                }
+                return out;
+            }
+
+            function removeExistingBackground() {
+                if (backgroundCleanup) {
+                    try {
+                        backgroundCleanup();
+                    } catch (e) { /* 忽略 */ }
+                    backgroundCleanup = null;
+                }
+                document.querySelectorAll('.background-container').forEach((el) => el.remove());
+            }
+
+            async function loadBackground(backgroundPath) {
+                const url = resolveMediaUrl(backgroundPath);
+                if (!url) {
+                    return false;
+                }
+
+                if (backgroundMediaCache.get(url) === 'ok') {
+                    return true;
+                }
+                if (backgroundMediaCache.get(url) === 'fail') {
+                    return false;
+                }
+                if (backgroundMediaInflight.has(url)) {
+                    return backgroundMediaInflight.get(url);
+                }
+
+                const loadPromise = new Promise((resolve) => {
+                    removeExistingBackground();
+
+                    const container = document.createElement('div');
+                    container.className = 'background-container';
+                    document.body.appendChild(container);
+
+                    const handleFailure = () => {
+                        backgroundMediaCache.set(url, 'fail');
+                        container.remove();
+                        backgroundCleanup = null;
+                        resolve(false);
+                    };
+
+                    const extension = (url.split('.').pop() || '').toLowerCase();
+                    const isVideo = ['mp4', 'webm', 'ogg', 'm4v', 'mov'].includes(extension);
+
+                    if (isVideo) {
+                        const video = document.createElement('video');
+                        video.src = url;
+                        video.muted = true;
+                        video.loop = true;
+                        video.autoplay = true;
+                        video.playsInline = true;
+                        video.addEventListener('loadeddata', () => {
+                            backgroundCleanup = () => {
+                                video.pause();
+                                video.removeAttribute('src');
+                                video.load();
+                                container.remove();
+                            };
+                            backgroundMediaCache.set(url, 'ok');
+                            lastLoadedBackgroundUrl = url;
+                            resolve(true);
+                            video.play().catch(() => {});
+                        }, { once: true });
+                        video.addEventListener('error', handleFailure, { once: true });
+                        container.appendChild(video);
+                    } else {
+                        const img = document.createElement('img');
+                        img.src = url;
+                        img.addEventListener('load', () => {
+                            backgroundCleanup = () => {
+                                container.remove();
+                            };
+                            backgroundMediaCache.set(url, 'ok');
+                            lastLoadedBackgroundUrl = url;
+                            resolve(true);
+                        }, { once: true });
+                        img.addEventListener('error', handleFailure, { once: true });
+                        container.appendChild(img);
+                    }
+                });
+
+                backgroundMediaInflight.set(url, loadPromise);
+                try {
+                    return await loadPromise;
+                } finally {
+                    backgroundMediaInflight.delete(url);
+                }
+            }
+
+            async function loadLyricsEnhancement(songInfo) {
+                const lyricsParams = new URLSearchParams();
+                if (queryFile) lyricsParams.append('file', queryFile);
+                if (queryLys) lyricsParams.append('lys', queryLys);
+                if (queryLrc) lyricsParams.append('lrc', queryLrc);
+                const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
+
+                const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
+                const lyricsJson = await lyricsRes.json();
+                lyricsData = lyricsJson.lyrics || [];
+
+                forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
+
+                translationData = Array.isArray(lyricsJson.translation) ? lyricsJson.translation.map(t => {
+                    const m = /^([0-9]{2}):([0-9]{2})\.([0-9]{2,3})$/.exec(t.time);
+                    if (m) {
+                        let ms = m[3].length === 2 ? parseInt(m[3], 10) * 10 : parseInt(m[3], 10);
+                        t.timeMs = parseInt(m[1], 10) * 60 * 1000 + parseInt(m[2], 10) * 1000 + ms;
+                    } else {
+                        t.timeMs = 0;
+                    }
+                    return t;
+                }) : [];
+
+                if (translationData.length === 0 && songInfo.meta && songInfo.meta.lyrics) {
+                    const parts = songInfo.meta.lyrics.split('::');
+                    if (parts.length >= 3 && parts[2] && parts[2] !== '!') {
+                        let transPath = parts[2];
+                        if (transPath.startsWith('http://127.0.0.1:5000/songs/')) {
+                            transPath = transPath.replace('http://127.0.0.1:5000/songs/', '');
+                        }
+                        if (transPath.endsWith('.lrc')) {
+                            try {
+                                const resp = await fetch(transPath.startsWith('/') ? transPath : '/' + transPath);
+                                if (resp.ok) {
+                                    const lrcText = await resp.text();
+                                    translationData = parseLrcTranslation(lrcText);
+                                }
+                            } catch (e) { /* 忽略 */ }
+                        }
+                    }
+                }
+
+                initLyrics();
+            }
+
+            async function loadBackgroundEnhancement(songInfo) {
+                removeExistingBackground();
+
+                let backgroundApplied = false;
+                if (songInfo.meta && songInfo.meta['Background-image']) {
+                    backgroundApplied = await loadBackground(songInfo.meta['Background-image']);
+                }
+
+                if (!backgroundApplied) {
+                    const coverCandidates = [
+                        songInfo.meta?.albumImgSrc,
+                        songInfo.meta?.cover,
+                        songInfo.meta?.coverUrl,
+                        songInfo.cover,
+                        songInfo.coverUrl
+                    ];
+                    const dedupedUrls = dedupeResolvedMediaUrls(coverCandidates);
+                    if (dedupedUrls.length > 0) {
+                        const firstUrl = dedupedUrls[0];
+                        const coverSource = coverCandidates.find(
+                            (candidate) => candidate && candidate !== '!' && resolveMediaUrl(candidate) === firstUrl
+                        );
+                        if (coverSource) {
+                            backgroundApplied = await loadBackground(coverSource);
+                        }
+                    }
+                }
+
+                return backgroundApplied;
+            }
+
             async function loadData() {
                 try {
-                    // 构建完整的查询参数
                     const params = new URLSearchParams();
                     if (queryFile) params.append('file', queryFile);
                     const fileParam = params.toString() ? `?${params.toString()}` : '';
-                    
+
                     const songInfoRes = await fetch(`/song-info${fileParam}`);
                     const songInfo = await songInfoRes.json();
-                    audioPlayer.src = songInfo.song;
-                    
-                    // 检查并加载背景图片/视频
-                    if (songInfo.meta && songInfo.meta["Background-image"]) {
-                        // 移除路径前的 "./"
-                        const backgroundPath = songInfo.meta["Background-image"].replace(/^\.\//, '');
-                        loadBackground(backgroundPath);
+                    const audioReady = applySongAudioFromInfo(songInfo);
+
+                    if (lyricsContainer) {
+                        lyricsContainer.textContent = '加载歌词…';
                     }
-                    
-                    // 进入页面自动播放
-                    setTimeout(() => {
+
+                    if (audioReady) {
                         audioPlayer.play().catch(() => {});
-                    }, 0);
-
-                    // 为 /lyrics 构建完整的查询参数（包含 lys/lrc 覆盖参数）
-                    const lyricsParams = new URLSearchParams();
-                    if (queryFile) lyricsParams.append('file', queryFile);
-                    if (queryLys) lyricsParams.append('lys', queryLys);
-                    if (queryLrc) lyricsParams.append('lrc', queryLrc);
-                    const lyricsParamStr = lyricsParams.toString() ? `?${lyricsParams.toString()}` : '';
-                    
-                    const lyricsRes = await fetch(`/lyrics${lyricsParamStr}`);
-                    const lyricsJson = await lyricsRes.json();
-                    lyricsData = lyricsJson.lyrics || [];
-
-                    // 判断是否所有歌词行都不是 right（没有对唱标记）
-                    forceCenterAlign = lyricsData.length > 0 && lyricsData.every(line => !line.style || line.style.align !== 'right');
-
-                    // 优先使用后端返回的 translation 字段
-                    translationData = Array.isArray(lyricsJson.translation) ? lyricsJson.translation.map(t => {
-                        // 转换 time 为毫秒
-                        const m = /^([0-9]{2}):([0-9]{2})\.([0-9]{2,3})$/.exec(t.time);
-                        if (m) {
-                            let ms = m[3].length === 2 ? parseInt(m[3], 10) * 10 : parseInt(m[3], 10);
-                            t.timeMs = parseInt(m[1], 10) * 60 * 1000 + parseInt(m[2], 10) * 1000 + ms;
-                        } else {
-                            t.timeMs = 0;
-                        }
-                        return t;
-                    }) : [];
-
-                    // 如果没有 translation 字段，回退到原有 LRC 解析
-                    if (translationData.length === 0 && songInfo.meta && songInfo.meta.lyrics) {
-                        const parts = songInfo.meta.lyrics.split('::');
-                        if (parts.length >= 3 && parts[2] && parts[2] !== '!') {
-                            let transPath = parts[2];
-                            if (transPath.startsWith('http://127.0.0.1:5000/songs/')) {
-                                transPath = transPath.replace('http://127.0.0.1:5000/songs/', '');
-                            }
-                            if (transPath.endsWith('.lrc')) {
-                                try {
-                                    const resp = await fetch(transPath.startsWith('/') ? transPath : '/' + transPath);
-                                    if (resp.ok) {
-                                        const lrcText = await resp.text();
-                                        translationData = parseLrcTranslation(lrcText);
-                                    }
-                                } catch (e) { /* 忽略 */ }
-                            }
-                        }
                     }
 
-                    initLyrics();
+                    await Promise.all([
+                        loadLyricsEnhancement(songInfo),
+                        loadBackgroundEnhancement(songInfo).catch(() => false),
+                    ]);
                 } catch (error) {
                     lyricsContainer.textContent = '无法加载歌词。';
                     console.error('Error loading data:', error);
@@ -903,8 +1221,8 @@
                 }
             });
 
-            loadData();
-            
+            await loadData();
+
             // 字体大小调整滑块逻辑
             fontSlider.addEventListener('input', (e) => {
                 playerContainer.style.setProperty('--lyric-scale', e.target.value);
@@ -919,50 +1237,6 @@
                 playerContainer.style.setProperty('--lyric-scale', savedScale);
             }
 
-            // Safari animate 兼容降级
-            function safeAnimate(element, keyframes, options) {
-                if (element.animate) {
-                    return element.animate(keyframes, options);
-                } else {
-                    // Safari 旧版降级：直接设置最终样式
-                    Object.assign(element.style, keyframes[keyframes.length - 1]);
-                    return { onfinish: () => {} };
-                }
-            }
-
-            // 加载背景图片或视频
-            async function loadBackground(backgroundPath) {
-                // 统一成不带 "./" 的路径
-                let path = backgroundPath.replace(/^\.\//, ''); // "./songs/xxx.jpg" -> "songs/xxx.jpg"
-
-                // 如果已经是绝对 URL（含 http/https），直接用
-                const isAbsolute = /^https?:\/\//i.test(path);
-
-                // 如果是相对的 "songs/..."，在 Flask 配置下，直接加个前导斜杠即可
-                const url = isAbsolute ? path : (path.startsWith('/') ? path : '/' + path);
-
-                const container = document.createElement('div');
-                container.className = 'background-container';
-                document.body.appendChild(container);
-
-                const ext = path.split('.').pop().toLowerCase();
-                const isVideo = ['mp4','webm','ogg'].includes(ext);
-
-                if (isVideo) {
-                    const video = document.createElement('video');
-                    video.src = url;         // ✅ 不再拼 /static，也不整体 encode
-                    video.muted = true;
-                    video.loop = true;
-                    video.autoplay = true;
-                    video.onerror = () => container.remove();
-                    container.appendChild(video);
-                } else {
-                    const img = document.createElement('img');
-                    img.src = url;           // ✅ 同上
-                    img.onerror = () => container.remove();
-                    container.appendChild(img);
-                }
-            }
         });
     </script>
 </body>

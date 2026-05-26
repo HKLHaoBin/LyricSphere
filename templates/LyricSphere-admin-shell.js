@@ -184,6 +184,12 @@ async function updateAuthUI() {
             if (securityBtn) {
                 securityBtn.title = baseSecurityTitle ? `${baseSecurityTitle} | ${statusSuffix}` : statusSuffix;
             }
+
+            const mediaConfigBtn = document.getElementById('mediaConfigMenuBtn');
+            if (mediaConfigBtn) {
+                const canManageMedia = data.status === 'success' && (Boolean(data.is_local) || Boolean(data.is_system_admin));
+                mediaConfigBtn.style.display = canManageMedia ? '' : 'none';
+            }
         }
     } catch (e) {
         console.error('获取认证状态失败:', e);
@@ -505,6 +511,16 @@ function formatCredentialMaxUses(maxUses) {
         return '不限';
     }
     return String(maxUses);
+}
+
+function formatMediaPlaybackPolicyLabel(policy) {
+    const labels = {
+        inherit: '继承全局',
+        stream_only: '仅流式',
+        oneshot_only: '仅单次',
+        user_select: '用户自选',
+    };
+    return labels[policy] || labels.inherit;
 }
 
 function buildCredentialShareNote(credential) {
@@ -905,6 +921,8 @@ function clearCredentialForm() {
     document.getElementById('credentialManagerPassword').value = '';
     document.getElementById('credentialManagerExpiresAt').value = '';
     document.getElementById('credentialManagerMaxUses').value = '';
+    const policySelect = document.getElementById('credentialManagerMediaPlaybackPolicy');
+    if (policySelect) policySelect.value = 'inherit';
     ['credentialPermAiUse', 'credentialPermAiViewProvider', 'credentialPermAiViewBaseUrl', 'credentialPermAiViewModel', 'credentialPermAiViewPrompts', 'credentialPermAiEditPreset', 'credentialPermWriteAccess'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.checked = false;
@@ -925,6 +943,10 @@ function fillCredentialForm(credential) {
     document.getElementById('credentialManagerPassword').value = '';
     document.getElementById('credentialManagerExpiresAt').value = toDatetimeLocalValue(credential?.expires_at || '');
     document.getElementById('credentialManagerMaxUses').value = credential?.max_uses ?? '';
+    const policySelect = document.getElementById('credentialManagerMediaPlaybackPolicy');
+    if (policySelect) {
+        policySelect.value = credential?.media_playback_mode_policy || 'inherit';
+    }
     const permissions = credential?.permissions || {};
     document.getElementById('credentialPermAiUse').checked = Boolean(permissions.ai_use);
     document.getElementById('credentialPermAiViewProvider').checked = Boolean(permissions.ai_view_provider);
@@ -1001,6 +1023,7 @@ function renderCredentialManagerList(credentials) {
                     <div style="font-size:12px; color:var(--text-secondary);">仅供管理员识别、编辑和吊销，不要对外分享。</div>
                     <div style="font-size:12px; color:var(--text-secondary);">备注：${escapeHtml(credential.remark || '-')}</div>
                     <div style="font-size:12px; color:var(--text-secondary);">权限：${escapeHtml(formatPermissionSummary(credential.permissions))}</div>
+                    <div style="font-size:12px; color:var(--text-secondary);">播放策略：${escapeHtml(formatMediaPlaybackPolicyLabel(credential.media_playback_mode_policy || 'inherit'))}</div>
                     <div style="font-size:12px; color:var(--text-secondary);">有效期：${escapeHtml(credential.expires_at || '-')}</div>
                     <div style="font-size:12px; color:var(--text-secondary);">次数：${credential.used_count || 0}${credential.max_uses !== null && credential.max_uses !== undefined ? ` / ${formatCredentialMaxUses(credential.max_uses)}` : ''}</div>
                     <div style="font-size:12px; color:var(--text-secondary);">状态：${escapeHtml(statusLabel)}</div>
@@ -1073,11 +1096,14 @@ async function saveCredentialFromForm() {
         alert(t('credentialManager.editStateLost'));
         return;
     }
+    const policySelect = document.getElementById('credentialManagerMediaPlaybackPolicy');
+    const mediaPlaybackModePolicy = policySelect ? policySelect.value : 'inherit';
     const payload = {
         remark,
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : '',
         max_uses: Number.isFinite(maxUses) ? maxUses : null,
         permissions,
+        media_playback_mode_policy: mediaPlaybackModePolicy,
     };
     if (requestCredentialId) payload.credential_id = requestCredentialId;
     if (password) payload.password = password;
@@ -1145,6 +1171,98 @@ async function revokeCredentialById(credentialId) {
         await updateWriteButtons();
     } catch (error) {
         alert(error.message || '吊销失败');
+    }
+}
+
+function closeMediaConfigModal() {
+    const modal = document.getElementById('mediaConfigModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function renderMediaConfigPolicyNotes(notes) {
+    const container = document.getElementById('mediaConfigPolicyNotes');
+    if (!container) return;
+    if (!notes || typeof notes !== 'object') {
+        container.textContent = '';
+        return;
+    }
+    const lines = Object.entries(notes).map(([key, text]) => `• ${key}: ${text}`);
+    container.textContent = lines.join('\n');
+}
+
+async function loadMediaConfigForModal() {
+    const statusDiv = document.getElementById('mediaConfigStatus');
+    if (statusDiv) {
+        statusDiv.textContent = '正在加载媒体配置...';
+        statusDiv.classList.remove('is-error');
+    }
+    try {
+        const res = await fetch('/media/config');
+        if (!res.ok) {
+            throw new Error(res.status === 403 ? '无权限查看媒体配置' : '加载失败');
+        }
+        const data = await res.json();
+        const modeSelect = document.getElementById('mediaConfigAudioDeliveryMode');
+        if (modeSelect) {
+            modeSelect.value = data.audio_delivery_mode || 'stream';
+        }
+        const enforceEl = document.getElementById('mediaConfigEnforceGateway');
+        if (enforceEl) enforceEl.checked = Boolean(data.enforce_media_gateway_for_audio);
+        const strictEl = document.getElementById('mediaConfigStrictDeviceBinding');
+        if (strictEl) strictEl.checked = Boolean(data.strict_device_binding);
+        renderMediaConfigPolicyNotes(data.policy_notes);
+        if (statusDiv) statusDiv.textContent = '可修改全局默认音频传输策略（共享凭据可单独覆盖）。';
+    } catch (error) {
+        if (statusDiv) {
+            statusDiv.textContent = error.message || '加载媒体配置失败';
+            statusDiv.classList.add('is-error');
+        }
+    }
+}
+
+async function showMediaConfigModal() {
+    const modal = document.getElementById('mediaConfigModal');
+    if (!modal) return;
+    modal.style.display = 'block';
+    await loadMediaConfigForModal();
+}
+
+async function saveMediaConfigFromForm() {
+    const statusDiv = document.getElementById('mediaConfigStatus');
+    const modeSelect = document.getElementById('mediaConfigAudioDeliveryMode');
+    const enforceEl = document.getElementById('mediaConfigEnforceGateway');
+    const strictEl = document.getElementById('mediaConfigStrictDeviceBinding');
+    const payload = {
+        audio_delivery_mode: modeSelect ? modeSelect.value : 'stream',
+        enforce_media_gateway_for_audio: enforceEl ? enforceEl.checked : false,
+        strict_device_binding: strictEl ? strictEl.checked : false,
+    };
+    if (statusDiv) {
+        statusDiv.textContent = '正在保存...';
+        statusDiv.classList.remove('is-error');
+    }
+    try {
+        const res = await fetch('/media/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            throw new Error(data.error || data.message || '保存失败');
+        }
+        if (statusDiv) statusDiv.textContent = '媒体配置已保存';
+        const notes = data.config?.policy_notes;
+        if (notes && typeof notes === 'object' && Object.keys(notes).length) {
+            renderMediaConfigPolicyNotes(notes);
+        } else {
+            await loadMediaConfigForModal();
+        }
+    } catch (error) {
+        if (statusDiv) {
+            statusDiv.textContent = error.message || '保存媒体配置失败';
+            statusDiv.classList.add('is-error');
+        }
     }
 }
 
