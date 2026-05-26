@@ -1142,6 +1142,379 @@ def build_openai_client(api_key: str, base_url: str) -> OpenAI:
         raise exc
 
 
+_REASONING_SCHEMA_PROVIDER_DEFINED_MSG = (
+    '当前 provider 未确认可用的显式思考开关（模型行为可能由服务商或模型自身决定）'
+)
+_REASONING_SCHEMA_UNKNOWN_MSG = '当前 provider/model 未确认支持显式思考控制（未在白名单中）'
+
+# guarantee_level: strong = explicit field mapping; conditional = partial/model guards; fallback = openrouter_compat
+_REASONING_SCHEMA_META: Dict[str, Dict[str, Any]] = {
+    'openai_native': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'openrouter': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'volcengine': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'siliconflow': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'deepseek': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'dashscope': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'anthropic': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'gemini': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'groq': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'together': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'cerebras': {
+        'supported': True, 'status': 'confirmed', 'message': '', 'control_field_sent': True,
+        'guarantee_level': 'strong',
+    },
+    'minimax': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'zhipu': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'kimi': {
+        'supported': False, 'status': 'provider_defined',
+        'message': _REASONING_SCHEMA_PROVIDER_DEFINED_MSG, 'control_field_sent': True,
+        'guarantee_level': 'conditional',
+    },
+    'openrouter_compat': {
+        'supported': False, 'status': 'unknown',
+        'message': _REASONING_SCHEMA_UNKNOWN_MSG, 'control_field_sent': True,
+        'guarantee_level': 'fallback',
+    },
+}
+
+
+def _deepseek_uses_full_reasoning_control(model: str) -> bool:
+    """True when model is known to accept reasoning_effort + thinking.type together."""
+    model_norm = str(model or '').strip().lower()
+    if not model_norm:
+        return False
+    if 'reasoner' in model_norm:
+        return True
+    if model_norm.startswith('deepseek-v4'):
+        return True
+    if model_norm in ('deepseek-r1', 'deepseek-reasoner'):
+        return True
+    if 'deepseek-chat' in model_norm and 'thinking' in model_norm:
+        return True
+    return False
+
+
+def _gemini_uses_thinking_level(model_norm: str) -> bool:
+    """Gemini 3.x uses thinkingLevel; 2.5 uses thinkingBudget (must not mix)."""
+    if not model_norm:
+        return False
+    if 'gemini-3' in model_norm or model_norm.startswith('gemini-3'):
+        return True
+    if 'gemini-3.' in model_norm:
+        return True
+    return False
+
+
+def _recognize_openai_native(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'api.openai.com' in base_url_norm
+
+
+def _recognize_openrouter(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'openrouter.ai' in base_url_norm or provider_norm == 'openrouter'
+
+
+def _recognize_volcengine(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'volces.com' in base_url_norm or provider_norm == 'volcengine'
+
+
+def _recognize_siliconflow(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if 'siliconflow.cn' in base_url_norm or 'siliconflow.com' in base_url_norm:
+        return True
+    return provider_norm in ('siliconflow', 'siliconflow_cn')
+
+
+def _recognize_deepseek(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'api.deepseek.com' in base_url_norm or provider_norm == 'deepseek'
+
+
+def _recognize_dashscope(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    dashscope_url_tokens = (
+        'dashscope.aliyuncs.com',
+        'dashscope-intl.aliyuncs.com',
+        'dashscope-us.aliyuncs.com',
+    )
+    if any(token in base_url_norm for token in dashscope_url_tokens):
+        return True
+    if 'aliyuncs.com' in base_url_norm and 'dashscope' in base_url_norm:
+        return True
+    return provider_norm in ('alibaba', 'alibaba_cn', 'dashscope', 'modelscope', 'qwen')
+
+
+def _recognize_anthropic(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if 'api.anthropic.com' in base_url_norm or 'anthropic.com/v1' in base_url_norm:
+        return True
+    if provider_norm in ('anthropic', 'claude', 'claudinio'):
+        return True
+    if 'bedrock' in base_url_norm or provider_norm in ('bedrock', 'amazon_bedrock'):
+        return 'claude' in model_norm or 'anthropic' in base_url_norm
+    if ('vertex' in base_url_norm or provider_norm == 'vertex') and (
+        'claude' in model_norm or 'anthropic' in base_url_norm or provider_norm == 'vertex_anthropic'
+    ):
+        return True
+    return False
+
+
+def _recognize_gemini(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if _recognize_anthropic(provider_norm, base_url_norm, model_norm):
+        return False
+    gemini_url_tokens = (
+        'generativelanguage.googleapis.com',
+        'googleapis.com/v1beta',
+        'aiplatform.googleapis.com',
+    )
+    if any(token in base_url_norm for token in gemini_url_tokens):
+        return True
+    if 'googleapis.com' in base_url_norm and ('gemini' in base_url_norm or 'generatecontent' in base_url_norm):
+        return True
+    if provider_norm in ('google', 'gemini', 'vertex_gemini'):
+        return True
+    if ('vertex' in base_url_norm or provider_norm == 'vertex') and 'gemini' in model_norm:
+        return True
+    if 'gemini' in model_norm and provider_norm in ('google', 'gemini', 'vertex', ''):
+        return True
+    return False
+
+
+def _recognize_groq(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'groq.com' in base_url_norm or provider_norm == 'groq'
+
+
+def _recognize_together(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'together.xyz' in base_url_norm or 'together.ai' in base_url_norm or provider_norm == 'together'
+
+
+def _recognize_cerebras(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    return 'cerebras.ai' in base_url_norm or provider_norm == 'cerebras'
+
+
+def _recognize_minimax(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if any(token in base_url_norm for token in ('minimax.io', 'minimaxi.com', 'minimax.chat')):
+        return True
+    return provider_norm in ('minimax', 'minimax_cn')
+
+
+def _recognize_zhipu(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if any(token in base_url_norm for token in ('open.bigmodel.cn', 'api.z.ai', 'bigmodel.cn')):
+        return True
+    return provider_norm in ('zhipu', 'z.ai', 'zai')
+
+
+def _recognize_kimi(provider_norm: str, base_url_norm: str, model_norm: str) -> bool:
+    if 'api.moonshot.ai' in base_url_norm or 'api.moonshot.cn' in base_url_norm:
+        return True
+    return provider_norm in ('kimi', 'moonshot', 'moonshot_cn')
+
+
+def _build_openai_native_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {'reasoning_effort': 'medium' if on else 'none'}
+
+
+def _build_openrouter_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    effort = 'medium' if on else 'none'
+    return {'extra_body': {'reasoning': {'effort': effort}}}
+
+
+def _build_volcengine_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    opts: Dict[str, Any] = {
+        'extra_body': {'thinking': {'type': 'enabled' if on else 'disabled'}},
+    }
+    if on and model_norm.startswith('doubao-seed-2'):
+        opts['reasoning_effort'] = 'medium'
+    return opts
+
+
+def _build_siliconflow_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {'extra_body': {'thinking_budget': 4096 if on else 0}}
+
+
+def _build_deepseek_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    thinking_type = 'enabled' if on else 'disabled'
+    if _deepseek_uses_full_reasoning_control(model_norm):
+        return {
+            'reasoning_effort': 'high' if on else 'none',
+            'extra_body': {'thinking': {'type': thinking_type}},
+        }
+    return {'extra_body': {'thinking': {'type': thinking_type}}}
+
+
+def _build_dashscope_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {
+        'extra_body': {
+            'enable_thinking': on,
+            'thinking_budget': 4096 if on else 0,
+        },
+    }
+
+
+def _build_anthropic_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {'extra_body': {'thinking': {'type': 'enabled' if on else 'disabled'}}}
+
+
+def _build_gemini_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    if _gemini_uses_thinking_level(model_norm):
+        level = 'medium' if on else 'minimal'
+        return {'extra_body': {'thinkingLevel': level}}
+    budget = 4096 if on else 0
+    return {'extra_body': {'thinkingBudget': budget}}
+
+
+def _build_groq_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    if not on:
+        if 'qwen' in model_norm:
+            return {'reasoning_effort': 'none', 'reasoning_format': 'none'}
+        return {'reasoning_effort': 'none'}
+    opts: Dict[str, Any] = {'reasoning_effort': 'medium'}
+    if 'qwen' in model_norm:
+        opts['reasoning_format'] = 'default'
+    elif 'gpt-oss' in model_norm or 'openai/' in model_norm:
+        opts['reasoning_format'] = 'parsed'
+    return opts
+
+
+def _build_together_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    if 'gpt-oss' in model_norm or model_norm.startswith('openai/'):
+        return {'reasoning_effort': 'medium' if on else 'none'}
+    if on:
+        return {'extra_body': {'reasoning': {'enabled': True}}}
+    return {'extra_body': {'reasoning': {'enabled': False}}}
+
+
+def _build_cerebras_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {'reasoning_effort': 'medium' if on else 'none'}
+
+
+def _build_minimax_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    if on:
+        return {
+            'extra_body': {
+                'reasoning_split': True,
+                'thinking': {'type': 'enabled'},
+            },
+        }
+    return {'extra_body': {'thinking': {'type': 'disabled'}}}
+
+
+def _build_zhipu_kimi_options(on: bool, model_norm: str) -> Dict[str, Any]:
+    return {'extra_body': {'thinking': {'type': 'enabled' if on else 'disabled'}}}
+
+
+class _ReasoningSchemaRegistryEntry:
+    __slots__ = ('schema_id', 'recognize', 'build_options')
+
+    def __init__(
+        self,
+        schema_id: str,
+        recognize: Any,
+        build_options: Any,
+    ) -> None:
+        self.schema_id = schema_id
+        self.recognize = recognize
+        self.build_options = build_options
+
+
+_REASONING_SCHEMA_REGISTRY: List[_ReasoningSchemaRegistryEntry] = [
+    _ReasoningSchemaRegistryEntry('openai_native', _recognize_openai_native, _build_openai_native_options),
+    _ReasoningSchemaRegistryEntry('openrouter', _recognize_openrouter, _build_openrouter_options),
+    _ReasoningSchemaRegistryEntry('volcengine', _recognize_volcengine, _build_volcengine_options),
+    _ReasoningSchemaRegistryEntry('siliconflow', _recognize_siliconflow, _build_siliconflow_options),
+    _ReasoningSchemaRegistryEntry('deepseek', _recognize_deepseek, _build_deepseek_options),
+    _ReasoningSchemaRegistryEntry('dashscope', _recognize_dashscope, _build_dashscope_options),
+    _ReasoningSchemaRegistryEntry('anthropic', _recognize_anthropic, _build_anthropic_options),
+    _ReasoningSchemaRegistryEntry('gemini', _recognize_gemini, _build_gemini_options),
+    _ReasoningSchemaRegistryEntry('groq', _recognize_groq, _build_groq_options),
+    _ReasoningSchemaRegistryEntry('together', _recognize_together, _build_together_options),
+    _ReasoningSchemaRegistryEntry('cerebras', _recognize_cerebras, _build_cerebras_options),
+    _ReasoningSchemaRegistryEntry('minimax', _recognize_minimax, _build_minimax_options),
+    _ReasoningSchemaRegistryEntry('zhipu', _recognize_zhipu, _build_zhipu_kimi_options),
+    _ReasoningSchemaRegistryEntry('kimi', _recognize_kimi, _build_zhipu_kimi_options),
+]
+
+_REASONING_SCHEMA_BUILDERS: Dict[str, Any] = {
+    'openai_native': _build_openai_native_options,
+    'openrouter': _build_openrouter_options,
+    'openrouter_compat': _build_openrouter_options,
+    'volcengine': _build_volcengine_options,
+    'siliconflow': _build_siliconflow_options,
+    'deepseek': _build_deepseek_options,
+    'dashscope': _build_dashscope_options,
+    'anthropic': _build_anthropic_options,
+    'gemini': _build_gemini_options,
+    'groq': _build_groq_options,
+    'together': _build_together_options,
+    'cerebras': _build_cerebras_options,
+    'minimax': _build_minimax_options,
+    'zhipu': _build_zhipu_kimi_options,
+    'kimi': _build_zhipu_kimi_options,
+}
+
+
+def resolve_reasoning_schema(provider: str, base_url: str, model: str = '') -> str:
+    """
+    Resolve reasoning control schema from base_url (first), then provider, then fallback.
+    Priority: registry recognition order > openrouter_compat.
+    """
+    provider_norm = str(provider or '').strip().lower()
+    base_url_norm = str(base_url or '').strip().lower()
+    model_norm = str(model or '').strip().lower()
+
+    for entry in _REASONING_SCHEMA_REGISTRY:
+        if entry.recognize(provider_norm, base_url_norm, model_norm):
+            return entry.schema_id
+
+    return 'openrouter_compat'
+
+
+def build_schema_reasoning_options(schema: str, expect_reasoning: bool, model: str = '') -> Dict[str, Any]:
+    """Build chat.completions.create() kwargs for the given reasoning schema."""
+    on = bool(expect_reasoning)
+    model_norm = str(model or '').strip().lower()
+    builder = _REASONING_SCHEMA_BUILDERS.get(schema)
+    if builder is not None:
+        return builder(on, model_norm)
+    return {}
+
+
 def get_reasoning_control_capability(provider: str, base_url: str, model: str) -> Dict[str, Any]:
     """
     Returns capability information for explicit reasoning control.
@@ -1149,47 +1522,35 @@ def get_reasoning_control_capability(provider: str, base_url: str, model: str) -
     - user_selectable: whether UI should allow user to choose expectation
     - control_field_sent: whether backend will attempt to send reasoning control fields
     - status: confirmed | unknown | provider_defined
+    - guarantee_level: strong | conditional | fallback
     - options_for(expect_reasoning): returns kwargs to pass into chat.completions.create()
     """
     provider_norm = str(provider or '').strip().lower()
-    base_url_norm = str(base_url or '').strip().lower()
+    schema = resolve_reasoning_schema(provider=provider, base_url=base_url, model=model)
+    meta = _REASONING_SCHEMA_META.get(schema, _REASONING_SCHEMA_META['openrouter_compat'])
+    supported = bool(meta.get('supported', False))
+    status = str(meta.get('status') or 'unknown')
+    message = str(meta.get('message') or '')
+    control_field_sent = bool(meta.get('control_field_sent', False))
+    guarantee_level = str(meta.get('guarantee_level') or 'fallback')
+    if schema == 'deepseek' and not _deepseek_uses_full_reasoning_control(model):
+        supported = False
+        status = 'provider_defined'
+        message = _REASONING_SCHEMA_PROVIDER_DEFINED_MSG
+        guarantee_level = 'conditional'
 
     def _options_for(expect_reasoning: bool) -> Dict[str, Any]:
-        effort = 'medium' if expect_reasoning else 'none'
-        return {'extra_body': {'reasoning': {'effort': effort}}}
-
-    is_openai_official = provider_norm == 'openai' or 'api.openai.com' in base_url_norm
-    if is_openai_official:
-        return {
-            'supported': True,
-            'user_selectable': True,
-            'control_field_sent': True,
-            'status': 'confirmed',
-            'provider': 'openai',
-            'message': '',
-            'options_for': _options_for,
-        }
-
-    # NOTE: We intentionally do NOT silently no-op for DeepSeek/reasoner here.
-    # DeepSeek reasoner behavior appears model-defined; without a confirmed explicit switch, mark unsupported.
-    if provider_norm == 'deepseek' or 'deepseek' in base_url_norm:
-        return {
-            'supported': False,
-            'user_selectable': True,
-            'control_field_sent': True,
-            'status': 'provider_defined',
-            'provider': provider_norm or 'deepseek',
-            'message': '当前 provider 未确认可用的显式思考开关（模型行为可能由服务商或模型自身决定）',
-            'options_for': _options_for,
-        }
+        return build_schema_reasoning_options(schema, expect_reasoning, model=model)
 
     return {
-        'supported': False,
+        'supported': supported,
         'user_selectable': True,
-        'control_field_sent': True,
-        'status': 'unknown',
-        'provider': provider_norm or 'unknown',
-        'message': '当前 provider/model 未确认支持显式思考控制（未在白名单中）',
+        'control_field_sent': control_field_sent,
+        'status': status,
+        'guarantee_level': guarantee_level,
+        'provider': provider_norm or schema,
+        'schema': schema,
+        'message': message,
         'options_for': _options_for,
     }
 
@@ -11175,6 +11536,8 @@ def ai_reasoning_control_capability():
             'user_selectable': bool(cap.get('user_selectable', True)),
             'control_field_sent': bool(cap.get('control_field_sent', True)),
             'status': str(cap.get('status') or 'unknown'),
+            'guarantee_level': str(cap.get('guarantee_level') or 'fallback'),
+            'schema': str(cap.get('schema') or ''),
             'provider': str(cap.get('provider') or ''),
             'message': str(cap.get('message') or ''),
         }

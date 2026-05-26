@@ -18,6 +18,38 @@ const PROVIDER_PRESETS = {
     'groq': {
         baseUrl: 'https://api.groq.com/openai/v1',
         model: 'llama-3.1-70b-versatile'
+    },
+    'volcengine': {
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        model: 'doubao-seed-1-6-250615'
+    },
+    'siliconflow': {
+        baseUrl: 'https://api.siliconflow.cn/v1',
+        model: 'deepseek-ai/DeepSeek-R1'
+    },
+    'dashscope': {
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen-plus'
+    },
+    'alibaba': {
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        model: 'qwen-plus'
+    },
+    'anthropic': {
+        baseUrl: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-20250514'
+    },
+    'gemini': {
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        model: 'gemini-2.5-flash'
+    },
+    'cerebras': {
+        baseUrl: 'https://api.cerebras.ai/v1',
+        model: 'llama-3.3-70b'
+    },
+    'minimax': {
+        baseUrl: 'https://api.minimax.io/v1',
+        model: 'MiniMax-Text-01'
     }
 };
 
@@ -1847,15 +1879,28 @@ async function refreshReasoningControlCapabilityHint() {
     const supported = Boolean(cap.supported);
     const userSelectable = cap.user_selectable !== false;
     const status = String(cap.status || 'unknown');
+    const guaranteeLevel = String(cap.guarantee_level || '').trim().toLowerCase();
+    const guaranteeHintKeys = {
+        strong: 'aiSettings.reasoningGuaranteeStrong',
+        conditional: 'aiSettings.reasoningGuaranteeConditional',
+        fallback: 'aiSettings.reasoningGuaranteeFallback',
+    };
+
+    hintEl.style.display = 'block';
+    if (guaranteeHintKeys[guaranteeLevel]) {
+        hintEl.style.color = guaranteeLevel === 'strong' ? 'var(--text-secondary)' : '#b45309';
+        hintEl.textContent = t(guaranteeHintKeys[guaranteeLevel]);
+        checkEl.disabled = !userSelectable;
+        return;
+    }
+
     if (supported) {
-        hintEl.style.display = 'block';
         hintEl.style.color = 'var(--text-secondary)';
         hintEl.textContent = t('aiSettings.reasoningCapabilityConfirmed');
         checkEl.disabled = false;
         return;
     }
 
-    hintEl.style.display = 'block';
     hintEl.style.color = '#b45309';
     if (status === 'provider_defined') {
         hintEl.textContent = t('aiSettings.reasoningCapabilityProviderDefined');
