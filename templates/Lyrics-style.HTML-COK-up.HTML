@@ -146,33 +146,6 @@
                 line-height var(--lyric-scale-duration, 360ms) var(--lyric-scale-easing, cubic-bezier(0.32, 0.78, 0.12, 1));
         }
 
-        .next-line-preview-host {
-            width: 100%;
-            position: absolute;
-            left: 0;
-            right: 0;
-            top: 100%;
-            margin-top: 12px;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            flex-wrap: nowrap;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .next-line-preview-host-top {
-            top: auto;
-            bottom: 100%;
-            margin-top: 0;
-            margin-bottom: 12px;
-        }
-
-        .lyric-line.next-line-preview {
-            opacity: 0.35;
-            filter: saturate(0.92);
-        }
-
         .breath-dots-line {
             color: rgba(255, 255, 255, 0.6);
             font-size: calc(3.6em * var(--lyric-scale, 1));
@@ -526,10 +499,7 @@
     <div id="background-brightness-overlay" aria-hidden="true"></div>
     <div class="player-container" id="player-container">
         <audio id="audio-player"></audio>
-        <div id="lyrics-container">
-            <div id="next-line-preview-host-top" class="next-line-preview-host next-line-preview-host-top"></div>
-            <div id="next-line-preview-host" class="next-line-preview-host"></div>
-        </div>
+        <div id="lyrics-container"></div>
     </div>
     <div class="font-slider-container">
         <input type="range" min="0.5" max="1.5" value="1" step="0.05" id="fontSlider">
@@ -1035,8 +1005,6 @@
             const lyricsContainer = document.getElementById('lyrics-container');
             const playerContainer = document.getElementById('player-container');
             const backgroundBrightnessOverlay = document.getElementById('background-brightness-overlay');
-            const nextLinePreviewHost = document.getElementById('next-line-preview-host');
-            const nextLinePreviewHostTop = document.getElementById('next-line-preview-host-top');
             const fontSlider = document.getElementById('fontSlider');
             const audioDeliveryModeWrap = document.getElementById('audio-delivery-mode-wrap');
             const audioDeliveryModeSelect = document.getElementById('audio-delivery-mode');
@@ -1159,16 +1127,23 @@
                 'waveformCanvas'
             ]);
 
+            let alwaysShowNextLine = false;
+
             const contextMenu = document.createElement('div');
             contextMenu.className = 'context-menu';
             const beatToggleButton = document.createElement('button');
+            const nextLineToggleButton = document.createElement('button');
             contextMenu.appendChild(beatToggleButton);
+            contextMenu.appendChild(nextLineToggleButton);
             document.body.appendChild(contextMenu);
 
             function updateContextMenuLabel() {
                 beatToggleButton.textContent = amllBeatEnabled
                     ? 'Disable background beat'
                     : 'Enable background beat';
+                nextLineToggleButton.textContent = alwaysShowNextLine
+                    ? '✓ 提前显示下一行'
+                    : '提前显示下一行';
             }
 
             function hideContextMenu() {
@@ -1192,13 +1167,18 @@
                 hideContextMenu();
             });
 
+            nextLineToggleButton.addEventListener('click', () => {
+                window.setAlwaysShowNextLine(!alwaysShowNextLine);
+                hideContextMenu();
+            });
+
             window.setAmllBeatEnabled = (enabled) => {
                 applyAmllBeatTargetState(Boolean(enabled), 'setAmllBeatEnabled');
             };
 
             window.setAlwaysShowNextLine = (enabled) => {
                 alwaysShowNextLine = Boolean(enabled);
-                updateNextLinePreview();
+                updateLyricsDisplay();
             };
 
             function applyBackgroundBrightnessOverlay(value) {
@@ -2692,7 +2672,6 @@
             const exitDuration = 600;            // 歌词行退出动画时长（毫秒）
             const placeholderDuration = 50;      // 占位符（消失行）延时
             const lineDisplayOffset = 0.5;       // 歌词行提前显示时间（秒）
-            const takeoverAdvance = 0.5;         // 预览行提前切换时间（秒）
             const breathGapSeconds = 6;          // 呼吸点触发间隔（秒）
             const breathDisappearOffsetMs = 500; // 呼吸点消失时机偏移（毫秒，负数提前）
             const breathExitDurationMs = 500;   // 呼吸点退出动画时长（毫秒）
@@ -2709,13 +2688,6 @@
                 dimmed: { opacity: 0.35, filter: 'blur(0)', webkitFilter: 'blur(0)' },
                 active: { opacity: 1, filter: 'none', webkitFilter: 'none' },
                 desaturated: { opacity: 0.35, filter: 'saturate(0.92)', webkitFilter: 'saturate(0.92)' }
-            };
-
-            // 预览歌词行动画关键帧
-            const PREVIEW_KEYFRAMES = {
-                enter: [PREVIEW_STYLES.initial, PREVIEW_STYLES.dimmed],
-                exit: [PREVIEW_STYLES.desaturated, PREVIEW_STYLES.initial],
-                promote: [PREVIEW_STYLES.desaturated, PREVIEW_STYLES.active]
             };
 
             // 设置元素的预览样式（辅助函数）
@@ -2750,11 +2722,7 @@
             let placeholderLines = new Map(); // 跟踪正在消失的行的占位符
             const customEasing = 'cubic-bezier(.27,.14,0,.99)';
             let showAllLinesWhenPaused = false; // 是否暂停时展示所有歌词行
-            let alwaysShowNextLine = false; // 是否始终显示下一行预览
-            let nextLinePreviews = new Map();
-            let nextLinePreviewSignature = '';
             let lineResizeObserver = null;
-            let previewHostRects = new Map();
             let rafId = null; // requestAnimationFrame ID
             const moveTransitionCleanup = new WeakMap(); // 存储当前运行的位移动画信息
             const breathDotsState = { element: null, between: null };
@@ -2783,8 +2751,7 @@
             }
 
             const lyricsPerfMetrics = {
-                updateLyricsDisplay: { count: 0, total: 0, lastReport: performance.now() },
-                updateNextLinePreview: { count: 0, total: 0, lastReport: performance.now() }
+                updateLyricsDisplay: { count: 0, total: 0, lastReport: performance.now() }
             };
 
             function beginPerfMetric(name) {
@@ -2931,8 +2898,7 @@
                 }
 
                 const metrics = measureLineMetrics();
-                const lines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || [])
-                    .filter((line) => !line.classList.contains('next-line-preview'));
+                const lines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || []);
                 if (lines.length === 0) {
                     return clamp(userLyricScale, LYRIC_SCALE_MIN, LYRIC_SCALE_MAX);
                 }
@@ -4255,9 +4221,7 @@
             function insertBreathDotsLine(el, beforeIndex) {
                 if (!lyricsContainer) return;
                 const children = Array.from(lyricsContainer.children).filter((child) => (
-                    child !== nextLinePreviewHost
-                    && child !== nextLinePreviewHostTop
-                    && child.dataset.breathDots !== '1'
+                    child.dataset.breathDots !== '1'
                 ));
                 let inserted = false;
                 for (let i = 0; i < children.length; i++) {
@@ -4269,13 +4233,7 @@
                     }
                 }
                 if (!inserted) {
-                    if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
-                        lyricsContainer.insertBefore(el, nextLinePreviewHostTop);
-                    } else if (nextLinePreviewHost) {
-                        lyricsContainer.insertBefore(el, nextLinePreviewHost);
-                    } else {
-                        lyricsContainer.appendChild(el);
-                    }
+                    lyricsContainer.appendChild(el);
                 }
             }
 
@@ -4346,8 +4304,7 @@
                 return true;
             }
             
-            function createLineElement(lineIndex, options = {}) {
-                const { isPreview = false } = options;
+            function createLineElement(lineIndex) {
                 const line = lyricsData[lineIndex];
                 if (!line) return null;
 
@@ -4367,11 +4324,6 @@
 
                 const lineEl = document.createElement('div');
                 lineEl.classList.add('lyric-line');
-                if (isPreview) {
-                    lineEl.classList.add('next-line-preview');
-                    lineEl.dataset.preview = '1';
-                    lineEl.style.pointerEvents = 'none';
-                }
                 if (hasAnySpecialFont) {
                     lineEl.classList.add('allow-overflow');
                     lineEl.dataset.specialFont = '1';
@@ -4498,15 +4450,13 @@
                     }
                 }
 
-                if (!isPreview) {
-                    lineEl.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        if (lineEl.dataset.startTime) {
-                            audioPlayer.currentTime = parseFloat(lineEl.dataset.startTime);
-                            audioPlayer.play();
-                        }
-                    });
-                }
+                lineEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (lineEl.dataset.startTime) {
+                        audioPlayer.currentTime = parseFloat(lineEl.dataset.startTime);
+                        audioPlayer.play();
+                    }
+                });
                 return lineEl;
             }
 
@@ -4514,15 +4464,8 @@
                 const existingLines = Array.from(lyricsContainer?.querySelectorAll('.lyric-line') || []);
                 existingLines.forEach((line) => line.remove());
                 displayedLines.clear();
-                clearNextLinePreview();
                 removeBreathDotsLine();
                 removeFirstBreathLine();
-                if (nextLinePreviewHostTop && !lyricsContainer.contains(nextLinePreviewHostTop)) {
-                    lyricsContainer.appendChild(nextLinePreviewHostTop);
-                }
-                if (nextLinePreviewHost && !lyricsContainer.contains(nextLinePreviewHost)) {
-                    lyricsContainer.appendChild(nextLinePreviewHost);
-                }
                 if (lyricsData.length === 0) {
                      return;
                 }
@@ -4540,21 +4483,7 @@
                     placeholderLines.delete(lineIndex);
                 }
 
-                // 检查是否有预览行可以复用
-                let incomingLine = null;
-                let previewOldRect = null;
-                const isFromPreview = nextLinePreviews.has(lineIndex);
-
-                if (isFromPreview) {
-                    const previewEl = nextLinePreviews.get(lineIndex);
-                    previewOldRect = previewEl.getBoundingClientRect();
-                    incomingLine = detachPreviewLine(lineIndex);
-                }
-
-                // 如果没有预览行，创建新行
-                if (!incomingLine) {
-                    incomingLine = createLineElement(lineIndex);
-                }
+                const incomingLine = createLineElement(lineIndex);
                 if (!incomingLine) return false;
 
                 // 并发锁：防止重复添加
@@ -4568,8 +4497,7 @@
                 displayedLines.set(lineIndex, lineInfo);
                 observeLineHeight(incomingLine);
 
-                // 处理动画逻辑
-                handleLineAnimation(incomingLine, isFromPreview, previewOldRect);
+                handleLineAnimation(incomingLine);
 
                 const lineData = lyricsData[lineIndex];
                 if (lineData) {
@@ -4712,32 +4640,12 @@
                 return true;
             }
 
-            function clearNextLinePreview() {
-                const hadPreview = nextLinePreviews.size > 0;
-                nextLinePreviews.forEach((previewEl) => {
-                    if (previewEl.__previewEnterAnimation && typeof previewEl.__previewEnterAnimation.cancel === 'function') {
-                        previewEl.__previewEnterAnimation.cancel();
-                    }
-                    delete previewEl.__previewEnterAnimation;
-                    if (previewEl.parentElement) {
-                        previewEl.remove();
-                    }
-                });
-                nextLinePreviews.clear();
-                nextLinePreviewSignature = '';
-                return hadPreview;
-            }
-
             function ensureLineResizeObserver() {
                 if (lineResizeObserver) return lineResizeObserver;
                 lineResizeObserver = new ResizeObserver((entries) => {
                     entries.forEach((entry) => {
                         const element = entry.target;
                         if (!element || suppressAnimations) {
-                            element.__prevHeight = entry.contentRect.height;
-                            return;
-                        }
-                        if (element.classList.contains('next-line-preview')) {
                             element.__prevHeight = entry.contentRect.height;
                             return;
                         }
@@ -4785,112 +4693,11 @@
                 lineResizeObserver.unobserve(element);
             }
 
-            function detachPreviewLine(lineIndex) {
-                const previewEl = nextLinePreviews.get(lineIndex);
-                if (!previewEl) return null;
-
-                // 取消进入动画
-                if (previewEl.__previewEnterAnimation?.cancel) {
-                    previewEl.__previewEnterAnimation.cancel();
-                    delete previewEl.__previewEnterAnimation;
-                }
-
-                // 从预览集合中移除
-                nextLinePreviews.delete(lineIndex);
-                nextLinePreviewSignature = '';
-
-                // 清理预览样式和类
-                previewEl.classList.remove('next-line-preview');
-                previewEl.removeAttribute('data-preview');
-                setPreviewStyle(previewEl, 'active');
-                previewEl.style.pointerEvents = '';
-
-                return previewEl;
-            }
-            
-            function startPreviewExitAnimation(lineIndex, previewEl) {
-                if (!previewEl || previewEl.__previewExitAnimation) return false;
-
-                // 取消进入动画
-                if (previewEl.__previewEnterAnimation?.cancel) {
-                    previewEl.__previewEnterAnimation.cancel();
-                    delete previewEl.__previewEnterAnimation;
-                }
-
-                previewEl.dataset.previewExiting = '1';
-                previewEl.__previewExitAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.exit, {
-                    duration: exitDuration,
-                    easing: customEasing,
-                    fill: 'forwards'
-                });
-
-                previewEl.__previewExitAnimation.onfinish = () => {
-                    if (previewEl.parentElement) {
-                        previewEl.remove();
-                    }
-                    delete previewEl.__previewExitAnimation;
-                    delete previewEl.dataset.previewExiting;
-                    nextLinePreviews.delete(lineIndex);
-                    nextLinePreviewSignature = '';
-                };
-                return true;
-            }
-
-            function cancelPreviewExitAnimation(previewEl) {
-                if (!previewEl?.__previewExitAnimation) return false;
-
-                try {
-                    previewEl.__previewExitAnimation.cancel();
-                } catch (e) { /* 忽略取消错误 */ }
-
-                delete previewEl.__previewExitAnimation;
-                delete previewEl.dataset.previewExiting;
-                setPreviewStyle(previewEl, 'active');
-                return true;
-            }
-
-            /**
-             * 计算预览交接索引（确定哪一行应该从预览状态切换到主显示）
-             * @param {number} currentTime - 当前播放时间
-             * @param {number|null} activeIndex - 当前活动行索引
-             * @param {number|null} nextIndex - 下一行索引
-             * @returns {number|null} 需要交接的行索引，如果没有则为 null
-             */
-            function calculateTakeoverIndex(currentTime, activeIndex, nextIndex) {
-                if (!alwaysShowNextLine || activeIndex == null || nextIndex == null) {
-                    return null;
-                }
-
-                const activeTiming = getLineTiming(lyricsData[activeIndex]);
-                const activeLineVisible = activeIndex != null && !isLineTextEmpty(lyricsData[activeIndex]);
-
-                // 交接条件：
-                // 1. 主歌词行即将消失（提前 takeoverAdvance 时间）
-                // 2. 或者主歌词行不可见
-                if (activeTiming && currentTime >= (activeTiming.disappearTime - takeoverAdvance)) {
-                    return nextIndex;
-                }
-                if (!activeLineVisible) {
-                    return nextIndex;
-                }
-
-                return null;
-            }
-
-            /**
-             * 将歌词行插入到正确的位置
-             * @param {HTMLElement} lineElement - 要插入的歌词行元素
-             * @param {number} lineIndex - 歌词行索引
-             */
             function insertLineAtPosition(lineElement, lineIndex) {
-                // 过滤掉预览宿主和呼吸点元素
                 const children = Array.from(lyricsContainer.children).filter((child) => (
-                    child !== nextLinePreviewHost
-                    && child !== nextLinePreviewHostTop
-                    && child.dataset.breathDots !== '1'
+                    child.dataset.breathDots !== '1'
                 ));
 
-                // 找到第一个索引大于当前行的元素
                 const insertBefore = children.find(child => {
                     const childIndex = parseInt(child.dataset.lineIndex, 10);
                     return childIndex > lineIndex;
@@ -4901,78 +4708,14 @@
                     return;
                 }
 
-                // 如果没有找到，插入到预览宿主之前或追加到容器末尾
-                if (nextLinePreviewHostTop && lyricsContainer.contains(nextLinePreviewHostTop)) {
-                    lyricsContainer.insertBefore(lineElement, nextLinePreviewHostTop);
-                } else if (nextLinePreviewHost) {
-                    lyricsContainer.insertBefore(lineElement, nextLinePreviewHost);
-                } else {
-                    lyricsContainer.appendChild(lineElement);
-                }
+                lyricsContainer.appendChild(lineElement);
             }
 
-            function requestPrepareForElement(lineElement) {
-                if (!lineElement) return;
-                const idx = parseInt(lineElement.dataset.lineIndex, 10);
-                if (!Number.isFinite(idx)) return;
-                const lineInfo = displayedLines.get(idx);
-                const lineData = lyricsData[idx];
-                if (lineInfo && lineData) {
-                    prepareSyllableAnimations(idx, lineElement, lineInfo, lineData);
-                }
-            }
-
-            /**
-             * 处理歌词行的动画效果
-             * @param {HTMLElement} lineElement - 歌词行元素
-             * @param {boolean} isFromPreview - 是否来自预览行
-             * @param {DOMRect|null} previewOldRect - 预览行的原始位置（用于 Flip 动画）
-             */
-            function handleLineAnimation(lineElement, isFromPreview, previewOldRect) {
-                // 清除之前的交接动画
-                if (lineElement.__previewPromoteAnimation) {
-                    lineElement.__previewPromoteAnimation.cancel();
-                    delete lineElement.__previewPromoteAnimation;
-                }
-
+            function handleLineAnimation(lineElement) {
                 const unlock = () => {
                     lineElement.animationLock = false;
                 };
 
-                // 来自预览行的处理逻辑
-                if (isFromPreview) {
-                    // 应用 Flip 动画（位置过渡）
-                    if (!suppressAnimations && previewOldRect) {
-                        const newRect = lineElement.getBoundingClientRect();
-                        const deltaX = previewOldRect.left - newRect.left;
-                        const deltaY = previewOldRect.top - newRect.top;
-                        runFlipTransition(lineElement, deltaX, deltaY);
-                    }
-
-                    // 应用交接动画（从暗淡到激活）
-                    if (!suppressAnimations) {
-                        setPreviewStyle(lineElement, 'desaturated');
-                        lineElement.__previewPromoteAnimation = safeAnimate(lineElement, PREVIEW_KEYFRAMES.promote, {
-                            duration: enterDuration,
-                            easing: customEasing,
-                            fill: 'forwards'
-                        });
-
-                        lineElement.__previewPromoteAnimation.onfinish = () => {
-                            setPreviewStyle(lineElement, 'active');
-                            delete lineElement.__previewPromoteAnimation;
-                            unlock();
-                            requestPrepareForElement(lineElement);
-                        };
-                    } else {
-                        setPreviewStyle(lineElement, 'active');
-                        unlock();
-                        requestPrepareForElement(lineElement);
-                    }
-                    return;
-                }
-
-                // 新建行的处理逻辑
                 if (!suppressAnimations) {
                     setPreviewStyle(lineElement, 'initial');
                     const animation = safeAnimate(lineElement, [PREVIEW_STYLES.initial, PREVIEW_STYLES.active], {
@@ -5012,6 +4755,79 @@
                 });
             }
 
+            function getPrevNonEmptyLineIndex(index) {
+                for (let j = index - 1; j >= 0; j--) {
+                    const line = lyricsData[j];
+                    if (!isLineTextEmpty(line) && getLineTiming(line)) return j;
+                }
+                return null;
+            }
+
+            const EARLY_PREVIEW_CHAIN_GAP_SEC = 0.6;
+
+            function buildEarlyLineChain(anchorIndex) {
+                if (anchorIndex == null || anchorIndex < 0) return [];
+                const chain = [];
+                let prevStart = null;
+                for (let i = anchorIndex + 1; i < lyricsData.length; i++) {
+                    const line = lyricsData[i];
+                    if (isLineTextEmpty(line)) continue;
+                    const timing = getLineTiming(line);
+                    if (!timing) continue;
+                    const startTime = timing.startTime;
+                    if (chain.length === 0) {
+                        chain.push(i);
+                        prevStart = startTime;
+                        continue;
+                    }
+                    if (startTime - prevStart < EARLY_PREVIEW_CHAIN_GAP_SEC) {
+                        chain.push(i);
+                        prevStart = startTime;
+                    } else {
+                        break;
+                    }
+                }
+                return chain;
+            }
+
+            function getEarlyChainInsertAt(chain) {
+                if (!chain.length) return null;
+                const prevIndex = getPrevNonEmptyLineIndex(chain[0]);
+                if (prevIndex == null) return null;
+                const prevTiming = getLineTiming(lyricsData[prevIndex]);
+                if (!prevTiming) return null;
+                return prevTiming.startTime - lineDisplayOffset;
+            }
+
+            function shouldEarlyInsertMainLine(index, currentTime) {
+                if (!alwaysShowNextLine || showAllLinesWhenPaused) return false;
+                const timing = getLineTiming(lyricsData[index]);
+                if (!timing) return false;
+
+                const anchorIndex = getAnchorIndexByTime(currentTime);
+                const chain = buildEarlyLineChain(anchorIndex);
+                const chainInsertAt = getEarlyChainInsertAt(chain);
+
+                if (chain.includes(index) && chainInsertAt != null) {
+                    return currentTime >= chainInsertAt && currentTime < timing.disappearTime;
+                }
+
+                const prevIndex = getPrevNonEmptyLineIndex(index);
+                if (prevIndex == null) return false;
+                const prevTiming = getLineTiming(lyricsData[prevIndex]);
+                const insertAt = prevTiming.startTime - lineDisplayOffset;
+                return currentTime >= insertAt && currentTime < timing.disappearTime;
+            }
+
+            function shouldDisplayMainLine(index, currentTime) {
+                const line = lyricsData[index];
+                const timing = getLineTiming(line);
+                if (!timing || isLineTextEmpty(line)) return false;
+                const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
+                    && (currentTime < timing.disappearTime);
+                return isLineActive || shouldEarlyInsertMainLine(index, currentTime);
+            }
+
             function getLineStartTime(line) {
                 const timing = getLineTiming(line);
                 return timing ? timing.startTime : null;
@@ -5045,23 +4861,6 @@
                 return { activeIndex, nextIndex };
             }
 
-            function getTimeSortedUpcomingIndices(currentTime) {
-                const upcoming = [];
-                for (let i = 0; i < lyricsData.length; i++) {
-                    if (displayedLines.has(i)) continue;
-                    const startTime = getLineStartTime(lyricsData[i]);
-                    if (startTime == null) continue;
-                    if (startTime > currentTime) {
-                        upcoming.push({ index: i, startTime });
-                    }
-                }
-                upcoming.sort((a, b) => {
-                    if (a.startTime === b.startTime) return a.index - b.index;
-                    return a.startTime - b.startTime;
-                });
-                return upcoming;
-            }
-
             function getAnchorIndexByTime(currentTime) {
                 let anchorIndex = null;
                 let bestStart = -Infinity;
@@ -5074,64 +4873,6 @@
                     }
                 }
                 return anchorIndex;
-            }
-
-            function buildNextLinePreviewState(currentTime) {
-                const { activeIndex } = findNextLineIndices(currentTime);
-                const anchorIndex = activeIndex != null ? activeIndex : getAnchorIndexByTime(currentTime);
-                const upcoming = getTimeSortedUpcomingIndices(currentTime);
-
-                const previewIndices = [];
-                let cursor = 0;
-                while (cursor < upcoming.length) {
-                    const current = upcoming[cursor];
-                    previewIndices.push(current.index);
-                    const next = upcoming[cursor + 1];
-                    if (!next) break;
-                    if ((next.startTime - current.startTime) * 1000 < 200) {
-                        cursor += 1;
-                        continue;
-                    }
-                    break;
-                }
-
-                return { anchorIndex, previewIndices };
-            }
-
-            function makeNextLinePreviewSignature(anchorIndex, previewIndices) {
-                const anchorPart = anchorIndex == null ? 'na' : String(anchorIndex);
-                return `${anchorPart}|${previewIndices.join(',')}`;
-            }
-
-            function hasPreviewDomMismatch(previewIndices) {
-                if (nextLinePreviews.size !== previewIndices.length) {
-                    return true;
-                }
-                for (const index of previewIndices) {
-                    const previewEl = nextLinePreviews.get(index);
-                    if (!previewEl || previewEl.dataset.previewExiting) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-
-            function willNextLinePreviewChange(currentTime, previewState = null) {
-                if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
-                    return nextLinePreviews.size > 0;
-                }
-
-                const state = previewState || buildNextLinePreviewState(currentTime);
-                if (state.previewIndices.length === 0) {
-                    return nextLinePreviews.size > 0;
-                }
-
-                const signature = makeNextLinePreviewSignature(state.anchorIndex, state.previewIndices);
-                if (signature !== nextLinePreviewSignature) {
-                    return true;
-                }
-
-                return hasPreviewDomMismatch(state.previewIndices);
             }
 
             function getScaleFromTransform(transformValue) {
@@ -5239,115 +4980,7 @@
                 }
             }
 
-            function updateNextLinePreview(previewState = null) {
-                const perfStartedAt = beginPerfMetric('updateNextLinePreview');
-                let didChange = false;
-
-                try {
-                    if (!alwaysShowNextLine || showAllLinesWhenPaused || !nextLinePreviewHost) {
-                        didChange = clearNextLinePreview();
-                        return didChange;
-                    }
-
-                    const currentTime = audioPlayer.currentTime;
-                    const state = previewState || buildNextLinePreviewState(currentTime);
-                    const { anchorIndex, previewIndices } = state;
-
-                    if (previewIndices.length === 0) {
-                        didChange = clearNextLinePreview();
-                        return didChange;
-                    }
-
-                    const signature = makeNextLinePreviewSignature(anchorIndex, previewIndices);
-                    const signatureChanged = signature !== nextLinePreviewSignature;
-                    const hasAnyExiting = Array.from(nextLinePreviews.values()).some((previewEl) => Boolean(previewEl.dataset.previewExiting));
-                    const domMismatch = hasPreviewDomMismatch(previewIndices);
-
-                    if (!signatureChanged && !domMismatch && !hasAnyExiting) {
-                        return false;
-                    }
-
-                    const desired = new Set(previewIndices);
-                    const sortedIndices = previewIndices.slice().sort((a, b) => a - b);
-                    const previewOldRects = new Map();
-
-                    if (!suppressAnimations) {
-                        nextLinePreviews.forEach((previewEl) => {
-                            previewOldRects.set(previewEl, previewEl.getBoundingClientRect());
-                        });
-                    }
-
-                    nextLinePreviews.forEach((previewEl, index) => {
-                        if (!desired.has(index)) {
-                            didChange = startPreviewExitAnimation(index, previewEl) || didChange;
-                        } else if (previewEl.dataset.previewExiting) {
-                            didChange = cancelPreviewExitAnimation(previewEl) || didChange;
-                        }
-                    });
-
-                    sortedIndices.forEach((index) => {
-                        if (nextLinePreviews.has(index)) return;
-
-                        const previewEl = createLineElement(index, { isPreview: true });
-                        if (!previewEl) return;
-
-                        nextLinePreviews.set(index, previewEl);
-                        didChange = true;
-
-                        const host = (anchorIndex != null && index < anchorIndex && nextLinePreviewHostTop)
-                            ? nextLinePreviewHostTop
-                            : nextLinePreviewHost;
-                        host.appendChild(previewEl);
-
-                        if (!suppressAnimations) {
-                            setPreviewStyle(previewEl, 'initial');
-                            previewEl.__previewEnterAnimation = safeAnimate(previewEl, PREVIEW_KEYFRAMES.enter, {
-                                duration: enterDuration,
-                                easing: customEasing,
-                                fill: 'forwards'
-                            });
-                        } else {
-                            setPreviewStyle(previewEl, 'active');
-                        }
-                    });
-
-                    if (nextLinePreviewHostTop) {
-                        const topOrder = sortedIndices.filter((index) => anchorIndex != null && index < anchorIndex);
-                        topOrder.forEach((index) => {
-                            const previewEl = nextLinePreviews.get(index);
-                            if (!previewEl || previewEl.parentElement === nextLinePreviewHostTop) return;
-                            nextLinePreviewHostTop.appendChild(previewEl);
-                            didChange = true;
-                        });
-                    }
-
-                    const bottomOrder = sortedIndices.filter((index) => !(anchorIndex != null && index < anchorIndex));
-                    bottomOrder.forEach((index) => {
-                        const previewEl = nextLinePreviews.get(index);
-                        if (!previewEl || previewEl.parentElement === nextLinePreviewHost) return;
-                        nextLinePreviewHost.appendChild(previewEl);
-                        didChange = true;
-                    });
-
-                    if (!suppressAnimations) {
-                        nextLinePreviews.forEach((previewEl) => {
-                            const oldRect = previewOldRects.get(previewEl);
-                            if (!oldRect) return;
-                            const newRect = previewEl.getBoundingClientRect();
-                            const deltaX = oldRect.left - newRect.left;
-                            const deltaY = oldRect.top - newRect.top;
-                            runFlipTransition(previewEl, deltaX, deltaY);
-                        });
-                    }
-
-                    nextLinePreviewSignature = signature;
-                    return didChange || signatureChanged || domMismatch || hasAnyExiting;
-                } finally {
-                    endPerfMetric('updateNextLinePreview', perfStartedAt);
-                }
-            }
-
-            function willDisplayedLinesChange(currentTime, takeoverIndex) {
+            function willDisplayedLinesChange(currentTime) {
                 if (showAllLinesWhenPaused) {
                     if (displayedLines.size !== lyricsData.length) {
                         return true;
@@ -5372,11 +5005,7 @@
                         continue;
                     }
 
-                    const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
-                        && (currentTime < timing.disappearTime);
-                    const isTakeoverLine = takeoverIndex === index
-                        && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
-                    const shouldDisplay = isLineActive || isTakeoverLine;
+                    const shouldDisplay = shouldDisplayMainLine(index, currentTime);
 
                     if (shouldDisplay !== isLineDisplayed) {
                         return true;
@@ -5402,19 +5031,13 @@
 
                 try {
                     const currentTime = audioPlayer.currentTime;
-                    const { activeIndex, nextIndex } = findNextLineIndices(currentTime);
-                    const takeoverIndex = calculateTakeoverIndex(currentTime, activeIndex, nextIndex);
                     const firstLineStart = getLineStartTime(lyricsData[0]);
                     const firstBreathEnd = typeof firstLineStart === 'number'
                         ? Math.max(0, firstLineStart - lineDisplayOffset + 0.1)
                         : null;
-                    const previewState = (alwaysShowNextLine && !showAllLinesWhenPaused && nextLinePreviewHost)
-                        ? buildNextLinePreviewState(currentTime)
-                        : null;
 
                     const shouldTrackFlip = !suppressAnimations && (
-                        willDisplayedLinesChange(currentTime, takeoverIndex)
-                        || willNextLinePreviewChange(currentTime, previewState)
+                        willDisplayedLinesChange(currentTime)
                         || willFirstBreathLineChange(firstBreathEnd, currentTime)
                         || willBreathDotsLineChange(currentTime)
                     );
@@ -5435,20 +5058,16 @@
                         });
                     } else {
                         lyricsData.forEach((line, index) => {
+                            const isLineDisplayed = displayedLines.has(index);
                             const timing = getLineTiming(line);
                             if (!timing || isLineTextEmpty(line)) {
-                                if (displayedLines.has(index)) {
+                                if (isLineDisplayed) {
                                     structureChanged = removeLine(index) || structureChanged;
                                 }
                                 return;
                             }
 
-                            const isLineDisplayed = displayedLines.has(index);
-                            const isLineActive = (currentTime >= timing.startTime - lineDisplayOffset)
-                                && (currentTime < timing.disappearTime);
-                            const isTakeoverLine = takeoverIndex === index
-                                && currentTime >= (timing.startTime - lineDisplayOffset - takeoverAdvance);
-                            const shouldDisplay = isLineActive || isTakeoverLine;
+                            const shouldDisplay = shouldDisplayMainLine(index, currentTime);
 
                             if (shouldDisplay && !isLineDisplayed) {
                                 structureChanged = addLine(index) || structureChanged;
@@ -5464,8 +5083,6 @@
                         structureChanged = removeFirstBreathLine() || structureChanged;
                     }
                     structureChanged = updateBreathDots(currentTime) || structureChanged;
-
-                    structureChanged = updateNextLinePreview(previewState) || structureChanged;
 
                     if (!suppressAnimations && oldPositions && structureChanged) {
                         const newPositions = [];
@@ -5637,25 +5254,7 @@
             });
             window.addEventListener('resize', () => {
                 scheduleAutoScale();
-                updateNextLinePreview();
             });
-
-            if (lyricsContainer) {
-                const previewHostObserver = new ResizeObserver(() => {
-                    [nextLinePreviewHostTop, nextLinePreviewHost].forEach((host) => {
-                        if (!host) return;
-                        const newRect = host.getBoundingClientRect();
-                        const prevRect = previewHostRects.get(host) || null;
-                        if (prevRect) {
-                            const deltaX = prevRect.left - newRect.left;
-                            const deltaY = prevRect.top - newRect.top;
-                            runFlipTransition(host, deltaX, deltaY);
-                        }
-                        previewHostRects.set(host, newRect);
-                    });
-                });
-                previewHostObserver.observe(lyricsContainer);
-            }
 
             function safeAnimate(element, keyframes, options) {
                 if (element.animate) {
