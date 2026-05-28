@@ -1236,6 +1236,13 @@ def _deepseek_uses_full_reasoning_control(model: str) -> bool:
     return False
 
 
+def _deepseek_is_v4_family(model_norm: str) -> bool:
+    return bool(model_norm) and (
+        model_norm.startswith('deepseek-v4')
+        or model_norm.startswith('deepseek_v4')
+    )
+
+
 def _gemini_uses_thinking_level(model_norm: str) -> bool:
     """Gemini 3.x uses thinkingLevel; 2.5 uses thinkingBudget (must not mix)."""
     if not model_norm:
@@ -1371,6 +1378,13 @@ def _build_siliconflow_options(on: bool, model_norm: str) -> Dict[str, Any]:
 
 def _build_deepseek_options(on: bool, model_norm: str) -> Dict[str, Any]:
     thinking_type = 'enabled' if on else 'disabled'
+    if _deepseek_is_v4_family(model_norm):
+        if on:
+            return {
+                'reasoning_effort': 'high',
+                'extra_body': {'thinking': {'type': thinking_type}},
+            }
+        return {'extra_body': {'thinking': {'type': thinking_type}}}
     if _deepseek_uses_full_reasoning_control(model_norm):
         return {
             'reasoning_effort': 'high' if on else 'none',
@@ -4958,6 +4972,82 @@ def build_translated_dict_from_text(text: str) -> Dict[str, str]:
         display_index, translated_text = parsed_line
         translated_dict[display_index] = translated_text
     return translated_dict
+
+
+def merge_model_stream_texts(content: str, reasoning: str, thinking_summary: str = '') -> str:
+    parts: List[str] = []
+    for segment in (thinking_summary, content, reasoning):
+        if not segment:
+            continue
+        stripped = segment.strip()
+        if stripped and stripped not in parts:
+            parts.append(stripped)
+    return '\n\n'.join(parts)
+
+
+def resolve_translation_source_text(content: str, reasoning: str, thinking_summary: str = '') -> str:
+    for candidate in (content, reasoning, merge_model_stream_texts(content, reasoning, thinking_summary)):
+        if candidate and build_translated_dict_from_text(candidate):
+            return candidate
+    merged = merge_model_stream_texts(content, reasoning, thinking_summary)
+    if merged:
+        return merged
+    return content or reasoning or thinking_summary or ''
+
+
+def build_fallback_timestamped_lines(prose: str, line_prefixes: List[str]) -> List[str]:
+    if not prose or not line_prefixes:
+        return []
+    final_lyrics: List[str] = []
+    prefix_idx = 0
+    for raw_line in prose.split('\n'):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('思考') or stripped.startswith('歌曲理解'):
+            continue
+        if parse_numbered_translation_line(raw_line):
+            continue
+        if prefix_idx >= len(line_prefixes):
+            break
+        prefix = line_prefixes[prefix_idx]
+        final_lyrics.append(f"{prefix}{stripped}" if prefix else stripped)
+        prefix_idx += 1
+    return final_lyrics
+
+
+def extract_batch_item_stream_section(stream_text: str, item_id: str) -> str:
+    if not stream_text or not item_id:
+        return ''
+    id_header = re.compile(rf'^\s*\[ID:{re.escape(item_id)}\]\s*$', re.MULTILINE)
+    match = id_header.search(stream_text)
+    if not match:
+        return ''
+    start = match.end()
+    next_match = re.search(r'^\s*\[ID:.+?\]\s*$', stream_text[start:], re.MULTILINE)
+    end = start + next_match.start() if next_match else len(stream_text)
+    return stream_text[start:end].strip()
+
+
+def finalize_translation_dict_and_lyrics(
+    content: str,
+    reasoning: str,
+    thinking_summary: str,
+    prompt_lines: List[Dict[str, Any]],
+    line_prefixes: List[str],
+) -> Tuple[Dict[str, str], List[str]]:
+    parse_text = resolve_translation_source_text(content, reasoning, thinking_summary)
+    final_dict = build_translated_dict_from_text(parse_text)
+    if final_dict:
+        final_lyrics = merge_translated_dict_into_final_lyrics(
+            final_dict, prompt_lines, line_prefixes
+        )
+        return final_dict, final_lyrics
+    if parse_text.strip():
+        fallback_lyrics = build_fallback_timestamped_lines(parse_text, line_prefixes)
+        if fallback_lyrics:
+            return {}, fallback_lyrics
+    return {}, []
 
 
 def merge_translated_dict_into_final_lyrics(
@@ -12179,8 +12269,12 @@ def translate_lyrics():
 
                     grouped: Dict[str, Dict[str, str]] = {item['id']: {} for item in valid_items}
                     last_sent_counts = {item['id']: 0 for item in valid_items}
+                    batch_fallback_lyrics: Dict[str, List[str]] = {}
                     current_id: Optional[str] = None
                     stream_buffer = ""
+                    stream_content_full = ""
+                    stream_reasoning = ""
+                    stream_buffer_full = ""
                     last_flush_at = time.monotonic()
                     id_pattern = re.compile(r'^\s*\[ID:(.+?)\]\s*$')
 
@@ -12192,6 +12286,22 @@ def translate_lyrics():
                         emitted = False
                         for item in valid_items:
                             item_id = item['id']
+                            if item_id in batch_fallback_lyrics:
+                                final_lyrics = batch_fallback_lyrics[item_id]
+                                if not final_lyrics:
+                                    continue
+                                if not force and last_sent_counts.get(item_id, 0) >= len(final_lyrics):
+                                    continue
+                                payload = {
+                                    'id': item_id,
+                                    'jsonFile': item.get('jsonFile', ''),
+                                    'translations': final_lyrics,
+                                    'hasTimestamps': item['hasTimestamps'],
+                                }
+                                yield f"content:{json.dumps(payload)}\n"
+                                last_sent_counts[item_id] = len(final_lyrics)
+                                emitted = True
+                                continue
                             translated_dict = grouped.get(item_id, {})
                             if not translated_dict:
                                 continue
@@ -12239,7 +12349,12 @@ def translate_lyrics():
                         if expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                             reasoning = delta.reasoning_content
                             yield f"reasoning:{json.dumps({'reasoning': reasoning})}\n"
+                        elif not expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                            stream_reasoning += delta.reasoning_content
+                            stream_buffer_full += delta.reasoning_content
                         if hasattr(delta, 'content') and delta.content:
+                            stream_buffer_full += delta.content
+                            stream_content_full += delta.content
                             stream_buffer += delta.content
                             lines, stream_buffer = iter_complete_lines(stream_buffer)
                             for raw_line in lines:
@@ -12280,6 +12395,30 @@ def translate_lyrics():
                                 continue
                             display_index, translated_text = parsed_line
                             grouped.setdefault(current_id, {})[display_index] = translated_text
+
+                    for item in valid_items:
+                        item_id = item['id']
+                        translated_dict = grouped.get(item_id, {})
+                        expected_count = len(item.get('prompt_lines', []))
+                        if expected_count and len(translated_dict) >= expected_count:
+                            continue
+                        section_text = extract_batch_item_stream_section(stream_content_full, item_id)
+                        item_reasoning = extract_batch_item_stream_section(stream_reasoning, item_id)
+                        if not item_reasoning and len(valid_items) == 1:
+                            item_reasoning = stream_reasoning.strip()
+                        line_prefixes = item['timestamps'] if item['hasTimestamps'] else [''] * len(item['lyrics'])
+                        final_dict, final_lyrics = finalize_translation_dict_and_lyrics(
+                            section_text,
+                            item_reasoning,
+                            '',
+                            item.get('prompt_lines', []),
+                            line_prefixes,
+                        )
+                        if final_dict:
+                            grouped[item_id] = {**grouped.get(item_id, {}), **final_dict}
+                        elif final_lyrics:
+                            batch_fallback_lyrics[item_id] = final_lyrics
+
                     yield from emit_updates(True)
 
                     audit_payload.update({
@@ -12579,7 +12718,7 @@ def translate_lyrics():
 
                 # 收集翻译结果
                 full_translation = ""
-                reasoning_content = ""
+                stream_reasoning = ""
                 current_reasoning = ""
                 received_chunks = 0
 
@@ -12607,16 +12746,22 @@ def translate_lyrics():
                         content = delta.reasoning_content
                         current_reasoning += content
                         app.logger.debug(f"收到思维链内容 [ID: {request_id}]: {content}")
-                        # 发送思维链内容
                         yield f"reasoning:{json.dumps({'reasoning': current_reasoning})}\n"
-                    
+                    elif not expect_reasoning and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                        stream_reasoning += delta.reasoning_content
+
                     # 检查是否有普通内容
                     if hasattr(delta, 'content') and delta.content:
                         content = delta.content
                         full_translation += content
                         app.logger.debug(f"收到翻译内容 [ID: {request_id}]: {content}")
 
-                        translated_dict = build_translated_dict_from_text(full_translation)
+                        parse_text = resolve_translation_source_text(
+                            full_translation,
+                            stream_reasoning or current_reasoning,
+                            thinking_summary,
+                        )
+                        translated_dict = build_translated_dict_from_text(parse_text)
                         if translated_dict:
                             final_lyrics = merge_translated_dict_into_final_lyrics(
                                 translated_dict, prompt_lines, line_prefixes
@@ -12629,10 +12774,22 @@ def translate_lyrics():
                                 yield f"content:{json.dumps(payload)}\n"
                                 app.logger.debug(f"成功合并 {len(final_lyrics)} 行翻译歌词")
 
-                final_dict = build_translated_dict_from_text(full_translation)
-                if not final_dict:
+                reasoning_for_parse = current_reasoning if expect_reasoning else stream_reasoning
+                final_dict, final_lyrics = finalize_translation_dict_and_lyrics(
+                    full_translation,
+                    reasoning_for_parse,
+                    thinking_summary,
+                    prompt_lines,
+                    line_prefixes,
+                )
+                if not final_lyrics:
                     translation_parse_failed = True
-                    preview = full_translation[:300]
+                    parse_text = resolve_translation_source_text(
+                        full_translation,
+                        reasoning_for_parse,
+                        thinking_summary,
+                    )
+                    preview = parse_text[:300]
                     error_payload = {
                         'status': 'error',
                         'code': 'no_numbered_translations',
@@ -12651,16 +12808,12 @@ def translate_lyrics():
                     )
                     yield f"content:{json.dumps(error_payload)}\n"
                 else:
-                    final_lyrics = merge_translated_dict_into_final_lyrics(
-                        final_dict, prompt_lines, line_prefixes
-                    )
-                    if final_lyrics:
-                        payload = {
-                            'translations': final_lyrics,
-                            'hasTimestamps': has_timestamps
-                        }
-                        yield f"content:{json.dumps(payload)}\n"
-                        app.logger.debug(f"终态合并 {len(final_lyrics)} 行翻译歌词")
+                    payload = {
+                        'translations': final_lyrics,
+                        'hasTimestamps': has_timestamps
+                    }
+                    yield f"content:{json.dumps(payload)}\n"
+                    app.logger.debug(f"终态合并 {len(final_lyrics)} 行翻译歌词")
 
                 # 记录流式响应完成
                 stream_duration = time.time() - stream_start_time

@@ -236,6 +236,16 @@
     }
 
     function buildResultText(translationContent, thinkingContent, reasoningContent) {
+        const mergeFn = typeof window.mergeAiTranslationDisplayText === 'function'
+            ? window.mergeAiTranslationDisplayText
+            : null;
+        if (mergeFn) {
+            return mergeFn({
+                translation: translationContent,
+                thinking: thinkingContent,
+                reasoning: reasoningContent,
+            });
+        }
         const sections = [];
         if (translationContent) {
             sections.push(translationContent);
@@ -513,10 +523,15 @@
             let buffer = '';
             let translationHasTimestamps = true;
             let translationReceived = false;
+            let streamFailed = false;
 
             const updateResultOutput = () => {
                 if (resultOutput) {
-                    resultOutput.value = buildResultText(translationContent, thinkingContent, reasoningContent);
+                    resultOutput.value = buildResultText(
+                        translationContent,
+                        thinkingContent,
+                        reasoningContent
+                    );
                 }
                 if (copyBtn) {
                     copyBtn.disabled = !String(resultOutput ? resultOutput.value : '').trim();
@@ -594,6 +609,20 @@
                 if (line.startsWith('content:')) {
                     try {
                         const content = JSON.parse(line.slice(8));
+                        if (content.status === 'error') {
+                            const errorMessage = content.code === 'no_numbered_translations'
+                                ? t('batch.noNumberedTranslations')
+                                : (content.message || t('batch.translationError'));
+                            if (!translationOutputActivated) {
+                                markDirty(activateStage('translationOutput', t('batch.generatingTranslation')));
+                                translationOutputActivated = true;
+                            }
+                            markDirty(failStage('translationOutput', errorMessage));
+                            flushStages(errorMessage, 'error', { useShine: false });
+                            streamFailed = true;
+                            return;
+                        }
+
                         if (Object.prototype.hasOwnProperty.call(content, 'hasTimestamps')) {
                             translationHasTimestamps = content.hasTimestamps;
                         }
@@ -653,13 +682,45 @@
                 return;
             }
 
+            if (streamFailed) {
+                setBadge('failed');
+                return;
+            }
+
+            if (typeof window.finalizeTranslationFromStream === 'function') {
+                const finalized = window.finalizeTranslationFromStream({
+                    translationContent,
+                    thinkingContent,
+                    reasoningContent,
+                    translationReceived,
+                });
+                translationContent = finalized.translationContent;
+                thinkingContent = finalized.thinkingContent;
+                reasoningContent = finalized.reasoningContent;
+                translationReceived = finalized.translationReceived;
+                if (resultOutput) {
+                    resultOutput.value = finalized.displayText;
+                }
+                if (copyBtn) {
+                    copyBtn.disabled = !String(finalized.displayText || '').trim();
+                }
+            }
+
             markDirty(completeStage('translationRequest', t('batch.flowEnded')));
-            markDirty(completeStage('translationOutput', translationReceived ? t('batch.receivedTranslation') : t('batch.translationEmpty')));
+            if (!translationReceived) {
+                const emptyMessage = t('batch.noNumberedTranslations');
+                markDirty(failStage('translationOutput', emptyMessage));
+                flushStages(emptyMessage, 'error', { useShine: false });
+                setBadge('failed');
+                return;
+            }
+
+            markDirty(completeStage('translationOutput', t('batch.receivedTranslation')));
             if (!postProcessingActivated) {
                 markDirty(activateStage('postProcessing', t('batch.writingTranslation')));
                 postProcessingActivated = true;
             }
-            markDirty(completeStage('postProcessing', translationReceived ? t('batch.translationWritten') : t('batch.translationEmpty')));
+            markDirty(completeStage('postProcessing', t('batch.translationWritten')));
             flushStages();
 
             const successMessage = (!translationHasTimestamps && translationReceived)

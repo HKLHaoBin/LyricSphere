@@ -1171,6 +1171,14 @@ async function translateLyrics() {
         let streamFailed = false;
 
         const translationEditorUpdater = () => {
+            if (typeof window.mergeAiTranslationDisplayText === 'function') {
+                translationEditor.value = window.mergeAiTranslationDisplayText({
+                    translation: translationContent,
+                    thinking: thinkingContent,
+                    reasoning: reasoningContent,
+                });
+                return;
+            }
             const sections = [];
             if (translationContent) {
                 sections.push(translationContent);
@@ -1334,6 +1342,20 @@ async function translateLyrics() {
 
         if (streamFailed) {
             return;
+        }
+
+        if (typeof window.finalizeTranslationFromStream === 'function') {
+            const finalized = window.finalizeTranslationFromStream({
+                translationContent,
+                thinkingContent,
+                reasoningContent,
+                translationReceived,
+            });
+            translationContent = finalized.translationContent;
+            thinkingContent = finalized.thinkingContent;
+            reasoningContent = finalized.reasoningContent;
+            translationReceived = finalized.translationReceived;
+            translationEditor.value = finalized.displayText;
         }
 
         markDirty(completeStage('translationRequest', t('batch.flowEnded')));

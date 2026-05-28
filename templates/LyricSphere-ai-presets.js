@@ -1769,15 +1769,54 @@ function applyProviderPreset(providerSelectId, baseInputId, modelInputId, forceA
     const preset = PROVIDER_PRESETS[provider];
 
     if (provider === 'custom' || !preset) {
-        baseUrlInput.readOnly = false;
-        modelInput.readOnly = false;
         return;
     }
 
     baseUrlInput.value = preset.baseUrl;
     modelInput.value = preset.model;
-    baseUrlInput.readOnly = true;
-    modelInput.readOnly = true;
+}
+
+function mergeAiTranslationDisplayText({ translation = '', thinking = '', reasoning = '' } = {}) {
+    const sections = [];
+    if (translation) {
+        sections.push(translation);
+    }
+    if (thinking) {
+        sections.push('歌曲理解:\n' + thinking);
+    }
+    if (reasoning) {
+        sections.push('思考过程:\n' + reasoning);
+    }
+    return sections.join('\n\n');
+}
+
+function finalizeTranslationFromStream({
+    translationContent = '',
+    thinkingContent = '',
+    reasoningContent = '',
+    translationReceived = false,
+} = {}) {
+    let nextTranslation = translationContent;
+    let nextThinking = thinkingContent;
+    let nextReasoning = reasoningContent;
+    const received = translationReceived;
+
+    return {
+        translationContent: nextTranslation,
+        thinkingContent: nextThinking,
+        reasoningContent: nextReasoning,
+        translationReceived: received,
+        displayText: mergeAiTranslationDisplayText({
+            translation: nextTranslation,
+            thinking: nextThinking,
+            reasoning: nextReasoning,
+        }),
+    };
+}
+
+if (typeof window !== 'undefined') {
+    window.mergeAiTranslationDisplayText = mergeAiTranslationDisplayText;
+    window.finalizeTranslationFromStream = finalizeTranslationFromStream;
 }
 
 function updateBaseUrlAndModel(forceApply = false) {
