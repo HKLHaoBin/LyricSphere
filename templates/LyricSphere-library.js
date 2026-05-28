@@ -2984,7 +2984,8 @@ async function saveBatchTranslationToDisk(summary, payload) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             path: normalizeSongsUrl(targetPath),
-            content: translations.join('\n')
+            content: translations.join('\n'),
+            jsonFile: summary.filename || undefined
         })
     })
     const saveData = await saveRes.json()
@@ -4704,10 +4705,11 @@ function saveLyrics(index) {
         fetch('/save_lyrics', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                path: fullPath,
-                content: content
-            })
+        body: JSON.stringify({
+            path: fullPath,
+            content: content,
+            jsonFile: currentJsonFile || undefined
+        })
         })
             .then(response => response.json())
             .then(data => {

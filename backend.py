@@ -16,6 +16,7 @@ import re
 import shutil
 import time
 import tempfile
+import atexit
 import webbrowser
 import sys
 import xml
@@ -2441,18 +2442,29 @@ def _normalize_backup_basename(original_name: str) -> str:
     return f"{stem[:available]}_{hash_part}{suffix}"
 
 
+def backup_song_subdirectory(name_or_path: Union[str, Path]) -> Path:
+    """Per-song backup subdirectory under static/backups/by-song/{shard}/{basename}/."""
+    original_name = name_or_path.name if isinstance(name_or_path, Path) else Path(str(name_or_path)).name
+    base_name = _normalize_backup_basename(original_name)
+    shard = hashlib.sha1(base_name.encode('utf-8')).hexdigest()[:2]
+    return BACKUP_DIR / 'by-song' / shard / base_name
+
+
 def build_backup_path(name_or_path: Union[str, Path],
                       timestamp: Optional[Union[str, int]] = None,
-                      directory: Path = BACKUP_DIR) -> Path:
+                      directory: Optional[Path] = None) -> Path:
     """Create a filesystem-safe backup path for the given target file."""
     original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
     base_name = _normalize_backup_basename(original_name)
+    if directory is None:
+        directory = backup_song_subdirectory(name_or_path)
     if isinstance(timestamp, (int, float)):
         timestamp_str = str(int(timestamp))
     elif timestamp is not None:
         timestamp_str = str(timestamp)
     else:
         timestamp_str = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+    directory.mkdir(parents=True, exist_ok=True)
     return directory / f"{base_name}.{timestamp_str}"
 
 
@@ -2460,6 +2472,47 @@ def backup_prefix(name_or_path: Union[str, Path]) -> str:
     """Return the normalized prefix used for locating backups."""
     original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
     return f"{_normalize_backup_basename(original_name)}."
+
+
+def _backup_file_recency_key(backup_file: Path, prefix: str) -> Tuple[int, float]:
+    """Sort key for iter_backup_files: parsed backups by epoch, unparseable last."""
+    timestamp_part = backup_file.name[len(prefix):]
+    parsed_time: Optional[datetime] = None
+    try:
+        parsed_time = datetime.strptime(timestamp_part, BACKUP_TIMESTAMP_FORMAT)
+    except ValueError:
+        if timestamp_part.isdigit():
+            try:
+                parsed_time = datetime.fromtimestamp(int(timestamp_part))
+            except (OSError, OverflowError, ValueError):
+                parsed_time = None
+    if parsed_time is None:
+        return (0, 0.0)
+    return (1, parsed_time.timestamp())
+
+
+def iter_backup_files(name_or_path: Union[str, Path]) -> List[Path]:
+    """List backups for a file: per-song subdir first, then legacy flat BACKUP_DIR."""
+    prefix = backup_prefix(name_or_path)
+    collected: List[Path] = []
+    subdir = backup_song_subdirectory(name_or_path)
+    if subdir.is_dir():
+        for backup_file in subdir.iterdir():
+            if backup_file.is_file() and backup_file.name.startswith(prefix):
+                collected.append(backup_file)
+    if BACKUP_DIR.is_dir():
+        for backup_file in BACKUP_DIR.iterdir():
+            if backup_file.is_file() and backup_file.name.startswith(prefix):
+                collected.append(backup_file)
+    return sorted(collected, key=lambda p: _backup_file_recency_key(p, prefix), reverse=True)
+
+
+def backup_public_relative_path(backup_file: Path) -> str:
+    """Relative path under static/backups for build_public_url."""
+    try:
+        return backup_file.relative_to(BACKUP_DIR).as_posix()
+    except ValueError:
+        return backup_file.name
 
 
 def _sanitize_client_id(raw_id: str) -> str:
@@ -6611,7 +6664,12 @@ def quick_editor_save():
     with open(lyrics_path, 'w', encoding='utf-8') as f:
         f.write(qe_dump_lys(doc))
 
-    for jp in find_related_json(str(lyrics_path)):
+    json_path_hint = meta.get('json_path')
+    if json_path_hint and Path(json_path_hint).is_file():
+        related_json_paths = [str(Path(json_path_hint).resolve())]
+    else:
+        related_json_paths = find_related_json(str(lyrics_path))
+    for jp in related_json_paths:
         upsert_song_search_index_for_path(Path(jp))
 
     try:
@@ -7197,16 +7255,11 @@ def restore_file():
 
             # 为每个关联文件创建恢复任务
             for file in related_files:
-                file_backups = []
-                prefix = backup_prefix(Path(file))
-                for backup in BACKUP_DIR.iterdir():
-                    if backup.is_file() and backup.name.startswith(prefix):
-                        file_backups.append(backup)
+                file_backups = iter_backup_files(Path(file))
 
                 if not file_backups:
                     continue
 
-                file_backups.sort(reverse=True)
                 latest_backup = file_backups[0]
                 shutil.copy2(latest_backup, file)  # 恢复文件
                 try:
@@ -7349,6 +7402,8 @@ def save_lyrics():
             app.logger.error(f"路径指向目录而非文件: {file_path}")
             return jsonify({'status': 'error', 'message': '请选择具体文件'})
 
+        related_json_paths: List[str] = []
+
         # 修改保存逻辑，添加目录创建
         file_dir = file_path.parent
         if not file_dir.exists():
@@ -7370,8 +7425,8 @@ def save_lyrics():
 
         # 扩展备份逻辑：同时备份关联的JSON文件
         if '/songs/' in data['path']:
-            json_files = find_related_json(str(file_path))  # 新增查找关联JSON方法
-            for json_file in json_files:
+            related_json_paths = _resolve_related_json_paths(file_path, data.get('jsonFile'))
+            for json_file in related_json_paths:
                 try:
                     json_path = Path(json_file)
                     if not json_path.is_absolute():
@@ -7395,12 +7450,7 @@ def save_lyrics():
                         app.logger.error(f"创建备份目录失败: {BACKUP_DIR}, 错误: {str(e)}, 权限: {oct(BACKUP_DIR.parent.stat().st_mode)[-3:] if BACKUP_DIR.parent.exists() else 'N/A'}")
                         raise
                     
-                # 获取普通备份文件（不包括permanent目录）
-                prefix = backup_prefix(file_path)
-                backups = sorted([
-                    f for f in BACKUP_DIR.iterdir()
-                    if f.is_file() and f.name.startswith(prefix)
-                ], reverse=True)
+                backups = iter_backup_files(file_path)
                 
                 # 删除旧备份(保留6个历史版本+当前版本)
                 for old_backup in backups[6:]:
@@ -7435,7 +7485,9 @@ def save_lyrics():
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content_to_write)
             app.logger.info(f"保存文件成功: {file_path}")
-            for jp in find_related_json(str(file_path)):
+            if not related_json_paths and '/songs/' in data['path']:
+                related_json_paths = _resolve_related_json_paths(file_path, data.get('jsonFile'))
+            for jp in related_json_paths:
                 upsert_song_search_index_for_path(Path(jp))
             return jsonify({'status': 'success'})
         except Exception as e:
@@ -7444,6 +7496,57 @@ def save_lyrics():
     except Exception as e:
         app.logger.error(f"处理保存请求时出错: {str(e)}")
         return jsonify({'status': 'error', 'message': f'处理请求时出错: {str(e)}'})
+
+
+def _normalize_lyrics_field_to_songs_relative(field_value: str) -> Optional[str]:
+    """Normalize a meta.lyrics field value to a songs/ relative path for index lookup."""
+    if not field_value or field_value == '!':
+        return None
+    parsed = urlparse(str(field_value))
+    if parsed.scheme in ('http', 'https'):
+        candidate = _url_path_for_local_filesystem(str(field_value))
+    else:
+        candidate = parsed.path if parsed.scheme else str(field_value)
+    candidate = unquote(candidate.replace('\\', '/')).strip()
+    if not candidate:
+        return None
+    while candidate.startswith('./'):
+        candidate = candidate[2:]
+    candidate = candidate.lstrip('/')
+    lower_candidate = candidate.lower()
+    if lower_candidate.startswith('static/'):
+        candidate = candidate[len('static/'):].lstrip('/')
+        lower_candidate = candidate.lower()
+    if lower_candidate.startswith('songs/'):
+        candidate = candidate[len('songs/'):].lstrip('/')
+    candidate = candidate.split('?', 1)[0].strip()
+    if not candidate:
+        return None
+    try:
+        return _normalize_relative_path(candidate)
+    except ValueError:
+        return None
+
+
+def _lyrics_resource_keys_from_summary(summary: Dict[str, Any]) -> Set[str]:
+    keys: Set[str] = set()
+    for field in ('lyricsPath', 'translationPath', 'romanPath'):
+        rel = _normalize_lyrics_field_to_songs_relative(str(summary.get(field) or ''))
+        if rel:
+            keys.add(rel)
+    return keys
+
+
+def _resolve_related_json_paths(lyrics_path: Union[str, Path],
+                                json_file_hint: Optional[str] = None) -> List[str]:
+    if json_file_hint:
+        try:
+            _, json_path = _resolve_existing_static_json_filename(json_file_hint)
+            if json_path.is_file():
+                return [str(json_path.resolve())]
+        except ValueError:
+            pass
+    return find_related_json(str(lyrics_path))
 
 
 def find_related_json(lyrics_path):
@@ -7464,47 +7567,36 @@ def find_related_json(lyrics_path):
         app.logger.warning(f"歌词文件不在songs目录中: {lyrics_path}")
         return related_jsons
 
+    lyrics_relative_key = str(lyrics_relative).replace('\\', '/')
+
+    with _song_search_index_lock:
+        if _lyrics_resource_index_initialized:
+            json_names = _lyrics_resource_index.get(lyrics_relative_key, set())
+            for json_name in json_names:
+                json_file = static_dir / json_name
+                if json_file.is_file():
+                    related_jsons.append(str(json_file.resolve()))
+            return related_jsons
+
     def _field_matches(field_value: str) -> bool:
-        if not field_value or field_value == '!':
-            return False
-        parsed = urlparse(str(field_value))
-        if parsed.scheme in ('http', 'https'):
-            candidate = _url_path_for_local_filesystem(str(field_value))
-        else:
-            candidate = parsed.path if parsed.scheme else str(field_value)
-        candidate = unquote(candidate.replace('\\', '/')).strip()
-        if not candidate:
-            return False
-        while candidate.startswith('./'):
-            candidate = candidate[2:]
-        candidate = candidate.lstrip('/')
-        lower_candidate = candidate.lower()
-        if lower_candidate.startswith('static/'):
-            candidate = candidate[len('static/'):].lstrip('/')
-            lower_candidate = candidate.lower()
-        if lower_candidate.startswith('songs/'):
-            candidate = candidate[len('songs/'):].lstrip('/')
-        candidate = candidate.split('?', 1)[0].strip()
-        if not candidate:
-            return False
-        try:
-            candidate = _normalize_relative_path(candidate)
-        except ValueError:
-            return False
-        return candidate == str(lyrics_relative)
+        rel = _normalize_lyrics_field_to_songs_relative(field_value)
+        return rel == lyrics_relative_key
 
     for json_file in static_dir.iterdir():
-        if json_file.suffix == '.json':
-            try:
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    lyrics_fields = data['meta'].get('lyrics', '').split('::')
-                    # 检查每个字段是否包含当前歌词文件的相对路径
-                    if any(_field_matches(field) for field in lyrics_fields):
-                        related_jsons.append(str(json_file))
-            except Exception as e:
-                app.logger.warning(f"处理JSON文件时出错 {json_file}: {str(e)}")
+        if json_file.suffix != '.json' or json_file.name.lower() == 'artists.json':
+            continue
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            meta = data.get('meta')
+            if not isinstance(meta, dict):
                 continue
+            lyrics_fields = str(meta.get('lyrics', '') or '').split('::')
+            if any(_field_matches(field) for field in lyrics_fields):
+                related_jsons.append(str(json_file))
+        except Exception as e:
+            app.logger.warning(f"处理JSON文件时出错 {json_file}: {str(e)}")
+            continue
     return related_jsons
 
 
@@ -7875,6 +7967,14 @@ def _build_song_summary_from_static_json(file: Path) -> Optional[Dict[str, Any]]
 _song_search_index_lock = threading.Lock()
 _song_search_index: Dict[str, Dict[str, Any]] = {}
 _song_search_index_revision: int = 0
+_lyrics_resource_index: Dict[str, Set[str]] = {}
+_lyrics_resource_index_initialized: bool = False
+
+_INDEX_PERSIST_DEBOUNCE_SEC = 1.5
+_song_search_index_persist_timer: Optional[threading.Timer] = None
+_artist_playlist_index_persist_timer: Optional[threading.Timer] = None
+_song_search_index_persist_pending = False
+_artist_playlist_index_persist_pending = False
 
 SONG_SEARCH_INDEX_VERSION = 1
 SONG_SEARCH_INDEX_FILE = BASE_PATH / '.cache' / 'song_search_index.json'
@@ -7982,6 +8082,96 @@ def _bump_song_search_index_revision_locked() -> None:
     _song_search_index_revision = cur + 1
 
 
+def _remove_json_from_lyrics_resource_index_locked(json_fn: str,
+                                                   summary: Optional[Dict[str, Any]]) -> None:
+    if not summary:
+        return
+    for key in _lyrics_resource_keys_from_summary(summary):
+        refs = _lyrics_resource_index.get(key)
+        if not refs:
+            continue
+        refs.discard(json_fn)
+        if not refs:
+            _lyrics_resource_index.pop(key, None)
+
+
+def _add_json_to_lyrics_resource_index_locked(json_fn: str, summary: Dict[str, Any]) -> None:
+    for key in _lyrics_resource_keys_from_summary(summary):
+        _lyrics_resource_index.setdefault(key, set()).add(json_fn)
+
+
+def _rebuild_lyrics_resource_index_from_song_index_locked() -> None:
+    global _lyrics_resource_index_initialized
+    _lyrics_resource_index.clear()
+    for fn, row in _song_search_index.items():
+        summ = row.get('summary') if isinstance(row, dict) else None
+        if isinstance(summ, dict):
+            _add_json_to_lyrics_resource_index_locked(fn, summ)
+    _lyrics_resource_index_initialized = True
+
+
+def _schedule_persist_song_search_index_locked() -> None:
+    global _song_search_index_persist_timer, _song_search_index_persist_pending
+    _song_search_index_persist_pending = True
+    if _song_search_index_persist_timer is not None:
+        _song_search_index_persist_timer.cancel()
+    timer = threading.Timer(_INDEX_PERSIST_DEBOUNCE_SEC, _flush_pending_song_search_index_persist)
+    timer.daemon = True
+    _song_search_index_persist_timer = timer
+    timer.start()
+
+
+def _schedule_persist_artist_playlist_index_locked() -> None:
+    global _artist_playlist_index_persist_timer, _artist_playlist_index_persist_pending
+    _artist_playlist_index_persist_pending = True
+    if _artist_playlist_index_persist_timer is not None:
+        _artist_playlist_index_persist_timer.cancel()
+    timer = threading.Timer(_INDEX_PERSIST_DEBOUNCE_SEC, _flush_pending_artist_playlist_index_persist)
+    timer.daemon = True
+    _artist_playlist_index_persist_timer = timer
+    timer.start()
+
+
+def _flush_pending_song_search_index_persist() -> None:
+    global _song_search_index_persist_timer, _song_search_index_persist_pending
+    with _song_search_index_lock:
+        _song_search_index_persist_timer = None
+        if not _song_search_index_persist_pending:
+            return
+        _persist_song_search_index()
+        _song_search_index_persist_pending = False
+
+
+def _flush_pending_artist_playlist_index_persist() -> None:
+    global _artist_playlist_index_persist_timer, _artist_playlist_index_persist_pending
+    with _song_search_index_lock:
+        _artist_playlist_index_persist_timer = None
+        if not _artist_playlist_index_persist_pending:
+            return
+        _persist_artist_playlist_index_locked()
+        _artist_playlist_index_persist_pending = False
+
+
+def flush_pending_index_persists() -> None:
+    """Flush debounced index writes (e.g. on process exit)."""
+    global _song_search_index_persist_timer, _artist_playlist_index_persist_timer
+    with _song_search_index_lock:
+        for timer in (_song_search_index_persist_timer, _artist_playlist_index_persist_timer):
+            if timer is not None:
+                timer.cancel()
+        _song_search_index_persist_timer = None
+        _artist_playlist_index_persist_timer = None
+        if _song_search_index_persist_pending:
+            _persist_song_search_index()
+            _song_search_index_persist_pending = False
+        if _artist_playlist_index_persist_pending:
+            _persist_artist_playlist_index_locked()
+            _artist_playlist_index_persist_pending = False
+
+
+atexit.register(flush_pending_index_persists)
+
+
 def _persist_song_search_index() -> None:
     """Serialize index to disk atomically. Caller must hold _song_search_index_lock."""
     cache_dir = SONG_SEARCH_INDEX_FILE.parent
@@ -8008,6 +8198,8 @@ def _apply_single_path_to_index_locked(path: Path, *, skip_artist_reconcile: boo
     fn = path.name
     old_row = _song_search_index.get(fn)
     old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
+    if old_summary:
+        _remove_json_from_lyrics_resource_index_locked(fn, old_summary)
     if fn.lower() == 'artists.json':
         _song_search_index.pop(fn, None)
         if not skip_artist_reconcile:
@@ -8034,6 +8226,7 @@ def _apply_single_path_to_index_locked(path: Path, *, skip_artist_reconcile: boo
         'pool': pool,
         'pool_compact': _compact_search_pool(pool),
     }
+    _add_json_to_lyrics_resource_index_locked(fn, built)
     new_row = _song_search_index.get(fn)
     new_summary = new_row.get('summary') if isinstance(new_row, dict) else None
     if not skip_artist_reconcile:
@@ -8041,12 +8234,15 @@ def _apply_single_path_to_index_locked(path: Path, *, skip_artist_reconcile: boo
 
 
 def _rebuild_song_search_index_full_locked() -> None:
+    global _lyrics_resource_index_initialized
     _song_search_index.clear()
     _artist_playlist_index.clear()
     _artist_playlist_file_to_keys.clear()
+    _lyrics_resource_index.clear()
     for path in _song_search_json_paths():
         _apply_single_path_to_index_locked(path, skip_artist_reconcile=True)
     _rebuild_artist_playlist_from_song_index_locked()
+    _lyrics_resource_index_initialized = True
     _persist_song_search_index()
     _persist_artist_playlist_index_locked()
 
@@ -8067,25 +8263,31 @@ def upsert_song_search_index_for_path(path: Path) -> None:
         return
     with _song_search_index_lock:
         if not path.is_file():
+            old_row = _song_search_index.get(path.name)
+            old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
             if _song_search_index.pop(path.name, None) is not None:
+                _remove_json_from_lyrics_resource_index_locked(path.name, old_summary)
                 _artist_index_remove_file_locked(path.name)
-                _persist_song_search_index()
-                _persist_artist_playlist_index_locked()
+                _schedule_persist_song_search_index_locked()
+                _schedule_persist_artist_playlist_index_locked()
             return
         _apply_single_path_to_index_locked(path)
-        _persist_song_search_index()
-        _persist_artist_playlist_index_locked()
+        _schedule_persist_song_search_index_locked()
+        _schedule_persist_artist_playlist_index_locked()
 
 
 def remove_song_search_index_entry(filename: str) -> None:
     """Remove index row by JSON basename (e.g. foo.json)."""
     key = Path(str(filename)).name
     with _song_search_index_lock:
+        old_row = _song_search_index.get(key)
+        old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
         if _song_search_index.pop(key, None) is None:
             return
+        _remove_json_from_lyrics_resource_index_locked(key, old_summary)
         _artist_index_remove_file_locked(key)
-        _persist_song_search_index()
-        _persist_artist_playlist_index_locked()
+        _schedule_persist_song_search_index_locked()
+        _schedule_persist_artist_playlist_index_locked()
 
 
 def _sync_song_search_index_with_disk_locked() -> bool:
@@ -8095,6 +8297,9 @@ def _sync_song_search_index_with_disk_locked() -> bool:
     valid = {p.name for p in paths}
     for fn in list(_song_search_index.keys()):
         if fn not in valid:
+            old_row = _song_search_index.get(fn)
+            old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
+            _remove_json_from_lyrics_resource_index_locked(fn, old_summary)
             _artist_index_remove_file_locked(fn)
             del _song_search_index[fn]
             changed = True
@@ -8134,6 +8339,7 @@ def init_song_search_index_on_startup() -> None:
                 _song_search_index_revision = file_revision
                 _song_search_index.clear()
                 _song_search_index.update(entries_map)
+                _rebuild_lyrics_resource_index_from_song_index_locked()
                 if _sync_song_search_index_with_disk_locked():
                     _persist_song_search_index()
                     _persist_artist_playlist_index_locked()
@@ -8890,10 +9096,7 @@ def get_backups():
     try:
         collected = []
         prefix_len = len(prefix)
-        for f in BACKUP_DIR.iterdir():
-            if not f.is_file() or not f.name.startswith(prefix):
-                continue
-
+        for f in iter_backup_files(file_path):
             timestamp_part = f.name[prefix_len:]
             parsed_time: Optional[datetime] = None
             try:
@@ -8910,7 +9113,7 @@ def get_backups():
 
             collected.append({
                 'dt': parsed_time,
-                'name': f.name
+                'name': backup_public_relative_path(f)
             })
 
         collected.sort(key=lambda item: item['dt'], reverse=True)
