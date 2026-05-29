@@ -15803,6 +15803,9 @@ def is_request_allowed():
         '/get_anchor_backup'
     ):
         return True
+    # 允许访问媒体音频（该接口有独立的 token 验证机制）
+    if request.path == '/media/audio':
+        return True
 
     # 获取安全配置
     security_config = get_security_config()
@@ -16843,10 +16846,7 @@ def media_audio():
         return jsonify({'error': 'Token expired'}), 401
 
     device_id = request.cookies.get('FEW_DEVICE_ID') or ''
-    security_cfg = get_security_config()
     strict_binding = _strict_device_binding_active()
-    security_strict = bool(security_cfg.get('security_enabled', True)) and not is_local_remote()
-    enforce_device = strict_binding or security_strict
 
     if strict_binding and not device_id:
         _append_media_audit({
@@ -16857,15 +16857,7 @@ def media_audio():
         })
         return jsonify({'error': 'device_required'}), 403
 
-    if enforce_device:
-        if not device_id:
-            _append_media_audit({
-                'event': 'media_audio_denied',
-                'reason': 'device_required',
-                'file': relative_path,
-                'remote_addr': request.remote_addr,
-            })
-            return jsonify({'error': 'device_required'}), 403
+    if strict_binding:
         token_ok = verify_media_audio_token(relative_path, exp, token, device_id)
         if not token_ok:
             _append_media_audit({
@@ -17307,13 +17299,14 @@ def _build_cover_palette_payload(data: dict, meta: dict) -> dict:
     if not cover_data_url and isinstance(meta, dict):
         cover_data_url = meta.get("cover_data_url") or ""
     cover_candidates = []
+    if isinstance(meta, dict):
+        # 优先使用 albumImgSrc 作为色盘提取源
+        cover_candidates.append(meta.get("albumImgSrc"))
+        if meta.get("dynamicCoverPoster"):
+            cover_candidates.append(meta.get("dynamicCoverPoster"))
+        cover_candidates.extend([meta.get("cover"), meta.get("coverUrl")])
     if isinstance(data, dict):
         cover_candidates.extend([data.get("cover"), data.get("coverUrl")])
-    if isinstance(meta, dict):
-        cover_candidates.extend([meta.get("albumImgSrc"), meta.get("cover"), meta.get("coverUrl")])
-        # 优先使用 dynamicCoverPoster 作为色盘提取源，其次是 albumImgSrc
-        if meta.get("dynamicCoverPoster"):
-            cover_candidates.insert(0, meta.get("dynamicCoverPoster"))
 
     # 过滤掉视频文件，避免色盘提取失败
     cover_url = None

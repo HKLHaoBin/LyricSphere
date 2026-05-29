@@ -1082,7 +1082,14 @@
 
             const AMLL_MODULE_URL = "{{ (amll_entry.js if amll_entry else '') or url_for('static', filename='assets/amll-player.js') }}";
             const amllStubState = { patched: false, restore: null, host: null, skeleton: null };
-            const amllBackgroundState = { promise: null, host: null, element: null };
+            const amllBackgroundState = {
+                promise: null,
+                host: null,
+                element: null,
+                albumUrl: null,
+                albumAppliedAt: 0,
+                requestId: 0
+            };
             const urlParams = new URLSearchParams(window.location.search);
 
             function parseCharSplitOptions(params) {
@@ -2094,13 +2101,13 @@
                 if (!renderer) return;
                 amllColorState.renderer = renderer;
                 amllColorState.enabled = true;
-                amllColorState.basePaletteHsl = [];
                 amllColorState.bandStats = [];
                 amllColorState.globalEnergy = 0;
                 if (!amllColorState.beatCurve || amllColorState.beatCurve.mode === 'gain') {
                     ensureAudioAnalyser();
                 }
-                ensureBasePalette();
+                // 删除 ensureBasePalette() 调用，避免第二次取色
+                // 取色已经在 prepareAmllBackground 的 setAlbum 中完成
                 startAmllPaletteLoop();
             }
 
@@ -2325,6 +2332,7 @@
                 }
                 stopAmllPaletteLoop({ clearBackground: true });
                 amllColorState.background = null;
+                resetAmllAlbumRequestState();
                 updateWindowBeatStatus();
                 clearBackgroundVideo();
                 document.querySelectorAll('.background-container').forEach((el) => el.remove());
@@ -2396,6 +2404,16 @@
                 return normalized.startsWith('/') ? normalized : '/' + normalized;
             }
 
+            function isDefaultAlbumCover(url) {
+                if (!url || typeof url !== 'string') return false;
+                const resolved = resolveMediaUrl(url);
+                if (!resolved) return false;
+                return resolved.startsWith('/icons/') ||
+                       resolved.startsWith('/static/icons/') ||
+                       resolved === '/favicon.ico' ||
+                       resolved.endsWith('/favicon.ico');
+            }
+
             function dedupeResolvedMediaUrls(candidates) {
                 const seen = new Set();
                 const out = [];
@@ -2411,6 +2429,110 @@
                     out.push(url);
                 }
                 return out;
+            }
+
+            function resetAmllAlbumRequestState() {
+                amllBackgroundState.albumUrl = null;
+                amllBackgroundState.albumAppliedAt = 0;
+            }
+
+            function getAmllBackgroundRenderer(background) {
+                if (!background) return null;
+                if (typeof background.getRenderer === 'function') {
+                    const renderer = background.getRenderer();
+                    if (renderer) return renderer;
+                }
+                return background.renderer || background._renderer || background['renderer'] || null;
+            }
+
+            function clearAmllPaletteRuntimeState() {
+                amllColorState.basePaletteHsl = [];
+                amllColorState.lastColors = null;
+                amllColorState.originalMeshColors = null;
+                amllColorState.originalMeshSize = null;
+                amllColorState.bandStats = [];
+                amllColorState.globalEnergy = 0;
+            }
+
+            function disposeAmllMeshState(state) {
+                try {
+                    state?.mesh?.dispose?.();
+                } catch (error) { /* 忽略旧 mesh 清理异常 */ }
+                try {
+                    state?.texture?.dispose?.();
+                } catch (error) { /* 忽略旧 texture 清理异常 */ }
+            }
+
+            function installAmllRendererAlbumGuard(renderer) {
+                const states = renderer && (renderer.meshStates || renderer._meshStates);
+                if (!Array.isArray(states) || states.__cokAlbumGuardInstalled) {
+                    return;
+                }
+                const originalPush = states.push.bind(states);
+                Object.defineProperty(states, '__cokAlbumGuardInstalled', {
+                    value: true,
+                    configurable: true
+                });
+                states.push = (...items) => {
+                    if (renderer.__cokAllowAlbumMeshWrite) {
+                        return originalPush(...items);
+                    }
+                    items.forEach(disposeAmllMeshState);
+                    return states.length;
+                };
+            }
+
+            function clearAmllRendererAlbumState(background) {
+                const renderer = getAmllBackgroundRenderer(background);
+                if (!renderer) return;
+
+                const states = renderer.meshStates || renderer._meshStates;
+                if (Array.isArray(states)) {
+                    installAmllRendererAlbumGuard(renderer);
+                    states.forEach(disposeAmllMeshState);
+                    states.length = 0;
+                }
+
+                if ('currentImageData' in renderer) {
+                    renderer.currentImageData = null;
+                }
+                if ('_currentImageData' in renderer) {
+                    renderer._currentImageData = null;
+                }
+                if ('isNoCover' in renderer) {
+                    renderer.isNoCover = true;
+                }
+                clearAmllPaletteRuntimeState();
+            }
+
+            async function applyAmllAlbumForCurrentRequest(background, url, requestId) {
+                const renderer = getAmllBackgroundRenderer(background);
+                clearAmllRendererAlbumState(background);
+                try {
+                    if (renderer) {
+                        installAmllRendererAlbumGuard(renderer);
+                        renderer.__cokAllowAlbumMeshWrite = true;
+                    }
+                    await background.setAlbum(url);
+                } catch (error) {
+                    if (amllBackgroundState.requestId === requestId) {
+                        resetAmllAlbumRequestState();
+                    }
+                    throw error;
+                } finally {
+                    if (renderer) {
+                        renderer.__cokAllowAlbumMeshWrite = false;
+                    }
+                }
+
+                if (amllBackgroundState.requestId !== requestId) {
+                    return false;
+                }
+
+                amllBackgroundState.albumUrl = url;
+                amllBackgroundState.albumAppliedAt = Date.now();
+                lastLoadedBackgroundUrl = url;
+                return true;
             }
 
             async function prepareAmllBackground() {
@@ -2483,7 +2605,11 @@
                     return false;
                 }
 
-                if (backgroundMediaCache.get(url) === 'ok' && lastLoadedBackgroundUrl === url) {
+                if (
+                    backgroundMediaCache.get(url) === 'ok'
+                    && lastLoadedBackgroundUrl === url
+                    && amllBackgroundState.albumUrl === url
+                ) {
                     if (!audioPlayer.paused) {
                         scheduleBeatEnhancement();
                     }
@@ -2496,10 +2622,17 @@
                     return backgroundMediaInflight.get(url);
                 }
 
+                const requestId = amllBackgroundState.requestId + 1;
+                amllBackgroundState.requestId = requestId;
+                resetAmllAlbumRequestState();
+
                 const loadPromise = (async () => {
                     const background = await prepareAmllBackground();
                     if (!background || !amllBackgroundState.element) {
                         backgroundMediaCache.set(url, 'fail');
+                        return false;
+                    }
+                    if (amllBackgroundState.requestId !== requestId) {
                         return false;
                     }
 
@@ -2524,7 +2657,14 @@
                     };
 
                     try {
-                        await background.setAlbum(url);
+                        const applied = await applyAmllAlbumForCurrentRequest(background, url, requestId);
+                        if (!applied) {
+                            if (amllBackgroundState.requestId === requestId && backgroundCleanup) {
+                                backgroundCleanup();
+                                backgroundCleanup = null;
+                            }
+                            return false;
+                        }
                         background.setStaticMode(false);
                         background.setFlowSpeed(4);
                         const dpr = window.devicePixelRatio || 1;
@@ -2532,6 +2672,7 @@
                         background.resume();
                         amllColorState.background = background;
                         backgroundMediaCache.set(url, 'ok');
+                        lastLoadedBackgroundUrl = url;
                         updateWindowBeatStatus();
                         applyAmllBeatTargetState(amllBeatEnabled, 'background-init');
                         scheduleNonCriticalInit(() => triggerInitialBeatToggleSequence());
@@ -2541,11 +2682,15 @@
                         return true;
                     } catch (error) {
                         console.warn('[AMLL] AMLL 背景初始化失败，将回退其他方案', error);
-                        backgroundMediaCache.set(url, 'fail');
+                        if (amllBackgroundState.requestId === requestId) {
+                            resetAmllAlbumRequestState();
+                            backgroundMediaCache.set(url, 'fail');
+                        }
                         if (backgroundCleanup) {
                             backgroundCleanup();
                             backgroundCleanup = null;
                         }
+                        clearAmllRendererAlbumState(background);
                         return false;
                     }
                 })();
@@ -4053,6 +4198,7 @@
                 }
 
                 if (!backgroundApplied) {
+                    // 优先级：URL 传入的参考封面 > 专辑图片 > 其他封面
                     const coverCandidates = [
                         referenceCover,
                         songInfo.meta?.albumImgSrc,
@@ -4060,7 +4206,7 @@
                         songInfo.meta?.coverUrl,
                         songInfo.cover,
                         songInfo.coverUrl
-                    ];
+                    ].filter(candidate => !isDefaultAlbumCover(candidate));
                     const dedupedUrls = dedupeResolvedMediaUrls(coverCandidates);
                     if (dedupedUrls.length > 0) {
                         const firstUrl = dedupedUrls[0];

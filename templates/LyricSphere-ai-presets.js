@@ -2436,10 +2436,11 @@ async function openLyricsAnimate(filename, style) {
             Boolean(dynamicCoverSrc) &&
             (dynamicMediaType === 'video' || dynamicMediaType === 'animated');
 
+        // 优先级：专辑图片 > 动态封面(如果是静态图片) > 海报 > 背景图
         if (isMvodPreviewSource(dynamicCoverSrc)) {
             coverUrl = pickImmediateStaticReference([
-                dynamicCoverPoster,
                 albumImgSrc,
+                dynamicCoverPoster,
                 backgroundImage
             ]);
             if (!coverUrl && hasExtractableDynamicSource) {
@@ -2447,9 +2448,9 @@ async function openLyricsAnimate(filename, style) {
             }
         } else {
             coverUrl = pickImmediateStaticReference([
+                albumImgSrc,
                 dynamicCoverSrc,
                 dynamicCoverPoster,
-                albumImgSrc,
                 backgroundImage
             ]);
             if (!coverUrl && hasExtractableDynamicSource) {
