@@ -1677,3 +1677,241 @@ function setupLyricsModalTouchScroll() {
 
 window.addEventListener('DOMContentLoaded', updateWriteButtons);
 document.addEventListener('DOMContentLoaded', setupLyricsModalTouchScroll);
+
+// ========== 检查更新功能 ==========
+
+let _updateCheckData = null;
+
+/**
+ * 显示检查更新模态框
+ */
+function showUpdateCheckModal() {
+    const modal = document.getElementById('updateCheckModal');
+    if (!modal) return;
+    
+    // 重置状态
+    resetUpdateCheckUI();
+    
+    // 获取当前版本
+    fetchCurrentVersion();
+    
+    modal.style.display = 'flex';
+}
+
+/**
+ * 关闭检查更新模态框
+ */
+function closeUpdateCheckModal() {
+    const modal = document.getElementById('updateCheckModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * 重置更新检查 UI 状态
+ */
+function resetUpdateCheckUI() {
+    const resultDiv = document.getElementById('updateCheckResult');
+    const loadingDiv = document.getElementById('updateCheckLoading');
+    const noUpdateDiv = document.getElementById('updateNoUpdate');
+    const hasUpdateDiv = document.getElementById('updateHasUpdate');
+    const errorDiv = document.getElementById('updateError');
+    const triggeredDiv = document.getElementById('updateTriggered');
+    const checkBtn = document.getElementById('modalCheckUpdateBtn');
+    
+    if (resultDiv) resultDiv.style.display = 'none';
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    if (noUpdateDiv) noUpdateDiv.style.display = 'none';
+    if (hasUpdateDiv) hasUpdateDiv.style.display = 'none';
+    if (errorDiv) errorDiv.style.display = 'none';
+    if (triggeredDiv) triggeredDiv.style.display = 'none';
+    if (checkBtn) {
+        checkBtn.disabled = false;
+        checkBtn.textContent = t('update.checkBtn') || '检查更新';
+    }
+    
+    _updateCheckData = null;
+}
+
+/**
+ * 获取当前版本信息
+ */
+async function fetchCurrentVersion() {
+    try {
+        const res = await fetch('/api/runtime/version');
+        const data = await res.json();
+        const versionSpan = document.getElementById('updateCurrentVersion');
+        if (versionSpan && data.app_version) {
+            versionSpan.textContent = data.app_version;
+        }
+    } catch (e) {
+        console.error('Failed to fetch current version:', e);
+    }
+}
+
+/**
+ * 执行更新检查
+ */
+async function performUpdateCheck() {
+    const resultDiv = document.getElementById('updateCheckResult');
+    const loadingDiv = document.getElementById('updateCheckLoading');
+    const noUpdateDiv = document.getElementById('updateNoUpdate');
+    const hasUpdateDiv = document.getElementById('updateHasUpdate');
+    const errorDiv = document.getElementById('updateError');
+    const checkBtn = document.getElementById('modalCheckUpdateBtn');
+    
+    // 显示加载状态
+    if (resultDiv) resultDiv.style.display = 'block';
+    if (loadingDiv) loadingDiv.style.display = 'block';
+    if (noUpdateDiv) noUpdateDiv.style.display = 'none';
+    if (hasUpdateDiv) hasUpdateDiv.style.display = 'none';
+    if (errorDiv) errorDiv.style.display = 'none';
+    if (checkBtn) {
+        checkBtn.disabled = true;
+        checkBtn.textContent = t('update.checking') || '正在检查...';
+    }
+    
+    try {
+        const res = await fetch('/api/runtime/check-update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        
+        if (loadingDiv) loadingDiv.style.display = 'none';
+        
+        if (data.status === 'error') {
+            showErrorState(data.message || '检查失败');
+            return;
+        }
+        
+        _updateCheckData = data;
+        
+        if (data.has_update) {
+            showHasUpdateState(data);
+        } else {
+            showNoUpdateState(data);
+        }
+        
+    } catch (e) {
+        if (loadingDiv) loadingDiv.style.display = 'none';
+        showErrorState(e.message || '网络请求失败');
+    } finally {
+        if (checkBtn) {
+            checkBtn.disabled = false;
+            checkBtn.textContent = t('update.checkBtn') || '检查更新';
+        }
+    }
+}
+
+/**
+ * 显示"已是最新版本"状态
+ */
+function showNoUpdateState(data) {
+    const noUpdateDiv = document.getElementById('updateNoUpdate');
+    if (noUpdateDiv) noUpdateDiv.style.display = 'block';
+}
+
+/**
+ * 显示"有新版本"状态
+ */
+function showHasUpdateState(data) {
+    const hasUpdateDiv = document.getElementById('updateHasUpdate');
+    const latestVersionSpan = document.getElementById('updateLatestVersion');
+    const publishedAtSpan = document.getElementById('updatePublishedAt');
+    const releaseBodyDiv = document.getElementById('updateReleaseBody');
+    
+    if (hasUpdateDiv) hasUpdateDiv.style.display = 'block';
+    
+    if (latestVersionSpan) {
+        latestVersionSpan.textContent = data.latest_version || '--';
+    }
+    
+    if (publishedAtSpan) {
+        try {
+            const date = new Date(data.published_at);
+            publishedAtSpan.textContent = date.toLocaleString();
+        } catch (e) {
+            publishedAtSpan.textContent = data.published_at || '--';
+        }
+    }
+    
+    if (releaseBodyDiv) {
+        releaseBodyDiv.textContent = data.release_body || '无更新说明';
+    }
+}
+
+/**
+ * 显示错误状态
+ */
+function showErrorState(message) {
+    const errorDiv = document.getElementById('updateError');
+    const errorMessageDiv = document.getElementById('updateErrorMessage');
+    const hasUpdateDiv = document.getElementById('updateHasUpdate');
+    const triggeredDiv = document.getElementById('updateTriggered');
+    
+    // Hide other status divs
+    if (hasUpdateDiv) hasUpdateDiv.style.display = 'none';
+    if (triggeredDiv) triggeredDiv.style.display = 'none';
+    
+    // Show error
+    if (errorDiv) errorDiv.style.display = 'block';
+    if (errorMessageDiv) errorMessageDiv.textContent = message;
+}
+
+/**
+ * 触发更新
+ */
+async function triggerUpdate() {
+    const triggerBtn = document.getElementById('triggerUpdateBtn');
+    const triggeredDiv = document.getElementById('updateTriggered');
+    const triggeredPidDiv = document.getElementById('updateTriggeredPid');
+    const hasUpdateDiv = document.getElementById('updateHasUpdate');
+    
+    if (triggerBtn) {
+        triggerBtn.disabled = true;
+        triggerBtn.textContent = t('update.updating') || '正在启动更新...';
+    }
+    
+    try {
+        const res = await fetch('/api/runtime/trigger-update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        
+        if (data.status === 'error') {
+            showErrorState(data.message || '启动更新失败');
+            if (triggerBtn) {
+                triggerBtn.disabled = false;
+                triggerBtn.textContent = t('update.updateNow') || '立即更新';
+            }
+            return;
+        }
+        
+        // 显示更新已触发状态
+        if (hasUpdateDiv) hasUpdateDiv.style.display = 'none';
+        if (triggeredDiv) triggeredDiv.style.display = 'block';
+        if (triggeredPidDiv && data.updater_pid) {
+            triggeredPidDiv.textContent = `PID: ${data.updater_pid}`;
+        }
+        
+    } catch (e) {
+        showErrorState(e.message || '网络请求失败');
+        if (triggerBtn) {
+            triggerBtn.disabled = false;
+            triggerBtn.textContent = t('update.updateNow') || '立即更新';
+        }
+    }
+}
+
+// 绑定检查更新按钮点击事件
+document.addEventListener('DOMContentLoaded', function() {
+    const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+    if (checkUpdateBtn) {
+        checkUpdateBtn.addEventListener('click', showUpdateCheckModal);
+    }
+});

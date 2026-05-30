@@ -56,6 +56,7 @@
                         <button onclick="revokeAllDevices()" data-i18n="btn.clearDevices" data-write-lock>🗑️ 清空认证设备</button>
                     </div>
                 </div>
+                <button id="checkUpdateBtn" class="action-button search-row--system" data-i18n="btn.checkUpdate">🔄 检查更新</button>
             </div>
         </div>
     </div>
@@ -1317,6 +1318,79 @@
             <input type="checkbox" id="amllCharSplitToggle" />
             <span data-i18n="btn.amllCharSplit">长音节逐字拆分</span>
         </label>
+    </div>
+
+    <!-- 检查更新模态框 -->
+    <div id="updateCheckModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <div class="modal-header-main">
+                    <h2 data-i18n="update.title">检查更新</h2>
+                </div>
+                <div class="modal-header-actions">
+                    <button class="lyrics-action-btn close-btn" onclick="closeUpdateCheckModal()" data-i18n="update.close">✕ 关闭</button>
+                </div>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <!-- 当前版本信息 -->
+                <div class="update-version-info" style="margin-bottom: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span data-i18n="update.currentVersion">当前版本：</span>
+                        <span id="updateCurrentVersion" style="font-weight: bold;">--</span>
+                    </div>
+                </div>
+                
+                <!-- 检查按钮 -->
+                <button id="modalCheckUpdateBtn" class="action-button" onclick="performUpdateCheck()" style="width: 100%; margin-bottom: 16px;" data-i18n="update.checkBtn">检查更新</button>
+                
+                <!-- 检查结果区域 -->
+                <div id="updateCheckResult" style="display: none;">
+                    <!-- 加载中状态 -->
+                    <div id="updateCheckLoading" style="display: none; text-align: center; padding: 20px;">
+                        <div class="update-spinner"></div>
+                        <span data-i18n="update.checking">正在检查...</span>
+                    </div>
+                    
+                    <!-- 已是最新版本 -->
+                    <div id="updateNoUpdate" style="display: none; text-align: center; padding: 20px; color: #4CAF50;">
+                        <span style="font-size: 24px;">✓</span>
+                        <div data-i18n="update.noUpdate">已是最新版本</div>
+                    </div>
+                    
+                    <!-- 有新版本 -->
+                    <div id="updateHasUpdate" style="display: none;">
+                        <div class="update-info-card">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span data-i18n="update.latestVersion">最新版本：</span>
+                                <span id="updateLatestVersion" style="font-weight: bold; color: #2e7d32;"></span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                <span data-i18n="update.publishedAt">发布时间：</span>
+                                <span id="updatePublishedAt"></span>
+                            </div>
+                            <div style="margin-top: 12px;">
+                                <div data-i18n="update.releaseNotes" style="font-weight: bold; margin-bottom: 8px;">更新内容：</div>
+                                <div id="updateReleaseBody" class="update-release-body"></div>
+                            </div>
+                        </div>
+                        <button id="triggerUpdateBtn" class="action-button" onclick="triggerUpdate()" style="width: 100%; background: #4CAF50; color: white;" data-i18n="update.updateNow">立即更新</button>
+                    </div>
+                    
+                    <!-- 错误状态 -->
+                    <div id="updateError" style="display: none; text-align: center; padding: 20px; color: #f44336;">
+                        <span style="font-size: 24px;">⚠</span>
+                        <div id="updateErrorMessage"></div>
+                    </div>
+                    
+                    <!-- 更新已触发 -->
+                    <div id="updateTriggered" style="display: none; text-align: center; padding: 20px; color: #2196F3;">
+                        <span style="font-size: 24px;">🔄</span>
+                        <div data-i18n="update.triggered">更新已启动，请等待自动完成...</div>
+                        <div id="updateTriggeredPid" style="font-size: 12px; margin-top: 8px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script id="amllPlayerConfig" type="application/json">{{ amll_player_base_url|tojson }}</script>

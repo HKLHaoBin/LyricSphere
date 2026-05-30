@@ -47,6 +47,21 @@ const I18N_MESSAGES = {
         'btn.revokeDevice': '吊销认证设备',
         'btn.clearDevices': '清空认证设备',
         'btn.langSwitch': 'EN',
+        'btn.checkUpdate': '🔄 检查更新',
+
+        // === 检查更新 ===
+        'update.title': '检查更新',
+        'update.close': '✕ 关闭',
+        'update.currentVersion': '当前版本：',
+        'update.checkBtn': '检查更新',
+        'update.checking': '正在检查...',
+        'update.noUpdate': '已是最新版本',
+        'update.latestVersion': '最新版本：',
+        'update.publishedAt': '发布时间：',
+        'update.releaseNotes': '更新内容：',
+        'update.updateNow': '立即更新',
+        'update.updating': '正在启动更新...',
+        'update.triggered': '更新已启动，请等待自动完成...',
 
         // === 批量翻译工作台 ===
         'batch.title': '翻译控制台',
@@ -1258,6 +1273,21 @@ const I18N_MESSAGES = {
         'btn.revokeDevice': 'Revoke Authenticated Devices',
         'btn.clearDevices': 'Clear authenticated devices',
         'btn.langSwitch': '中文',
+        'btn.checkUpdate': '🔄 Check Update',
+
+        // === 检查更新 ===
+        'update.title': 'Check Update',
+        'update.close': '✕ Close',
+        'update.currentVersion': 'Current version:',
+        'update.checkBtn': 'Check for updates',
+        'update.checking': 'Checking...',
+        'update.noUpdate': 'Already up to date',
+        'update.latestVersion': 'Latest version:',
+        'update.publishedAt': 'Published at:',
+        'update.releaseNotes': 'Release notes:',
+        'update.updateNow': 'Update now',
+        'update.updating': 'Starting update...',
+        'update.triggered': 'Update started, please wait for it to complete...',
 
         // === 批量翻译工作台 ===
         'batch.title': 'Translation Console',

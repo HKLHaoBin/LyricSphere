@@ -1040,6 +1040,54 @@ button.lyrics-search-card {
     background: #606060;
 }
 
+/* 更新检查面板 - 版本信息卡片 */
+.update-info-card {
+    background: #e8f5e9;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.dark-mode .update-info-card {
+    background: #1b5e20;
+}
+
+.update-release-body {
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #fff;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.dark-mode .update-release-body {
+    background: #2d2d2d;
+    color: #e0e0e0;
+}
+
+.update-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    border-top-color: #4CAF50;
+    border-radius: 50%;
+    animation: update-spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.dark-mode .update-spinner {
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top-color: #66BB6A;
+}
+
+@keyframes update-spin {
+    to { transform: rotate(360deg); }
+}
+
 .lyrics-editor {
     width: calc(100% - 24px);
     height: calc(100% - 60px);

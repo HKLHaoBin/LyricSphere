@@ -889,6 +889,29 @@ UPDATER_GITHUB_REPO = os.getenv('UPDATER_GITHUB_REPO', 'HKLHaoBin/LyricSphere')
 UPDATER_RELEASE_LATEST_API = 'https://api.github.com/repos/{repo}/releases/latest'
 
 
+def _is_process_running(pid: int) -> bool:
+    """Check if a process with the given PID is running."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == 'nt':
+            proc = subprocess.run(
+                ['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV', '/NH'],
+                capture_output=True, text=True
+            )
+            if proc.returncode == 0:
+                output = (proc.stdout or '').strip()
+                if not output or 'no tasks are running' in output.lower():
+                    return False
+                return str(pid) in output
+            return False
+        else:
+            os.kill(pid, 0)
+            return True
+    except Exception:
+        return False
+
+
 def launch_updater_sidecar(port: int) -> None:
     """Start updater.exe in frozen builds. Version checks use GitHub REST API (requests), not git CLI."""
     global _updater_started
@@ -922,6 +945,37 @@ def launch_updater_sidecar(port: int) -> None:
 
     updater_exe = BASE_PATH / 'updater.exe'
     updater_py = BASE_PATH / 'updater.py'
+    updater_pid_file = BASE_PATH / '.updater.pid'
+
+    # Check for existing updater lock (e.g., one-shot updater still running after update)
+    # Wait for lock release before starting --watch watcher
+    if updater_pid_file.exists():
+        try:
+            existing_pid = int(updater_pid_file.read_text(encoding='utf-8').strip() or '0')
+        except Exception:
+            existing_pid = 0
+
+        if existing_pid > 0 and _is_process_running(existing_pid):
+            app.logger.info('Existing updater lock found (PID=%d), waiting for release...', existing_pid)
+            # Wait up to 30 seconds for the one-shot updater to finish
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                if not _is_process_running(existing_pid):
+                    app.logger.info('Existing updater process exited, lock released')
+                    break
+                # Also check if lock file was removed or PID changed
+                if updater_pid_file.exists():
+                    try:
+                        current_pid = int(updater_pid_file.read_text(encoding='utf-8').strip() or '0')
+                        if current_pid != existing_pid:
+                            app.logger.info('Lock file PID changed from %d to %d', existing_pid, current_pid)
+                            break
+                    except Exception:
+                        break
+                else:
+                    app.logger.info('Lock file removed')
+                    break
+                time.sleep(1)
 
     sidecar_args = [
         '--watch',
@@ -1069,6 +1123,165 @@ def api_runtime_release_notes():
         'source': 'github' if remote else 'updater_status',
         'remote_error': remote_error if remote_error else '',
     })
+
+
+def _parse_version_for_compare(version_str: str) -> Tuple[int, int, int]:
+    """Parse version string like 'v1.2.3' or '1.2.3' into tuple for comparison."""
+    text = (version_str or "").strip()
+    match = re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+).*', text)
+    if not match:
+        return (0, 0, 0)
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+@app.route('/api/runtime/check-update', methods=['POST'])
+def api_runtime_check_update():
+    """Check for updates by querying GitHub API directly and comparing versions."""
+    if not is_request_allowed():
+        return abort(403)
+    
+    data = request.get_json(silent=True) or {}
+    repo = str(data.get('repo') or UPDATER_GITHUB_REPO)
+    
+    remote, remote_error = _fetch_latest_release_notes(repo)
+    
+    if remote_error:
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to fetch release info: {remote_error}'
+        }), 500
+    
+    latest_tag = str(remote.get('latest_tag') or '')
+    current_version = APP_VERSION
+    
+    current_tuple = _parse_version_for_compare(current_version)
+    latest_tuple = _parse_version_for_compare(latest_tag)
+    has_update = latest_tuple > current_tuple
+    
+    return jsonify({
+        'status': 'success',
+        'has_update': has_update,
+        'current_version': current_version,
+        'latest_version': latest_tag,
+        'release_title': str(remote.get('release_title') or ''),
+        'release_body': str(remote.get('release_body') or ''),
+        'published_at': str(remote.get('published_at') or ''),
+        'source': 'github'
+    })
+
+
+@app.route('/api/runtime/trigger-update', methods=['POST'])
+def api_runtime_trigger_update():
+    """Trigger update by starting a one-shot updater (no --watch).
+
+    The one-shot updater will:
+    - Check for updates immediately
+    - Apply update if available (stop backend, replace files, restart)
+    - Exit if no update (backend remains running, --watch continues)
+
+    No need to terminate existing --watch updater - it sleeps most of the time
+    and won't conflict with one-shot's lock acquisition.
+    """
+    if not is_request_allowed():
+        return abort(403)
+
+    # Require unlocked device for sensitive update operations
+    locked_response = require_unlocked_device('trigger update')
+    if locked_response:
+        return locked_response
+
+    # Only available in frozen mode (packaged builds)
+    if not getattr(sys, 'frozen', False):
+        return jsonify({
+            'status': 'error',
+            'message': 'Update is only available in packaged builds. Please update via git in development mode.'
+        }), 400
+
+    updater_exe = BASE_PATH / 'updater.exe'
+    updater_py = BASE_PATH / 'updater.py'
+    updater_status_file = BASE_PATH / '.updater.status.json'
+
+    if not updater_exe.exists() and not updater_py.exists():
+        return jsonify({
+            'status': 'error',
+            'message': 'updater not found'
+        }), 500
+
+    # Check if updater is actively updating - refuse if busy
+    if updater_status_file.exists():
+        try:
+            status_data = json.loads(updater_status_file.read_text(encoding='utf-8'))
+            current_state = str(status_data.get('state', '') or '').strip()
+            current_phase = str(status_data.get('phase', '') or '').strip()
+            active_phases = (
+                'backing_up', 'stopping_backend',
+                'downloading', 'extracting', 'applying', 'restarting', 'rollback',
+            )
+            active_states = (
+                'backup', 'stopping',
+                'downloading', 'applying', 'restarting', 'rollback',
+            )
+            if current_phase in active_phases or current_state in active_states:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Updater is busy ({current_phase or current_state}). Please wait.'
+                }), 409
+        except Exception:
+            pass
+
+    # Read runtime config
+    backend_pid = os.getpid()
+    backend_mode = 'exe'
+    port = 5000
+
+    if UPDATER_RUNTIME_FILE.exists():
+        try:
+            runtime_data = json.loads(UPDATER_RUNTIME_FILE.read_text(encoding='utf-8'))
+            port = int(runtime_data.get('port') or 5000)
+        except Exception:
+            pass
+
+    # Build one-shot updater command (no --watch)
+    cmd_args = [
+        '--work-dir', str(BASE_PATH),
+        '--backend-pid', str(backend_pid),
+        '--port', str(port),
+        '--backend-mode', backend_mode,
+        '--backend-executable', str(Path(sys.executable).resolve()),
+    ]
+
+    if updater_exe.exists():
+        command = [str(updater_exe), *cmd_args]
+    else:
+        command = [str(Path(sys.executable).resolve()), str(updater_py), *cmd_args]
+
+    # Launch detached process
+    kwargs: Dict[str, Any] = {
+        'cwd': str(BASE_PATH),
+        'stdin': subprocess.DEVNULL,
+        'stdout': subprocess.DEVNULL,
+        'stderr': subprocess.DEVNULL,
+        'close_fds': True,
+    }
+    if os.name == 'nt':
+        kwargs['creationflags'] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs['start_new_session'] = True
+
+    try:
+        proc = subprocess.Popen(command, **kwargs)
+        app.logger.info('One-shot updater started: PID=%d', proc.pid)
+        return jsonify({
+            'status': 'success',
+            'message': 'updater started',
+            'updater_pid': proc.pid
+        })
+    except Exception as exc:
+        app.logger.warning('Failed to start updater: %s', exc)
+        return jsonify({
+            'status': 'error',
+            'message': str(exc)
+        }), 500
 
 
 def render_template(template_name: str, **context: Any) -> HTMLResponse:
