@@ -175,6 +175,19 @@ object PayloadJson {
             .put("shuffle", shuffle)
 
         snapshot.error?.let { detail.put("error", it) }
+        if (snapshot.amllMode.isNotBlank()) {
+            detail.put("amllMode", snapshot.amllMode)
+        }
+        if (snapshot.track.filename.isNotBlank() || snapshot.track.title.isNotBlank()) {
+            detail.put(
+                "track",
+                JSONObject()
+                    .put("filename", snapshot.track.filename)
+                    .put("title", snapshot.track.title)
+                    .put("artist", snapshot.track.artist)
+                    .put("album", snapshot.track.album)
+            )
+        }
 
         return detail.toString()
 

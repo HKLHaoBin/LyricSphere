@@ -32,6 +32,22 @@ class QueueEngine {
         cacheTracksFromPayload(payload)
     }
 
+    fun restoreFromPersisted(
+        queueIds: List<String>,
+        playbackMode: String,
+        currentFilename: String,
+        shuffle: ShuffleState,
+        trackCache: Map<String, TrackMeta>
+    ) {
+        this.queueIds = normalizeIds(queueIds)
+        this.playbackMode = playbackMode
+        this.currentFilename = currentFilename
+        shufflePool = shuffle.pool.toMutableList()
+        shuffleHistory = shuffle.history.toMutableList()
+        shuffleSignature = shuffle.signature
+        trackCache.forEach { (filename, meta) -> cacheTrack(filename, meta) }
+    }
+
     fun syncQueue(payload: HandoffPayload) {
         queueIds = normalizeIds(payload.queueIds)
         playbackMode = payload.playbackMode
@@ -79,6 +95,18 @@ class QueueEngine {
         val cur = currentFilename.takeIf { it.isNotBlank() }
         return when (playbackMode) {
             "shuffle" -> pickNextShuffle(ids, cur)
+            "single" -> cur ?: ids.firstOrNull()
+            else -> pickNextList(ids, cur)
+        }
+    }
+
+    /** Read-only next filename for prefetch; does not consume shufflePool. */
+    fun peekNextForPrefetch(): String? {
+        val ids = normalizeIds(queueIds)
+        if (ids.isEmpty()) return null
+        val cur = currentFilename.takeIf { it.isNotBlank() }
+        return when (playbackMode) {
+            "shuffle" -> peekNextShuffle(ids, cur)
             "single" -> cur ?: ids.firstOrNull()
             else -> pickNextList(ids, cur)
         }
@@ -151,6 +179,12 @@ class QueueEngine {
             shufflePool = buildShuffleQueueIds(ids.filter { it != cur })
         }
         return shufflePool.removeFirstOrNull()
+    }
+
+    private fun peekNextShuffle(ids: List<String>, cur: String?): String? {
+        if (ids.size <= 1) return cur
+        if (shufflePool.isNotEmpty()) return shufflePool.first()
+        return buildShuffleQueueIds(ids.filter { it != cur }).firstOrNull()
     }
 
     private fun pickPrevShuffle(cur: String?): String? {

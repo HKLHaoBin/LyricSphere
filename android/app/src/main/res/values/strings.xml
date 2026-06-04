@@ -15,4 +15,14 @@
     <string name="action_play">播放</string>
     <string name="action_next">下一首</string>
     <string name="menu_server_settings">服务器设置</string>
+    <string name="setup_resume_mode_title">回到前台时的音频</string>
+    <string name="setup_resume_mode_desc">Web 接管适合歌词同步；Native 续播适合保持原生播放器进度。</string>
+    <string name="setup_resume_mode_web">Web 音频接管（默认）</string>
+    <string name="setup_resume_mode_native">Native 续播（仅同步界面）</string>
+    <string name="setup_battery_title">电池优化</string>
+    <string name="setup_battery_desc">部分机型仍会强杀后台。加入白名单可提高后台播放稳定性，但不保证 100% 有效。</string>
+    <string name="setup_battery_button">请求忽略电池优化</string>
+    <string name="setup_battery_failed">无法打开电池优化设置</string>
+    <string name="setup_open_browser">在浏览器中打开</string>
+    <string name="action_open_browser">在浏览器中打开</string>
 </resources>

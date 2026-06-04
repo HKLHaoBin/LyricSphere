@@ -41,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        serverUrl = ServerPreferences.getServerUrl(this).orEmpty()
+        serverUrl = ServerUrlNormalizer.normalize(ServerPreferences.getServerUrl(this).orEmpty())
         if (serverUrl.isBlank()) {
             startActivity(Intent(this, ServerSetupActivity::class.java))
             finish()
@@ -82,12 +82,20 @@ class MainActivity : AppCompatActivity() {
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            webView.setRendererPriorityPolicy(
+                WebView.RENDERER_PRIORITY_IMPORTANT,
+                true
+            )
+        }
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
             allowContentAccess = true
+            offscreenPreRaster = true
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             }
@@ -106,7 +114,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startPlaybackService() {
-        startForegroundService(Intent(this, PlaybackService::class.java))
+        startService(Intent(this, PlaybackService::class.java))
         binding.webView.post { bindPlaybackCallbacks() }
     }
 
@@ -120,21 +128,49 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        binding.webView.onResume()
         bindPlaybackCallbacks()
         PlaybackService.instance?.setAppVisible(true)
-        binding.webView.evaluateJavascript(
-            "window.FamyliamAndroidBridge && window.FamyliamAndroidBridge.handoffToWeb && window.FamyliamAndroidBridge.handoffToWeb();",
-            null
-        )
+        when (ServerPreferences.getForegroundResumeMode(this)) {
+            ServerPreferences.FOREGROUND_RESUME_NATIVE -> {
+                binding.webView.evaluateJavascript(
+                    """
+                    (function(){
+                      if (window.FamyliamAndroidBridge && window.FamyliamAndroidBridge.getPlaybackSnapshot) {
+                        var raw = window.FamyliamAndroidBridge.getPlaybackSnapshot();
+                        if (window.__famyliamSyncSnapshotFromNative) {
+                          window.__famyliamSyncSnapshotFromNative(raw);
+                        }
+                      }
+                    })();
+                    """.trimIndent(),
+                    null
+                )
+            }
+            else -> {
+                binding.webView.evaluateJavascript(
+                    "window.FamyliamAndroidBridge && window.FamyliamAndroidBridge.handoffToWeb && window.FamyliamAndroidBridge.handoffToWeb();",
+                    null
+                )
+            }
+        }
+    }
+
+    override fun onPause() {
+        binding.webView.onPause()
+        super.onPause()
     }
 
     override fun onStop() {
         PlaybackService.instance?.setAppVisible(false)
         CookieManager.getInstance().flush()
-        binding.webView.evaluateJavascript(
-            "window.__famyliamRequestBackgroundHandoff && window.__famyliamRequestBackgroundHandoff();",
-            null
-        )
+        val resumeMode = ServerPreferences.getForegroundResumeMode(this)
+        if (resumeMode != ServerPreferences.FOREGROUND_RESUME_NATIVE) {
+            binding.webView.evaluateJavascript(
+                "window.__famyliamRequestBackgroundHandoff && window.__famyliamRequestBackgroundHandoff();",
+                null
+            )
+        }
         super.onStop()
     }
 

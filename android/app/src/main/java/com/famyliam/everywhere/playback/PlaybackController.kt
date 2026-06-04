@@ -2,21 +2,30 @@ package com.famyliam.everywhere.playback
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.famyliam.everywhere.util.ArtworkCache
 import com.famyliam.everywhere.util.CookieAwareDataSource
+import java.util.concurrent.Executor
 
 class PlaybackController(
     context: Context,
+    private val executor: Executor,
+    private val artworkCache: ArtworkCache,
     private val onEnded: () -> Unit,
     private val onError: (String) -> Unit,
-    private val onIsPlayingChanged: (Boolean) -> Unit
+    private val onIsPlayingChanged: (Boolean) -> Unit,
+    private val onProgressTick: () -> Unit,
+    private val onMediaItemTransition: (MediaItem?, Int) -> Unit
 ) {
     private val appContext = context.applicationContext
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var serverOrigin: String = ""
     private var currentTrack: TrackMeta = TrackMeta("")
     private var dataSourceFactory = CookieAwareDataSource(appContext) { serverOrigin }
@@ -41,10 +50,31 @@ class PlaybackController(
                 if (playbackState == Player.STATE_ENDED) {
                     onEnded()
                 }
+                if (playbackState == Player.STATE_READY) {
+                    onProgressTick()
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 onIsPlayingChanged(isPlaying)
+                onProgressTick()
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                onMediaItemTransition(mediaItem, reason)
+                onProgressTick()
+            }
+
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
+                    events.contains(Player.EVENT_PLAYBACK_PARAMETERS_CHANGED) ||
+                    events.contains(Player.EVENT_TIMELINE_CHANGED) ||
+                    events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                    events.contains(Player.EVENT_MEDIA_METADATA_CHANGED) ||
+                    events.contains(Player.EVENT_POSITION_DISCONTINUITY)
+                ) {
+                    onProgressTick()
+                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -72,16 +102,69 @@ class PlaybackController(
         }
         val position = player.currentPosition
         val wasPlaying = player.isPlaying
-        val mediaItem = player.currentMediaItem
+        val items = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }
+        val index = player.currentMediaItemIndex
         player.release()
         player = buildPlayer()
         attachPlayerListeners(player)
-        if (mediaItem != null) {
-            player.setMediaItem(mediaItem)
+        if (items.isNotEmpty()) {
+            player.setMediaItems(items, index.coerceAtLeast(0), position)
             player.prepare()
-            player.seekTo(position)
             player.playWhenReady = wasPlaying
         }
+    }
+
+    fun buildMediaItem(track: TrackMeta, artworkBytes: ByteArray? = null): MediaItem {
+        val metadataBuilder = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artist)
+            .setAlbumTitle(track.album)
+        if (artworkBytes != null && artworkBytes.isNotEmpty()) {
+            metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        } else if (track.artworkUri.isNotBlank()) {
+            metadataBuilder.setArtworkUri(Uri.parse(track.artworkUri))
+        }
+        val builder = MediaItem.Builder()
+            .setMediaId(track.filename)
+            .setMediaMetadata(metadataBuilder.build())
+        if (track.audioUrl.isNotBlank()) {
+            builder.setUri(Uri.parse(track.audioUrl))
+        }
+        return builder.build()
+    }
+
+    fun setQueue(
+        items: List<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long,
+        autoPlay: Boolean,
+        repeatSingle: Boolean
+    ) {
+        player.repeatMode = if (repeatSingle) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+        player.setMediaItems(items, startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)), startPositionMs)
+        player.prepare()
+        player.playWhenReady = autoPlay
+        items.getOrNull(startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)))?.let { item ->
+            currentTrack = trackFromMediaItem(item)
+        }
+    }
+
+    fun updateItemAt(index: Int, item: MediaItem) {
+        if (index < 0 || index >= player.mediaItemCount) return
+        player.replaceMediaItem(index, item)
+        if (player.currentMediaItemIndex == index) {
+            item.mediaId?.let { currentTrack = trackFromMediaItem(item) }
+        }
+    }
+
+    fun currentIndex(): Int = player.currentMediaItemIndex
+
+    fun indexOfMediaId(filename: String): Int {
+        if (filename.isBlank()) return -1
+        for (i in 0 until player.mediaItemCount) {
+            if (player.getMediaItemAt(i).mediaId == filename) return i
+        }
+        return -1
     }
 
     fun playTrack(
@@ -96,27 +179,27 @@ class PlaybackController(
         }
         currentTrack = track
         refreshCookies()
-
-        player.repeatMode = if (repeatSingle) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-        val mediaItem = MediaItem.Builder()
-            .setUri(Uri.parse(track.audioUrl))
-            .setMediaId(track.filename)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(track.title)
-                    .setArtist(track.artist)
-                    .setAlbumTitle(track.album)
-                    .setArtworkUri(track.artworkUri.takeIf { it.isNotBlank() }?.let(Uri::parse))
-                    .build()
-            )
-            .build()
-
-        player.setMediaItem(mediaItem)
-        player.prepare()
-        val startMs = (startSec.coerceAtLeast(0.0) * 1000).toLong()
-        player.seekTo(startMs)
-        player.playWhenReady = autoPlay
+        val mediaItem = buildMediaItem(track)
+        setQueue(listOf(mediaItem), 0, (startSec.coerceAtLeast(0.0) * 1000).toLong(), autoPlay, repeatSingle)
+        loadArtworkForTrack(track, 0)
         return true
+    }
+
+    fun loadArtworkForTrack(track: TrackMeta, index: Int) {
+        if (track.artworkUri.isBlank()) return
+        artworkCache.loadArtworkBytes(track.artworkUri, serverOrigin) { bytes ->
+            mainHandler.post {
+                applyArtworkBytes(track, index, bytes)
+            }
+        }
+    }
+
+    private fun applyArtworkBytes(track: TrackMeta, index: Int, bytes: ByteArray?) {
+        if (bytes == null || index >= player.mediaItemCount) return
+        val existing = player.getMediaItemAt(index)
+        if (existing.mediaId != track.filename) return
+        val updated = buildMediaItem(track, bytes)
+        updateItemAt(index, updated)
     }
 
     fun updateAudioUrl(track: TrackMeta) {
@@ -124,7 +207,16 @@ class PlaybackController(
         val position = player.currentPosition
         val autoPlay = player.isPlaying
         val repeatMode = player.repeatMode
-        playTrack(track, position / 1000.0, autoPlay, repeatMode == Player.REPEAT_MODE_ONE)
+        val index = currentIndex().coerceAtLeast(0)
+        val item = buildMediaItem(track)
+        if (player.mediaItemCount > 0) {
+            updateItemAt(index, item)
+            player.seekTo(position)
+            player.playWhenReady = autoPlay
+            loadArtworkForTrack(track, index)
+        } else {
+            playTrack(track, position / 1000.0, autoPlay, repeatMode == Player.REPEAT_MODE_ONE)
+        }
     }
 
     fun pause() {
@@ -139,11 +231,23 @@ class PlaybackController(
         player.seekTo((sec.coerceAtLeast(0.0) * 1000).toLong())
     }
 
+    fun seekToMediaIndex(index: Int, autoPlay: Boolean = true) {
+        if (index < 0 || index >= player.mediaItemCount) return
+        player.seekToDefaultPosition(index)
+        player.playWhenReady = autoPlay
+    }
+
     fun currentSnapshot(queue: QueueEngine): PlaybackSnapshot {
         val durationSec = if (player.duration > 0) player.duration / 1000.0 else 0.0
         val positionSec = if (player.currentPosition >= 0) player.currentPosition / 1000.0 else 0.0
+        val mediaId = player.currentMediaItem?.mediaId
+        val track = if (!mediaId.isNullOrBlank()) {
+            queue.trackFor(mediaId) ?: currentTrack.copy(filename = mediaId)
+        } else {
+            currentTrack
+        }
         return PlaybackSnapshot(
-            filename = queue.currentFilename.ifBlank { currentTrack.filename },
+            filename = queue.currentFilename.ifBlank { track.filename },
             currentTime = positionSec,
             duration = durationSec,
             isPlaying = player.isPlaying,
@@ -154,11 +258,21 @@ class PlaybackController(
                 history = queue.shuffleHistory.toList(),
                 signature = queue.shuffleSignature
             ),
-            track = currentTrack
+            track = track
         )
     }
 
     fun release() {
         player.release()
+    }
+
+    private fun trackFromMediaItem(item: MediaItem): TrackMeta {
+        val meta = item.mediaMetadata
+        return TrackMeta(
+            filename = item.mediaId.orEmpty(),
+            title = meta.title?.toString().orEmpty(),
+            artist = meta.artist?.toString().orEmpty(),
+            album = meta.albumTitle?.toString().orEmpty()
+        )
     }
 }

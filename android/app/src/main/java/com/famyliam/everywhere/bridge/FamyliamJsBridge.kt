@@ -2,69 +2,46 @@ package com.famyliam.everywhere.bridge
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
-import com.famyliam.everywhere.playback.PayloadJson
+import androidx.core.content.ContextCompat
+import com.famyliam.everywhere.ServerPreferences
 import com.famyliam.everywhere.playback.PlaybackService
-import org.json.JSONObject
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 class FamyliamJsBridge(
     private val context: Context,
     private val jsDispatcher: (String) -> Unit
 ) {
-    private val refreshCallbacks = ConcurrentHashMap<String, (String?) -> Unit>()
-
     @JavascriptInterface
     fun syncQueue(jsonPayload: String) {
-        startService(PlaybackService.ACTION_SYNC_QUEUE, jsonPayload)
+        startPlaybackServiceForSync(jsonPayload)
     }
 
     @JavascriptInterface
     fun handoffToNative(jsonPayload: String) {
         CookieManager.getInstance().flush()
-        startService(PlaybackService.ACTION_HANDOFF_TO_NATIVE, jsonPayload)
+        startPlaybackServiceForHandoff(jsonPayload)
     }
 
     @JavascriptInterface
     fun handoffToWeb(): String {
         val snapshotJson = PlaybackService.instance?.performHandoffToWeb() ?: "{}"
-        dispatchNativeEvent(snapshotJson)
+        val mode = ServerPreferences.getForegroundResumeMode(context)
+        if (mode != ServerPreferences.FOREGROUND_RESUME_NATIVE) {
+            dispatchNativeEvent(snapshotJson)
+        }
         return snapshotJson
     }
 
-    /**
-     * Called from native playback on 401 / URL expiry; asks the web layer for a fresh signed URL.
-     */
-    fun refreshTrackUrl(filename: String, callback: (String?) -> Unit) {
-        val requestId = UUID.randomUUID().toString()
-        refreshCallbacks[requestId] = callback
-        val quoted = JSONObject.quote(filename)
-        val script = """
-            (function(){
-              var done = function(url) {
-                try {
-                  FamyliamAndroidBridge.onRefreshTrackUrlResult('$requestId', url || '');
-                } catch (e) {}
-              };
-              try {
-                if (typeof window.__famyliamRefreshTrackUrl === 'function') {
-                  Promise.resolve(window.__famyliamRefreshTrackUrl($quoted))
-                    .then(done)
-                    .catch(function() { done(''); });
-                } else {
-                  done('');
-                }
-              } catch (e) { done(''); }
-            })();
-        """.trimIndent()
-        jsDispatcher(script)
+    @JavascriptInterface
+    fun getPlaybackSnapshot(): String {
+        return PlaybackService.instance?.getPlaybackSnapshotJson() ?: "{}"
     }
 
     @JavascriptInterface
-    fun onRefreshTrackUrlResult(requestId: String, audioUrl: String) {
-        refreshCallbacks.remove(requestId)?.invoke(audioUrl.takeIf { it.isNotBlank() })
+    fun getForegroundResumeMode(): String {
+        return ServerPreferences.getForegroundResumeMode(context)
     }
 
     fun dispatchNativeEvent(detailJson: String) {
@@ -80,11 +57,26 @@ class FamyliamJsBridge(
         jsDispatcher(script)
     }
 
-    private fun startService(action: String, json: String?) {
+    private fun buildPlaybackIntent(action: String, json: String?): Intent {
         val intent = Intent(context, PlaybackService::class.java).setAction(action)
         if (!json.isNullOrBlank()) {
             intent.putExtra(PlaybackService.EXTRA_JSON, json)
         }
-        context.startForegroundService(intent)
+        return intent
+    }
+
+    /** Queue sync only; must not use startForegroundService (no FGS timeout). */
+    private fun startPlaybackServiceForSync(json: String?) {
+        context.startService(buildPlaybackIntent(PlaybackService.ACTION_SYNC_QUEUE, json))
+    }
+
+    /** Native handoff may play in background; requires foreground service on API 26+. */
+    private fun startPlaybackServiceForHandoff(json: String?) {
+        val intent = buildPlaybackIntent(PlaybackService.ACTION_HANDOFF_TO_NATIVE, json)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(context, intent)
+        } else {
+            context.startService(intent)
+        }
     }
 }
