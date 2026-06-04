@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.FamyliamEverywhere" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/famyliam_primary</item>
+        <item name="colorPrimaryVariant">@color/famyliam_primary_dark</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+    </style>
+</resources>

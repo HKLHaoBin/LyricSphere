@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Famyliam</string>
+    <string name="setup_title">服务器地址</string>
+    <string name="setup_hint">例如 http://192.168.1.10:5000</string>
+    <string name="setup_save">进入播放器</string>
+    <string name="setup_error_empty">请输入服务器地址</string>
+    <string name="setup_error_invalid">地址格式无效</string>
+    <string name="notification_channel_name">音乐播放</string>
+    <string name="notification_channel_desc">后台播放与媒体控制</string>
+    <string name="notification_playing">正在播放</string>
+    <string name="notification_error">播放失败</string>
+    <string name="action_previous">上一首</string>
+    <string name="action_pause">暂停</string>
+    <string name="action_play">播放</string>
+    <string name="action_next">下一首</string>
+    <string name="menu_server_settings">服务器设置</string>
+</resources>
