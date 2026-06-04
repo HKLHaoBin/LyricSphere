@@ -5,7 +5,7 @@ on:
   push:
     paths:
       - 'android/**'
-      - 'dist/**'
+      - 'templates/lyric-sphere-v2/dist/**'
       - '.github/workflows/android.yml'
 
 jobs:
@@ -17,16 +17,16 @@ jobs:
 
       - name: Validate dist
         run: |
-          if [ ! -d dist ]; then
-            echo "::error::dist/ directory is missing"
+          if [ ! -d templates/lyric-sphere-v2/dist ]; then
+            echo "::error::templates/lyric-sphere-v2/dist/ directory is missing"
             exit 1
           fi
-          if [ ! -f dist/index.html ]; then
-            echo "::error::dist/index.html is missing"
+          if [ ! -f templates/lyric-sphere-v2/dist/index.html ]; then
+            echo "::error::templates/lyric-sphere-v2/dist/index.html is missing"
             exit 1
           fi
-          if [ ! -d dist/assets ]; then
-            echo "::error::dist/assets/ directory is missing"
+          if [ ! -d templates/lyric-sphere-v2/dist/assets ]; then
+            echo "::error::templates/lyric-sphere-v2/dist/assets/ directory is missing"
             exit 1
           fi
 
