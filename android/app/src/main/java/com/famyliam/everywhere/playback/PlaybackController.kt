@@ -8,12 +8,14 @@ import android.webkit.CookieManager
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.famyliam.everywhere.util.ArtworkCache
 import com.famyliam.everywhere.util.CookieAwareDataSource
 import java.util.concurrent.Executor
 
+@OptIn(UnstableApi::class)
 class PlaybackController(
     context: Context,
     private val executor: Executor,
@@ -22,7 +24,9 @@ class PlaybackController(
     private val onError: (String) -> Unit,
     private val onIsPlayingChanged: (Boolean) -> Unit,
     private val onProgressTick: () -> Unit,
-    private val onMediaItemTransition: (MediaItem?, Int) -> Unit
+    private val onMediaItemTransition: (MediaItem?, Int) -> Unit,
+    private val onSkipNext: () -> Unit,
+    private val onSkipPrevious: () -> Unit,
 ) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -39,6 +43,12 @@ class PlaybackController(
 
     var player: ExoPlayer = buildPlayer()
         private set
+
+    val sessionPlayer: SessionPlayerWrapper = SessionPlayerWrapper(
+        initialPlayer = player,
+        onSkipNext = onSkipNext,
+        onSkipPrevious = onSkipPrevious,
+    )
 
     init {
         attachPlayerListeners(player)
@@ -100,18 +110,21 @@ class PlaybackController(
         dataSourceFactory = CookieAwareDataSource(appContext) {
             serverOrigin.ifBlank { "http://127.0.0.1" }
         }
-        val position = player.currentPosition
-        val wasPlaying = player.isPlaying
-        val items = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }
-        val index = player.currentMediaItemIndex
-        player.release()
-        player = buildPlayer()
-        attachPlayerListeners(player)
+        val oldPlayer = player
+        val position = oldPlayer.currentPosition
+        val wasPlaying = oldPlayer.isPlaying
+        val items = (0 until oldPlayer.mediaItemCount).map { oldPlayer.getMediaItemAt(it) }
+        val index = oldPlayer.currentMediaItemIndex
+        val newPlayer = buildPlayer()
+        attachPlayerListeners(newPlayer)
         if (items.isNotEmpty()) {
-            player.setMediaItems(items, index.coerceAtLeast(0), position)
-            player.prepare()
-            player.playWhenReady = wasPlaying
+            newPlayer.setMediaItems(items, index.coerceAtLeast(0), position)
+            newPlayer.prepare()
+            newPlayer.playWhenReady = wasPlaying
         }
+        player = newPlayer
+        sessionPlayer.bindPlayer(newPlayer)
+        oldPlayer.release()
     }
 
     fun buildMediaItem(track: TrackMeta, artworkBytes: ByteArray? = null): MediaItem {
@@ -263,7 +276,7 @@ class PlaybackController(
     }
 
     fun release() {
-        player.release()
+        sessionPlayer.release()
     }
 
     private fun trackFromMediaItem(item: MediaItem): TrackMeta {

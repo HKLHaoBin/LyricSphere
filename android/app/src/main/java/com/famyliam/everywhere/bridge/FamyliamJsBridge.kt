@@ -3,6 +3,8 @@ package com.famyliam.everywhere.bridge
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import androidx.core.content.ContextCompat
@@ -13,6 +15,23 @@ class FamyliamJsBridge(
     private val context: Context,
     private val jsDispatcher: (String) -> Unit
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var backgroundHandoffFinishedListener: ((requestId: String, success: Boolean) -> Unit)? =
+        null
+
+    fun setBackgroundHandoffFinishedListener(
+        listener: ((requestId: String, success: Boolean) -> Unit)?
+    ) {
+        backgroundHandoffFinishedListener = listener
+    }
+
+    @JavascriptInterface
+    fun notifyBackgroundHandoffFinished(requestId: String, success: Boolean) {
+        val listener = backgroundHandoffFinishedListener ?: return
+        mainHandler.post {
+            listener(requestId, success)
+        }
+    }
     @JavascriptInterface
     fun syncQueue(jsonPayload: String) {
         startPlaybackServiceForSync(jsonPayload)

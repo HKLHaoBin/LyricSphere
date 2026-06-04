@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.famyliam.everywhere"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.famyliam.everywhere"

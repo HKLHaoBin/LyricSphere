@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import java.util.UUID
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.webkit.CookieManager
@@ -23,11 +26,21 @@ import com.famyliam.everywhere.playback.PlaybackService
 import com.famyliam.everywhere.util.ServerUrlNormalizer
 
 class MainActivity : AppCompatActivity() {
+    companion object {
+        /** Safety net when WebView evaluateJavascript callback is lost — not handoff business delay. */
+        private const val HANDOFF_PAUSE_FALLBACK_MS = 400L
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var jsBridge: FamyliamJsBridge
     private var serverUrl: String = ""
     private var serverOrigin: String = ""
     private lateinit var gestureDetector: GestureDetectorCompat
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pauseFallbackRunnable: Runnable? = null
+    private var backgroundHandoffRequestId: String? = null
+    private var backgroundHandoffRequestedInPause = false
+    private var webViewPauseCompleted = false
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -53,6 +66,9 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 binding.webView.evaluateJavascript(script, null)
             }
+        }
+        jsBridge.setBackgroundHandoffFinishedListener { requestId, _ ->
+            onBackgroundHandoffFinished(requestId)
         }
 
         gestureDetector = GestureDetectorCompat(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -128,6 +144,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        cancelWebViewPauseFallback()
+        backgroundHandoffRequestId = null
+        webViewPauseCompleted = false
+        backgroundHandoffRequestedInPause = false
         binding.webView.onResume()
         bindPlaybackCallbacks()
         PlaybackService.instance?.setAppVisible(true)
@@ -157,24 +177,75 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        binding.webView.onPause()
+        // Web→native handoff first; WebView.onPause() deferred to handoff callback or fallback only.
+        cancelWebViewPauseFallback()
+        backgroundHandoffRequestedInPause = true
+        webViewPauseCompleted = false
+        val requestId = UUID.randomUUID().toString()
+        backgroundHandoffRequestId = requestId
+        requestBackgroundHandoff(requestId)
+        val fallbackRequestId = requestId
+        pauseFallbackRunnable = Runnable {
+            if (webViewPauseCompleted) return@Runnable
+            if (fallbackRequestId != backgroundHandoffRequestId) return@Runnable
+            pauseWebViewSafely()
+        }
+        mainHandler.postDelayed(pauseFallbackRunnable!!, HANDOFF_PAUSE_FALLBACK_MS)
         super.onPause()
+    }
+
+    private fun onBackgroundHandoffFinished(requestId: String) {
+        if (requestId != backgroundHandoffRequestId) return
+        pauseWebViewSafely()
+    }
+
+    private fun cancelWebViewPauseFallback() {
+        pauseFallbackRunnable?.let(mainHandler::removeCallbacks)
+        pauseFallbackRunnable = null
+    }
+
+    private fun pauseWebViewSafely() {
+        if (webViewPauseCompleted || isFinishing || isDestroyed) return
+        webViewPauseCompleted = true
+        cancelWebViewPauseFallback()
+        binding.webView.onPause()
     }
 
     override fun onStop() {
         PlaybackService.instance?.setAppVisible(false)
         CookieManager.getInstance().flush()
-        val resumeMode = ServerPreferences.getForegroundResumeMode(this)
-        if (resumeMode != ServerPreferences.FOREGROUND_RESUME_NATIVE) {
-            binding.webView.evaluateJavascript(
-                "window.__famyliamRequestBackgroundHandoff && window.__famyliamRequestBackgroundHandoff();",
-                null
-            )
+        if (!backgroundHandoffRequestedInPause) {
+            requestBackgroundHandoff()
         }
+        backgroundHandoffRequestedInPause = false
         super.onStop()
     }
 
+    /**
+     * Triggers web→native background handoff. Always runs regardless of foreground resume mode
+     * (including native_audio); JS bridge dedupes repeat calls when onStop follows onPause.
+     *
+     * @param requestId When set, JS notifies [FamyliamJsBridge.notifyBackgroundHandoffFinished]
+     *   so MainActivity can defer [WebView.onPause] until handoff completes.
+     */
+    private fun requestBackgroundHandoff(requestId: String? = null) {
+        val jsArg = requestId?.let { id ->
+            "'${id.replace("\\", "\\\\").replace("'", "\\'")}'"
+        } ?: "null"
+        try {
+            binding.webView.evaluateJavascript(
+                "window.__famyliamRequestBackgroundHandoff && window.__famyliamRequestBackgroundHandoff($jsArg);",
+                null
+            )
+        } catch (_: Exception) {
+            // ignore
+        }
+    }
+
     override fun onDestroy() {
+        cancelWebViewPauseFallback()
+        backgroundHandoffRequestId = null
+        webViewPauseCompleted = true
         binding.webView.removeJavascriptInterface("FamyliamAndroidBridge")
         binding.webView.destroy()
         super.onDestroy()

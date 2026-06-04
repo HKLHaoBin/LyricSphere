@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.view.KeyEvent
 import android.webkit.CookieManager
 import androidx.core.app.ServiceCompat
 import androidx.media3.common.MediaItem
@@ -101,9 +100,11 @@ class PlaybackService : MediaSessionService() {
                 maybeDispatchProgressToWeb()
                 requestNotificationRefresh()
             },
-            onMediaItemTransition = { item, _ -> handleMediaItemTransition(item) }
+            onMediaItemTransition = { item, _ -> handleMediaItemTransition(item) },
+            onSkipNext = { skipNext() },
+            onSkipPrevious = { skipPrev() },
         )
-        mediaSession = MediaSession.Builder(this, controller!!.player)
+        mediaSession = MediaSession.Builder(this, controller!!.sessionPlayer)
             .setCallback(sessionCallback)
             .setMediaButtonPreferences(buildMediaButtonPreferences())
             .build()
@@ -168,35 +169,6 @@ class PlaybackService : MediaSessionService() {
             return Futures.immediateFuture(resumption)
         }
 
-        override fun onMediaButtonEvent(
-            session: MediaSession,
-            controllerInfo: MediaSession.ControllerInfo,
-            intent: Intent
-        ): Boolean {
-            val keyEvent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent
-            } ?: return super.onMediaButtonEvent(session, controllerInfo, intent)
-            if (keyEvent.action != KeyEvent.ACTION_DOWN) {
-                return super.onMediaButtonEvent(session, controllerInfo, intent)
-            }
-            when (keyEvent.keyCode) {
-                KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                    skipNext()
-                    requestNotificationRefresh()
-                    return true
-                }
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                    skipPrev()
-                    requestNotificationRefresh()
-                    return true
-                }
-            }
-            return super.onMediaButtonEvent(session, controllerInfo, intent)
-        }
-
         override fun onPlayerInteractionFinished(
             session: MediaSession,
             controllerInfo: MediaSession.ControllerInfo,
@@ -222,7 +194,13 @@ class PlaybackService : MediaSessionService() {
         return Player.Commands.Builder()
             .add(Player.COMMAND_PLAY_PAUSE)
             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            .add(Player.COMMAND_SEEK_TO_NEXT)
+            .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+            .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             .add(Player.COMMAND_GET_CURRENT_MEDIA_ITEM)
+            .add(Player.COMMAND_GET_METADATA)
+            .add(Player.COMMAND_GET_TIMELINE)
             .add(Player.COMMAND_CHANGE_MEDIA_ITEMS)
             .build()
     }
@@ -460,19 +438,17 @@ class PlaybackService : MediaSessionService() {
             currentIndex >= 0 &&
             currentIndex < player.mediaItemCount - 1
         ) {
-            val nextIndex = currentIndex + 1
-            val nextId = player.getMediaItemAt(nextIndex).mediaId
+            val nextItem = player.getMediaItemAt(currentIndex + 1)
+            val nextId = nextItem.mediaId
             if (!nextId.isNullOrBlank()) {
-                queue.onTrackStarted(nextId)
-                controller?.seekToMediaIndex(nextIndex, autoPlay = true)
-                prefetchAroundCurrent(nextId)
+                playFilenameInPlaylistOrResolve(nextId, autoPlay = true)
                 return
             }
         }
         val advance = queue.onTrackEndedAdvance() ?: return
         val nextFilename = advance.filename
         if (nextFilename.isBlank()) return
-        resolveAndPlay(nextFilename, autoPlay = true)
+        playFilenameInPlaylistOrResolve(nextFilename, autoPlay = true)
     }
 
     private fun skipNext() {
