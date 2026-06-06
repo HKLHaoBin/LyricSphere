@@ -486,13 +486,6 @@
         .context-menu button:hover {
             background: rgba(255, 255, 255, 0.08);
         }
-        
-        /* 仅在手机等小屏幕设备上显示滑块 */
-        @media screen and (max-width: 768px), screen and (orientation: portrait) {
-            .font-slider-container {
-                display: block;
-            }
-        }
     </style>
 </head>
 <body>
@@ -4125,7 +4118,27 @@
             });
         }
 
+            function hasPrimaryLyricsSource(songInfo) {
+                if (queryLys) return true;
+                const metaLyrics = songInfo?.meta?.lyrics;
+                if (!metaLyrics || typeof metaLyrics !== 'string') return false;
+                return metaLyrics.split('::').some(
+                    (part) => part && part !== '!' && part.toLowerCase().endsWith('.lys')
+                );
+            }
+
             async function loadLyricsEnhancement(songInfo) {
+                if (!hasPrimaryLyricsSource(songInfo)) {
+                    lyricsData = [];
+                    translationData = [];
+                    forceCenterAlign = true;
+                    if (!amllColorState.background) {
+                        scheduleNonCriticalInit(() => triggerInitialBeatToggleSequence());
+                    }
+                    initLyrics();
+                    return;
+                }
+
                 const lyricsParams = new URLSearchParams();
                 if (queryFile) lyricsParams.append('file', queryFile);
                 if (queryLys) lyricsParams.append('lys', queryLys);
