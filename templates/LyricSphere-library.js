@@ -2346,15 +2346,26 @@ function getDroppedExternalUrlHint(dataTransfer) {
     if (types.includes('DownloadURL')) {
         try {
             const downloadUrl = dataTransfer.getData('DownloadURL')
-            if (downloadUrl) return downloadUrl
+            if (downloadUrl) {
+                const firstColon = downloadUrl.indexOf(':')
+                const secondColon = firstColon >= 0 ? downloadUrl.indexOf(':', firstColon + 1) : -1
+                if (secondColon >= 0) {
+                    const mime = downloadUrl.slice(0, firstColon) || ''
+                    const filename = downloadUrl.slice(firstColon + 1, secondColon) || ''
+                    const url = downloadUrl.slice(secondColon + 1)
+                    if (url && /^https?:\/\//i.test(url)) {
+                        return { mime, filename, url }
+                    }
+                }
+            }
         } catch (_) { /* ignore */ }
     }
     for (const textType of ['text/uri-list', 'text/plain']) {
         try {
             const text = dataTransfer.getData(textType)
             if (!text) continue
-            const urlMatch = text.match(/(?:https?|file):\/\/[^\s]+/i)
-            if (urlMatch) return urlMatch[0]
+            const urlMatch = text.match(/https?:\/\/[^\s]+/i)
+            if (urlMatch) return { url: urlMatch[0] }
         } catch (_) { /* ignore */ }
     }
     return null
@@ -2362,7 +2373,7 @@ function getDroppedExternalUrlHint(dataTransfer) {
 
 function resolveDroppedUploadFile(dataTransfer) {
     const file = getDroppedFile(dataTransfer)
-    const urlHint = file ? null : getDroppedExternalUrlHint(dataTransfer)
+    const urlHint = getDroppedExternalUrlHint(dataTransfer)
     return { file, urlHint }
 }
 
@@ -2414,22 +2425,22 @@ function attachSongCardQuickFileDrop(li) {
         if (!jsonFile) return
 
         const { file, urlHint } = resolveDroppedUploadFile(e.dataTransfer)
-        if (!file && urlHint) {
-            alert(t('file.uploadFromDownloadFolder'))
+        const urlHintIsMusic = urlHint && isLikelyMusicMediaUrlHint(urlHint)
+
+        if (!file && urlHintIsMusic) {
+            if (typeof uploadMusicFromDroppedUrl !== 'function') return
+            currentMusicJsonFile = jsonFile
+            uploadMusicFromDroppedUrl(urlHint)
             return
         }
         if (!file) return
 
         const kind = classifySongCardDropFile(file)
-        if (!kind) {
-            alert(t('song.cardDropUnsupported'))
-            return
-        }
 
         if (kind === 'music') {
             if (typeof uploadMusicFile !== 'function') return
             currentMusicJsonFile = jsonFile
-            uploadMusicFile(file)
+            uploadMusicFile(file, { fallbackUrlHint: urlHint })
             return
         }
 
@@ -2449,7 +2460,17 @@ function attachSongCardQuickFileDrop(li) {
             }
             currentImageJsonFile = jsonFile
             handleImageUpload(file, 'album')
+            return
         }
+
+        if (urlHintIsMusic) {
+            if (typeof uploadMusicFromDroppedUrl !== 'function') return
+            currentMusicJsonFile = jsonFile
+            uploadMusicFromDroppedUrl(urlHint)
+            return
+        }
+
+        alert(t('song.cardDropUnsupported'))
     }, cap)
 }
 
@@ -3867,19 +3888,25 @@ function initMusicAlbumPathDropzones() {
             const { file, urlHint } = resolveDroppedUploadFile(e.dataTransfer)
 
             if (kind === 'music') {
-                if (!file && urlHint) {
-                    alert(t('file.uploadFromDownloadFolder'))
+                const urlHintIsMusic = urlHint && isLikelyMusicMediaUrlHint(urlHint)
+
+                if (!file && urlHintIsMusic) {
+                    if (typeof uploadMusicFromDroppedUrl !== 'function') return
+                    uploadMusicFromDroppedUrl(urlHint)
                     return
                 }
                 if (!file) return
-                if (typeof uploadMusicFile !== 'function') {
+                if (typeof uploadMusicFile !== 'function') return
+
+                if (isLikelyMusicMediaFile(file)) {
+                    uploadMusicFile(file, { fallbackUrlHint: urlHint })
                     return
                 }
-                if (!isLikelyMusicMediaFile(file)) {
-                    alert(t('file.uploadAudio'))
+                if (urlHintIsMusic) {
+                    uploadMusicFromDroppedUrl(urlHint)
                     return
                 }
-                uploadMusicFile(file)
+                alert(t('file.uploadAudio'))
             } else if (kind === 'album') {
                 if (!file) return
                 if (typeof handleImageUpload !== 'function') {

@@ -11,28 +11,89 @@ function isLikelyMusicMediaFile(file) {
     return _MUSIC_UPLOAD_MEDIA_EXTS.some((ext) => lower.endsWith(ext))
 }
 
+function isLikelyMusicMediaUrlHint(urlHint) {
+    if (!urlHint || !urlHint.url) return false
+    const mime = (urlHint.mime || '').toLowerCase()
+    if (mime.startsWith('audio/') || mime.startsWith('video/')) return true
+    const filename = (urlHint.filename || '').toLowerCase()
+    if (filename && _MUSIC_UPLOAD_MEDIA_EXTS.some((ext) => filename.endsWith(ext))) return true
+    try {
+        const pathname = new URL(urlHint.url).pathname.toLowerCase()
+        if (_MUSIC_UPLOAD_MEDIA_EXTS.some((ext) => pathname.endsWith(ext))) return true
+    } catch (_) { /* ignore */ }
+    return false
+}
+
+async function uploadMusicFromDroppedUrl(urlHint, options = {}) {
+    if (!urlHint || !urlHint.url) return
+
+    const body = { url: urlHint.url }
+    if (urlHint.filename) body.filename = urlHint.filename
+    if (urlHint.mime) body.mime = urlHint.mime
+
+    try {
+        const response = await fetch('/upload_music_from_url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        const data = await response.json()
+
+        if (data.status === 'success') {
+            document.getElementById('newMusicPath').value = data.filename
+            updateMusicPath()
+        } else if (data.message) {
+            alert(t('alert.uploadFailedPrefix') + data.message)
+        } else {
+            alert(t('file.uploadFromDownloadFolder'))
+        }
+    } catch (error) {
+        console.error('Error:', error)
+        alert(t('file.uploadFromDownloadFolder'))
+    }
+}
+
 async function uploadMusicFile(file, options = {}) {
     if (!file) return
+
+    const fallbackUrlHint = options.fallbackUrlHint
+    const canFallbackToUrl = fallbackUrlHint && isLikelyMusicMediaUrlHint(fallbackUrlHint)
 
     debugUploadAction('selected', 'music', file.name)
 
     try {
         if (!isLikelyMusicMediaFile(file)) {
+            if (options.fallbackUrlHint && isLikelyMusicMediaUrlHint(options.fallbackUrlHint)) {
+                await uploadMusicFromDroppedUrl(options.fallbackUrlHint)
+                return
+            }
             alert(t('file.uploadAudio'))
             return
         }
 
         if (!file.name) {
+            if (canFallbackToUrl) {
+                await uploadMusicFromDroppedUrl(fallbackUrlHint)
+                return
+            }
             alert(t('file.uploadFromDownloadFolder'))
             return
         }
         if (file.size === 0) {
+            if (canFallbackToUrl) {
+                await uploadMusicFromDroppedUrl(fallbackUrlHint)
+                return
+            }
             alert(t('file.uploadFromDownloadFolder'))
             return
         }
         try {
             await file.slice(0, 1).arrayBuffer()
         } catch (_) {
+            if (canFallbackToUrl) {
+                await uploadMusicFromDroppedUrl(fallbackUrlHint)
+                return
+            }
             alert(t('file.uploadFromDownloadFolder'))
             return
         }
@@ -55,6 +116,10 @@ async function uploadMusicFile(file, options = {}) {
     } catch (error) {
         console.error('Error:', error)
         if (error instanceof TypeError && error.message && error.message.includes('Failed to fetch')) {
+            if (canFallbackToUrl) {
+                await uploadMusicFromDroppedUrl(fallbackUrlHint)
+                return
+            }
             alert(t('alert.uploadNetworkFailed'))
         } else {
             alert(t('alert.uploadErrorPrefix') + error.message)

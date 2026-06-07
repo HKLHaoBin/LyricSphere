@@ -45,6 +45,7 @@ from openai import OpenAI
 import random
 import threading
 import socket
+import ipaddress
 import asyncio
 import websockets
 import queue
@@ -2264,6 +2265,204 @@ def _resolve_new_filename_in_directory(base_dir: Path,
         raise ValueError('文件名不能包含子目录')
 
     return safe_filename, target_path
+
+
+_MUSIC_UPLOAD_EXTENSIONS = {
+    '.mp4', '.webm', '.ogg', '.m4v', '.mov',
+    '.mp3', '.flac', '.wav', '.m4a', '.aac', '.opus', '.oga', '.wma',
+    '.ape', '.dff', '.dsf', '.mpc', '.mid', '.midi', '.aiff', '.aif', '.caf',
+}
+_MAX_MUSIC_URL_DOWNLOAD_BYTES = 512 * 1024 * 1024
+_MUSIC_URL_REDIRECT_LIMIT = 5
+_BLOCKED_DOWNLOAD_HOSTNAMES = frozenset({
+    'localhost', 'localhost.localdomain', '127.0.0.1', '::1', '0.0.0.0',
+})
+_MUSIC_MIME_TO_EXTENSION = {
+    'audio/mpeg': '.mp3',
+    'audio/mp3': '.mp3',
+    'audio/flac': '.flac',
+    'audio/wav': '.wav',
+    'audio/x-wav': '.wav',
+    'audio/wave': '.wav',
+    'audio/mp4': '.m4a',
+    'audio/m4a': '.m4a',
+    'audio/aac': '.aac',
+    'audio/ogg': '.ogg',
+    'audio/opus': '.opus',
+    'audio/webm': '.webm',
+    'audio/x-m4a': '.m4a',
+    'audio/x-flac': '.flac',
+    'video/mp4': '.mp4',
+    'video/webm': '.webm',
+    'video/ogg': '.ogg',
+    'video/quicktime': '.mov',
+    'video/x-m4v': '.m4v',
+}
+
+
+def _is_safe_public_http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        return False
+    if parsed.username or parsed.password:
+        return False
+    if not parsed.hostname:
+        return False
+    port = parsed.port
+    if port is not None and port not in (80, 443):
+        return False
+    return True
+
+
+def _resolve_url_host_addresses(hostname: str) -> List[str]:
+    try:
+        infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError(f'无法解析主机名: {hostname}') from exc
+    addresses: List[str] = []
+    for info in infos:
+        sockaddr = info[4]
+        if sockaddr:
+            addresses.append(sockaddr[0])
+    if not addresses:
+        raise ValueError(f'无法解析主机名: {hostname}')
+    return addresses
+
+
+def _is_blocked_download_address(ip_str: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    if (addr.is_loopback or addr.is_private or addr.is_link_local
+            or addr.is_multicast or addr.is_reserved or addr.is_unspecified):
+        return True
+    if isinstance(addr, ipaddress.IPv4Address):
+        blocked_networks = (
+            '0.0.0.0/8', '100.64.0.0/10', '192.0.0.0/24',
+            '198.18.0.0/15', '240.0.0.0/4',
+        )
+        for network in blocked_networks:
+            if addr in ipaddress.ip_network(network):
+                return True
+    return False
+
+
+def _validate_remote_music_url(url: str) -> None:
+    if not _is_safe_public_http_url(url):
+        raise ValueError('仅支持 http/https 远程地址')
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or '').lower().rstrip('.')
+    if hostname in _BLOCKED_DOWNLOAD_HOSTNAMES:
+        raise ValueError('不允许访问本地或保留主机名')
+    for ip_str in _resolve_url_host_addresses(parsed.hostname):
+        if _is_blocked_download_address(ip_str):
+            raise ValueError('不允许访问内网或保留地址')
+
+
+def _parse_content_disposition_filename(header_value: Optional[str]) -> Optional[str]:
+    if not header_value:
+        return None
+    match = re.search(r"filename\*\s*=\s*(?:UTF-8''|utf-8'')(.*)", header_value, re.I)
+    if match:
+        return unquote(match.group(1).strip().strip('"'))
+    match = re.search(r'filename\s*=\s*"([^"]+)"', header_value, re.I)
+    if match:
+        return match.group(1)
+    match = re.search(r"filename\s*=\s*([^;\s]+)", header_value, re.I)
+    if match:
+        return match.group(1).strip('"')
+    return None
+
+
+def _guess_music_filename(url: str,
+                          hint_filename: Optional[str] = None,
+                          content_type: Optional[str] = None,
+                          content_disposition: Optional[str] = None,
+                          final_url: Optional[str] = None) -> str:
+    if hint_filename:
+        candidate = Path(hint_filename).name
+        if candidate:
+            return candidate
+    cd_name = _parse_content_disposition_filename(content_disposition)
+    if cd_name:
+        return Path(cd_name).name
+    if final_url:
+        final_basename = Path(unquote(urlparse(final_url).path or '')).name
+        if final_basename:
+            return final_basename
+    parsed = urlparse(url)
+    basename = Path(unquote(parsed.path or '')).name
+    if basename:
+        return basename
+    ext = _infer_music_extension('', content_type)
+    return f'download{ext or ".bin"}'
+
+
+def _infer_music_extension(filename: str, content_type: Optional[str]) -> str:
+    ext = Path(filename).suffix.lower()
+    if ext in _MUSIC_UPLOAD_EXTENSIONS:
+        return ext
+    mime = (content_type or '').split(';', 1)[0].strip().lower()
+    return _MUSIC_MIME_TO_EXTENSION.get(mime, '')
+
+
+def _download_remote_music_to_path(url: str, dest_path: Path) -> Dict[str, Optional[str]]:
+    current_url = url
+    response = None
+    for _ in range(_MUSIC_URL_REDIRECT_LIMIT + 1):
+        _validate_remote_music_url(current_url)
+        response = requests.get(
+            current_url,
+            stream=True,
+            timeout=(5, 30),
+            allow_redirects=False,
+        )
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get('Location')
+            response.close()
+            if not location:
+                raise ValueError('重定向响应缺少 Location 头')
+            current_url = requests.compat.urljoin(current_url, location)
+            continue
+        break
+    else:
+        raise ValueError('重定向次数过多')
+
+    if response is None:
+        raise ValueError('无法获取远程资源')
+
+    try:
+        if response.status_code != 200:
+            raise ValueError(f'远程服务器返回 {response.status_code}')
+
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            try:
+                if int(content_length) > _MAX_MUSIC_URL_DOWNLOAD_BYTES:
+                    raise ValueError('远程文件超过允许的最大体积')
+            except ValueError as exc:
+                if '超过' in str(exc):
+                    raise
+                pass
+
+        total_bytes = 0
+        with open(dest_path, 'wb') as out_file:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_MUSIC_URL_DOWNLOAD_BYTES:
+                    raise ValueError('远程文件超过允许的最大体积')
+                out_file.write(chunk)
+
+        return {
+            'content_type': response.headers.get('Content-Type'),
+            'content_disposition': response.headers.get('Content-Disposition'),
+            'final_url': current_url,
+        }
+    finally:
+        response.close()
 
 
 def _resolve_existing_filename_in_directory(base_dir: Path,
@@ -9457,6 +9656,67 @@ async def upload_music():
         return jsonify({'status': 'success', 'filename': clean_name})
 
     except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/upload_music_from_url', methods=['POST'])
+async def upload_music_from_url():
+    if not is_request_allowed():
+        return abort(403)
+    tmp_path: Optional[Path] = None
+    try:
+        data = request.get_json(silent=True) or {}
+        url = (data.get('url') or '').strip()
+        hint_filename = (data.get('filename') or '').strip() or None
+        hint_mime = (data.get('mime') or '').strip() or None
+
+        if not url:
+            return jsonify({'status': 'error', 'message': '缺少 URL'})
+
+        _validate_remote_music_url(url)
+
+        fd, tmp_name = tempfile.mkstemp(dir=str(SONGS_DIR))
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+
+        meta = await _run_sync_in_thread(
+            _download_remote_music_to_path,
+            url=url,
+            dest_path=tmp_path,
+        )
+
+        filename = _guess_music_filename(
+            url,
+            hint_filename,
+            hint_mime or meta.get('content_type'),
+            meta.get('content_disposition'),
+            meta.get('final_url'),
+        )
+        ext = Path(filename).suffix.lower()
+        if ext not in _MUSIC_UPLOAD_EXTENSIONS:
+            inferred = _infer_music_extension(filename, hint_mime or meta.get('content_type'))
+            if inferred:
+                filename = Path(filename).stem + inferred
+                ext = inferred.lower()
+        if ext not in _MUSIC_UPLOAD_EXTENSIONS:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            tmp_path = None
+            return jsonify({'status': 'error', 'message': '不支持的文件格式'})
+
+        clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, filename)
+        shutil.move(str(tmp_path), str(save_path))
+        tmp_path = None
+
+        return jsonify({'status': 'success', 'filename': clean_name})
+
+    except ValueError as exc:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+        return jsonify({'status': 'error', 'message': str(exc)})
+    except Exception as e:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
         return jsonify({'status': 'error', 'message': str(e)})
 
 

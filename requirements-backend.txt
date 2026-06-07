@@ -12,3 +12,4 @@ python-multipart
 numpy
 librosa
 itsdangerous
+requests
