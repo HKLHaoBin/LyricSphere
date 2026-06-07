@@ -11,7 +11,7 @@ function isLikelyMusicMediaFile(file) {
     return _MUSIC_UPLOAD_MEDIA_EXTS.some((ext) => lower.endsWith(ext))
 }
 
-async function uploadMusicFile(file) {
+async function uploadMusicFile(file, options = {}) {
     if (!file) return
 
     debugUploadAction('selected', 'music', file.name)
@@ -19,6 +19,21 @@ async function uploadMusicFile(file) {
     try {
         if (!isLikelyMusicMediaFile(file)) {
             alert(t('file.uploadAudio'))
+            return
+        }
+
+        if (!file.name) {
+            alert(t('file.uploadFromDownloadFolder'))
+            return
+        }
+        if (file.size === 0) {
+            alert(t('file.uploadFromDownloadFolder'))
+            return
+        }
+        try {
+            await file.slice(0, 1).arrayBuffer()
+        } catch (_) {
+            alert(t('file.uploadFromDownloadFolder'))
             return
         }
 
@@ -39,7 +54,11 @@ async function uploadMusicFile(file) {
         }
     } catch (error) {
         console.error('Error:', error)
-        alert(t('alert.uploadFailed'))
+        if (error instanceof TypeError && error.message && error.message.includes('Failed to fetch')) {
+            alert(t('alert.uploadNetworkFailed'))
+        } else {
+            alert(t('alert.uploadErrorPrefix') + error.message)
+        }
     }
 }
 

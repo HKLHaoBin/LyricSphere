@@ -652,6 +652,7 @@ const I18N_MESSAGES = {
 
         // === 文件操作 ===
         'file.uploadAudio': '请上传音频或视频文件',
+        'file.uploadFromDownloadFolder': '无法从浏览器下载栏直接上传，请从下载目录/文件管理器拖入，或使用上传按钮',
         'file.uploadImage': '请上传图片文件（如 JPG/PNG/GIF/WEBP）',
         'file.uploadImageOrVideo': '请上传图片或视频文件',
         'file.renameFailed': '重命名失败：',
@@ -753,6 +754,7 @@ const I18N_MESSAGES = {
         'alert.missingFilename': '缺少文件名',
         'alert.uploadFailedPrefix': '上传失败: ',
         'alert.uploadFailed': '上传失败',
+        'alert.uploadNetworkFailed': '无法连接本地上传服务，请确认 Famyliam 正在运行',
         'alert.uploadErrorPrefix': '上传出错: ',
         'alert.deleteSuccess': '删除成功',
         'alert.deleteFailedPrefix': '删除失败: ',
@@ -1887,6 +1889,7 @@ const I18N_MESSAGES = {
 
         // === 文件操作 ===
         'file.uploadAudio': 'Please upload an audio or video file',
+        'file.uploadFromDownloadFolder': 'Cannot upload from the browser download bar. Drag from your downloads folder or file manager, or use the upload button.',
         'file.uploadImage': 'Please upload an image file (e.g. JPG/PNG/GIF/WEBP)',
         'file.uploadImageOrVideo': 'Please upload an image or video file',
         'file.renameFailed': 'Rename failed: ',
@@ -1992,6 +1995,7 @@ const I18N_MESSAGES = {
         'alert.missingFilename': 'Missing filename',
         'alert.uploadFailedPrefix': 'Upload failed: ',
         'alert.uploadFailed': 'Upload failed',
+        'alert.uploadNetworkFailed': 'Cannot reach the local upload service. Make sure Famyliam is running.',
         'alert.uploadErrorPrefix': 'Upload error: ',
         'alert.deleteSuccess': 'Deleted successfully',
         'alert.deleteFailedPrefix': 'Delete failed: ',

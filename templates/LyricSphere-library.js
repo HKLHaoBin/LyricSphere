@@ -2322,6 +2322,50 @@ const _CARD_DROP_IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.apng'
 const _CARD_DROP_VIDEO_EXTS = ['.mp4', '.webm', '.ogg', '.m4v', '.mov']
 const _CARD_DROP_AUDIO_EXTS = ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.opus', '.oga', '.wma', '.ape', '.dff', '.dsf', '.mpc', '.mid', '.midi', '.aiff', '.aif', '.caf']
 
+function getDroppedFile(dataTransfer) {
+    if (!dataTransfer) return null
+    const files = dataTransfer.files
+    if (files && files.length > 0 && files[0]) {
+        return files[0]
+    }
+    const items = dataTransfer.items
+    if (!items) return null
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item && item.kind === 'file') {
+            const file = item.getAsFile()
+            if (file) return file
+        }
+    }
+    return null
+}
+
+function getDroppedExternalUrlHint(dataTransfer) {
+    if (!dataTransfer) return null
+    const types = dataTransfer.types ? Array.from(dataTransfer.types) : []
+    if (types.includes('DownloadURL')) {
+        try {
+            const downloadUrl = dataTransfer.getData('DownloadURL')
+            if (downloadUrl) return downloadUrl
+        } catch (_) { /* ignore */ }
+    }
+    for (const textType of ['text/uri-list', 'text/plain']) {
+        try {
+            const text = dataTransfer.getData(textType)
+            if (!text) continue
+            const urlMatch = text.match(/(?:https?|file):\/\/[^\s]+/i)
+            if (urlMatch) return urlMatch[0]
+        } catch (_) { /* ignore */ }
+    }
+    return null
+}
+
+function resolveDroppedUploadFile(dataTransfer) {
+    const file = getDroppedFile(dataTransfer)
+    const urlHint = file ? null : getDroppedExternalUrlHint(dataTransfer)
+    return { file, urlHint }
+}
+
 function classifySongCardDropFile(file) {
     if (!file || !file.name) return null
     const mime = (file.type || '').toLowerCase()
@@ -2369,7 +2413,11 @@ function attachSongCardQuickFileDrop(li) {
         const jsonFile = li.dataset.filename
         if (!jsonFile) return
 
-        const file = e.dataTransfer.files && e.dataTransfer.files[0]
+        const { file, urlHint } = resolveDroppedUploadFile(e.dataTransfer)
+        if (!file && urlHint) {
+            alert(t('file.uploadFromDownloadFolder'))
+            return
+        }
         if (!file) return
 
         const kind = classifySongCardDropFile(file)
@@ -3816,19 +3864,24 @@ function initMusicAlbumPathDropzones() {
                 return
             }
 
-            const file = e.dataTransfer.files && e.dataTransfer.files[0]
-            if (!file) return
+            const { file, urlHint } = resolveDroppedUploadFile(e.dataTransfer)
 
             if (kind === 'music') {
+                if (!file && urlHint) {
+                    alert(t('file.uploadFromDownloadFolder'))
+                    return
+                }
+                if (!file) return
                 if (typeof uploadMusicFile !== 'function') {
                     return
                 }
-                if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+                if (!isLikelyMusicMediaFile(file)) {
                     alert(t('file.uploadAudio'))
                     return
                 }
                 uploadMusicFile(file)
             } else if (kind === 'album') {
+                if (!file) return
                 if (typeof handleImageUpload !== 'function') {
                     return
                 }
