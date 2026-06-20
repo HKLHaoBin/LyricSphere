@@ -49,7 +49,7 @@ import ipaddress
 import asyncio
 import websockets
 import queue
-from urllib.parse import urlparse, unquote, urlencode
+from urllib.parse import urlparse, unquote, urlencode, parse_qs
 import requests
 from PIL import Image
 
@@ -15477,11 +15477,23 @@ def generate_beat_curve():
     if frame_ms <= 0 or band_count <= 0 or min_freq <= 0 or max_freq <= 0:
         return jsonify({'status': 'error', 'message': '参数不合法'}), 400
 
+    json_file_param = payload.get('json_file') or payload.get('jsonFile')
+    audio_file = payload.get('audio_file') or payload.get('song_file') or payload.get('audioFile')
+
     if json_path:
         try:
             json_real = resolve_resource_path(json_path, 'static')
         except ValueError as exc:
             return jsonify({'status': 'error', 'message': f'路径不合法: {exc}'}), 400
+    elif json_file_param:
+        try:
+            _, json_real = _resolve_existing_static_json_filename(str(json_file_param))
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': f'json 文件路径不合法: {exc}'}), 400
+    elif audio_file:
+        json_real = _find_static_json_path_by_audio_relative(str(audio_file))
+        if not json_real:
+            return jsonify({'status': 'error', 'message': '未找到与音频匹配的 json 文件'}), 404
     else:
         json_file = session.get('lyrics_json_file', '测试 - 测试.json')
         try:
@@ -16011,6 +16023,82 @@ def build_audio_delivery_info() -> Dict[str, Any]:
     }
 
 
+def _extract_media_audio_file_param(value: Optional[str]) -> Optional[str]:
+    """Extract songs/ relative path from a /media/audio URL or query string."""
+    if not value:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    parsed = urlparse(cleaned)
+    path = parsed.path if parsed.scheme in ('http', 'https') else cleaned.split('?', 1)[0]
+    if not path.rstrip('/').endswith('/media/audio'):
+        return None
+    query = parsed.query if parsed.scheme in ('http', 'https') else cleaned.split('?', 1)[-1]
+    params = parse_qs(query, keep_blank_values=False)
+    file_vals = params.get('file') or []
+    if not file_vals:
+        return None
+    try:
+        return _normalize_relative_path(unquote(str(file_vals[0])))
+    except ValueError:
+        return None
+
+
+def _normalize_song_audio_reference(value: Optional[str]) -> Optional[str]:
+    """Normalize an audio reference to a songs/ relative path."""
+    if not value:
+        return None
+    relative = _extract_single_song_relative(value)
+    if relative:
+        return relative
+    relative = _extract_media_audio_file_param(value)
+    if relative:
+        return relative
+    cleaned = str(value).strip().replace('\\', '/').lstrip('/')
+    if cleaned.lower().startswith('songs/'):
+        cleaned = cleaned[len('songs/'):]
+    if not cleaned:
+        return None
+    try:
+        return _normalize_relative_path(cleaned.split('?', 1)[0])
+    except ValueError:
+        return None
+
+
+def _find_static_json_path_by_audio_relative(audio_relative: str) -> Optional[Path]:
+    """Locate static/*.json whose song field references the given songs/ relative path."""
+    target = _normalize_song_audio_reference(audio_relative)
+    if not target:
+        return None
+    with _song_search_index_lock:
+        for fn, row in _song_search_index.items():
+            if not isinstance(row, dict):
+                continue
+            summary = row.get('summary')
+            if not isinstance(summary, dict):
+                continue
+            song_rel = _extract_single_song_relative(str(summary.get('song') or ''))
+            if song_rel == target:
+                json_path = STATIC_DIR / fn
+                if json_path.is_file():
+                    return json_path
+    for json_file in STATIC_DIR.iterdir():
+        if json_file.suffix.lower() != '.json' or json_file.name.lower() == 'artists.json':
+            continue
+        try:
+            with open(json_file, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        song_rel = _extract_single_song_relative(str(data.get('song') or ''))
+        if song_rel == target:
+            return json_file
+    return None
+
+
 def build_media_audio_url(
     song_value: str,
     device_id: Optional[str] = None,
@@ -16257,6 +16345,8 @@ def is_request_allowed():
     if request.path == '/songs/search':
         return True
     if request.path == '/song-info':
+        return True
+    if request.path == '/media/sign' and request.method == 'POST':
         return True
     if request.path == '/songs/summary/batch' and request.method == 'POST':
         return True
@@ -17417,6 +17507,51 @@ def media_audio():
         'mode': 'stream',
     })
     return response
+
+
+@app.route('/media/sign', methods=['POST'])
+def media_sign():
+    """Issue a fresh signed /media/audio URL for a songs/ relative path."""
+    if not is_request_allowed():
+        return abort(403)
+
+    payload = request.get_json(silent=True) or {}
+    file_raw = (payload.get('file') or '').strip()
+    url_raw = (payload.get('url') or '').strip()
+    mode = payload.get('mode')
+
+    relative = None
+    if file_raw:
+        relative = _normalize_song_audio_reference(file_raw)
+    elif url_raw:
+        relative = _normalize_song_audio_reference(url_raw) or _extract_media_audio_file_param(url_raw)
+
+    if not relative:
+        return jsonify({'error': 'Missing or invalid file'}), 400
+
+    audio_path = SONGS_DIR / relative
+    if not audio_path.is_file():
+        return jsonify({'error': 'Audio file not found'}), 404
+
+    gateway_url = build_media_audio_url(relative, mode=mode)
+    if gateway_url is None:
+        return jsonify({
+            'error': 'device_required',
+            'message': _SONG_INFO_DEVICE_REQUIRED_MESSAGE,
+        }), 403
+
+    exp = int(time.time())
+    try:
+        signed_qs = parse_qs(urlparse(gateway_url).query)
+        exp_vals = signed_qs.get('exp') or []
+        if exp_vals:
+            exp = int(exp_vals[0])
+    except (TypeError, ValueError):
+        media_cfg = get_media_config()
+        ttl = int(media_cfg.get('media_token_ttl_seconds') or DEFAULT_MEDIA_CONFIG['media_token_ttl_seconds'])
+        exp = int(time.time()) + ttl
+
+    return jsonify({'url': gateway_url, 'exp': exp, 'file': relative})
 
 
 @app.route('/media/config', methods=['GET'])
