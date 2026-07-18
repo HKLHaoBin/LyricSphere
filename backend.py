@@ -2559,14 +2559,20 @@ def extract_resource_relative(value: str, resource: str) -> str:
 
 def resolve_resource_path(value: str, resource: str) -> Path:
     relative = extract_resource_relative(value, resource)
-    base_dir = RESOURCE_DIRECTORIES[resource].resolve()
-    target = (base_dir / relative).resolve() if relative else base_dir
+    return _resolve_resource_path_from_relative(relative, resource)
 
+
+def _resolve_resource_path_from_relative(relative: str, resource: str) -> Path:
+    """Join a normalized relative path under a resource directory (no extra unquote)."""
+    if resource not in RESOURCE_DIRECTORIES:
+        raise ValueError(f'未知资源类型: {resource}')
+    normalized = _normalize_relative_path(relative)
+    base_dir = RESOURCE_DIRECTORIES[resource].resolve()
+    target = (base_dir / normalized).resolve() if normalized else base_dir
     try:
         target.relative_to(base_dir)
     except ValueError as exc:
         raise ValueError('路径越界') from exc
-
     return target
 
 
@@ -5646,11 +5652,45 @@ def analyze_lyrics_tags(lyrics_path: str) -> Tuple[bool, bool]:
     return has_duet, has_background
 
 
-def has_valid_audio(song_value: str) -> bool:
-    """判断音源字段是否有效（排除占位符并校验本地文件存在性）。"""
-    trimmed = (song_value or '').strip()
-    if not trimmed or trimmed == '!' or '音乐.mp3' in trimmed:
+_PLACEHOLDER_AUDIO_BASENAME = '音乐.mp3'
+
+
+def _is_placeholder_song_audio(value: Optional[str]) -> bool:
+    """True only for the legacy empty placeholder file 音乐.mp3 (exact basename match)."""
+    if not value:
         return False
+    relative = _normalize_song_audio_reference(value)
+    if relative:
+        return Path(relative).name == _PLACEHOLDER_AUDIO_BASENAME
+    cleaned = str(value).strip().replace('\\', '/').split('?', 1)[0].split('#', 1)[0]
+    while cleaned.startswith('./'):
+        cleaned = cleaned[2:]
+    cleaned = cleaned.lstrip('/')
+    if cleaned.lower().startswith('songs/'):
+        cleaned = cleaned[len('songs/'):]
+    return Path(cleaned).name == _PLACEHOLDER_AUDIO_BASENAME if cleaned else False
+
+
+def has_valid_audio(song_value: str) -> bool:
+    """判断音源字段是否有效（排除占位符并校验本地文件存在性）。
+
+    Local songs/ paths and signed /media/audio URLs are validated against disk.
+    External HTTP(S) URLs that do not map under songs/ remain valid (compat).
+    """
+    trimmed = (song_value or '').strip()
+    if not trimmed or trimmed == '!':
+        return False
+    if _is_placeholder_song_audio(trimmed):
+        return False
+
+    relative = _extract_single_song_relative(trimmed)
+    if not relative:
+        relative = _extract_media_audio_file_param(trimmed)
+    if relative:
+        try:
+            return (SONGS_DIR / relative).is_file()
+        except Exception:
+            return False
 
     try:
         parsed = urlparse(trimmed)
@@ -5661,7 +5701,7 @@ def has_valid_audio(song_value: str) -> bool:
 
     try:
         real_path = resolve_resource_path(trimmed, 'songs')
-        return real_path.exists()
+        return real_path.is_file()
     except Exception:
         return False
 
@@ -8478,13 +8518,31 @@ _artist_playlist_index_persist_timer: Optional[threading.Timer] = None
 _song_search_index_persist_pending = False
 _artist_playlist_index_persist_pending = False
 
-SONG_SEARCH_INDEX_VERSION = 1
-SONG_SEARCH_INDEX_FILE = BASE_PATH / '.cache' / 'song_search_index.json'
+SONG_SEARCH_INDEX_VERSION = 2
+
+
+def _resolve_song_search_index_file() -> Path:
+    override = os.environ.get('FAMYLIAM_SONG_SEARCH_INDEX_FILE', '').strip()
+    if override:
+        return Path(override)
+    return BASE_PATH / '.cache' / 'song_search_index.json'
+
+
+SONG_SEARCH_INDEX_FILE = _resolve_song_search_index_file()
 
 # Artist basename index: updated only while holding _song_search_index_lock (same critical
 # section as song_search_index rows) to avoid deadlock and keep the two structures consistent.
 ARTIST_PLAYLIST_INDEX_VERSION = 1
-ARTIST_PLAYLIST_INDEX_FILE = BASE_PATH / '.cache' / 'artist_playlist_index.json'
+
+
+def _resolve_artist_playlist_index_file() -> Path:
+    override = os.environ.get('FAMYLIAM_ARTIST_PLAYLIST_INDEX_FILE', '').strip()
+    if override:
+        return Path(override)
+    return BASE_PATH / '.cache' / 'artist_playlist_index.json'
+
+
+ARTIST_PLAYLIST_INDEX_FILE = _resolve_artist_playlist_index_file()
 _artist_playlist_index_revision: int = 0
 _artist_playlist_index: Dict[str, Set[str]] = {}
 _artist_playlist_file_to_keys: Dict[str, Set[str]] = {}
@@ -8657,6 +8715,7 @@ def _flush_pending_artist_playlist_index_persist() -> None:
 def flush_pending_index_persists() -> None:
     """Flush debounced index writes (e.g. on process exit)."""
     global _song_search_index_persist_timer, _artist_playlist_index_persist_timer
+    global _song_search_index_persist_pending, _artist_playlist_index_persist_pending
     with _song_search_index_lock:
         for timer in (_song_search_index_persist_timer, _artist_playlist_index_persist_timer):
             if timer is not None:
@@ -8821,6 +8880,9 @@ def _sync_song_search_index_with_disk_locked() -> bool:
 
 
 def _song_search_index_should_initialize() -> bool:
+    # Allow unit tests to import backend without loading/rebuilding search indexes.
+    if os.environ.get('FAMYLIAM_SKIP_INDEX_INIT', '').strip().lower() in ('1', 'true', 'yes'):
+        return False
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         return True
     if not getattr(app, 'debug', False):
@@ -9087,12 +9149,6 @@ def init_artist_playlist_index_on_startup() -> None:
             _persist_artist_playlist_index_locked()
     except Exception:
         app.logger.exception('artist playlist index: startup init failed')
-
-
-# Eager index init at import: keeps first /api/search and artist routes consistent.
-# Deferred/background init was skipped: race on first request before index is ready.
-init_song_search_index_on_startup()
-init_artist_playlist_index_on_startup()
 
 
 def _sort_search_summaries_inplace(summaries: List[Dict[str, Any]], sort_type: str, sort_asc: bool) -> None:
@@ -10432,7 +10488,7 @@ def _append_creator_line_to_ttml(
     if not creator_text:
         return None
     try:
-        dom: Document = xml.dom.minidom.parseString(ttml_text)
+        dom: Document = xml.dom.minidom.parseString(repair_ttml_xml_text(ttml_text))
     except Exception:
         return None
 
@@ -11061,12 +11117,22 @@ def create_ttml_document(has_duet=False,
     return dom, div
 
 
+# AMLL submit-issue title junk / incomplete entities — see ttml_xml_repair.py
+from ttml_xml_repair import repair_ttml_xml_text as _repair_ttml_xml_text_impl
+
+
+def repair_ttml_xml_text(ttml_text: str) -> str:
+    """Pre-parse TTML repair; logs via app.logger when available."""
+    return _repair_ttml_xml_text_impl(ttml_text, warn=app.logger.warning)
+
+
 def sanitize_ttml_content(ttml_text: str) -> str:
     """
     Rebuild TTML with a strict whitelist to strip complex/unknown metadata.
     Only preserves Apple-style lyric timing, amll:meta entries, agents, and
     translation/romanization/background spans.
     """
+    ttml_text = repair_ttml_xml_text(ttml_text)
     try:
         src_dom = xml.dom.minidom.parseString(ttml_text)
     except Exception as exc:
@@ -16024,7 +16090,11 @@ def build_audio_delivery_info() -> Dict[str, Any]:
 
 
 def _extract_media_audio_file_param(value: Optional[str]) -> Optional[str]:
-    """Extract songs/ relative path from a /media/audio URL or query string."""
+    """Extract songs/ relative path from a /media/audio URL or query string.
+
+    ``parse_qs`` already percent-decodes values once; do not ``unquote`` again
+    (literal ``%20`` in filenames must survive as ``%20``, not a space).
+    """
     if not value:
         return None
     cleaned = str(value).strip()
@@ -16040,13 +16110,17 @@ def _extract_media_audio_file_param(value: Optional[str]) -> Optional[str]:
     if not file_vals:
         return None
     try:
-        return _normalize_relative_path(unquote(str(file_vals[0])))
+        return _normalize_relative_path(str(file_vals[0]))
     except ValueError:
         return None
 
 
 def _normalize_song_audio_reference(value: Optional[str]) -> Optional[str]:
-    """Normalize an audio reference to a songs/ relative path."""
+    """Normalize an audio reference to a songs/ relative path.
+
+    External HTTP(S) URLs that are not under /songs/ or /media/audio return None
+    (they must not be treated as pseudo-local paths like ``https:/example.com/...``).
+    """
     if not value:
         return None
     relative = _extract_single_song_relative(value)
@@ -16055,7 +16129,11 @@ def _normalize_song_audio_reference(value: Optional[str]) -> Optional[str]:
     relative = _extract_media_audio_file_param(value)
     if relative:
         return relative
-    cleaned = str(value).strip().replace('\\', '/').lstrip('/')
+    raw = str(value).strip().replace('\\', '/')
+    lower = raw.lower()
+    if lower.startswith('http://') or lower.startswith('https://'):
+        return None
+    cleaned = raw.lstrip('/')
     if cleaned.lower().startswith('songs/'):
         cleaned = cleaned[len('songs/'):]
     if not cleaned:
@@ -17378,7 +17456,8 @@ def media_audio():
         return jsonify({'error': 'Missing file, exp, or token'}), 400
 
     try:
-        relative_path = _normalize_relative_path(unquote(relative_raw))
+        # request.args is already percent-decoded once; do not unquote again.
+        relative_path = _normalize_relative_path(relative_raw)
     except ValueError:
         _append_media_audit({
             'event': 'media_audio_denied',
@@ -17453,7 +17532,7 @@ def media_audio():
         return jsonify({'error': 'Too many requests'}), 429
 
     try:
-        audio_path = resolve_resource_path(f'/songs/{relative_path}', 'songs')
+        audio_path = _resolve_resource_path_from_relative(relative_path, 'songs')
     except ValueError:
         _append_media_audit({
             'event': 'media_audio_denied',
@@ -19242,6 +19321,11 @@ def start_ws_server_once():
         t = threading.Thread(target=_run_ws_loop, name="WS-Server", daemon=True)
         t.start()
         return t
+
+# Eager index init at import: keeps first /api/search and artist routes consistent.
+# Must run after helpers such as _normalize_song_audio_reference are defined.
+init_song_search_index_on_startup()
+init_artist_playlist_index_on_startup()
 
 if __name__ == '__main__':
     """主函数入口

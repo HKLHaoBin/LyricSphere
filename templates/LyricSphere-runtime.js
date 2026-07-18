@@ -164,6 +164,42 @@ function normalizeResourceUrl(value, resourceKey) {
     }
 }
 
+function parseMediaAudioFileParam(value) {
+    if (!value || typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    let pathname = trimmed;
+    let search = '';
+    try {
+        const parsed = new URL(trimmed, window.location.origin);
+        pathname = parsed.pathname || '';
+        search = parsed.search || '';
+    } catch (error) {
+        const queryIndex = trimmed.indexOf('?');
+        if (queryIndex >= 0) {
+            pathname = trimmed.slice(0, queryIndex);
+            search = trimmed.slice(queryIndex);
+        }
+    }
+
+    if (!pathname.replace(/\/+$/, '').endsWith('/media/audio')) {
+        return null;
+    }
+
+    const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+    const file = (params.get('file') || '').trim();
+    if (!file) {
+        return null;
+    }
+    // URLSearchParams already decodes once; do not decodeURIComponent again.
+    return file;
+}
+
 function stripResourcePrefix(value, resourceKey) {
     if (!value || typeof value !== 'string') {
         return value || '';
@@ -201,7 +237,73 @@ function normalizeSongsUrl(value) {
 }
 
 function stripSongsPrefix(value) {
+    const mediaFile = parseMediaAudioFileParam(value);
+    if (mediaFile) {
+        return mediaFile;
+    }
+    const trimmed = String(value || '').trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+        try {
+            const path = (new URL(trimmed).pathname || '').replace(/\\/g, '/');
+            if (path.startsWith('/songs/') || path.includes('/songs/')) {
+                return stripResourcePrefix(value, 'songs');
+            }
+        } catch (error) {
+            // fall through
+        }
+        // External HTTP(S) outside /songs/ is not a local relative path.
+        return null;
+    }
     return stripResourcePrefix(value, 'songs');
+}
+
+const PLACEHOLDER_AUDIO_FILENAME = '音乐.mp3';
+const AUDIO_FILE_EXTENSION_PATTERN = /\.(mp3|wav|ogg|flac|m4a|aac|opus|webm|mp4|wma|ape|aiff|aif|caf|mid|midi)$/i;
+
+function isPlaceholderAudioReference(value) {
+    const relative = stripSongsPrefix(value);
+    if (!relative || relative === '!') {
+        return false;
+    }
+    const basename = String(relative).split('/').pop() || relative;
+    return basename === PLACEHOLDER_AUDIO_FILENAME;
+}
+
+function deriveHasAudioFromSummary(summary) {
+    if (!summary || typeof summary !== 'object') {
+        return false;
+    }
+    const hasSongField = Object.prototype.hasOwnProperty.call(summary, 'song');
+    const songRef = hasSongField ? String(summary.song ?? '').trim() : '';
+    if (songRef && songRef !== '!' && isPlaceholderAudioReference(songRef)) {
+        return false;
+    }
+    // Trust explicit server boolean; only derive when the field is absent.
+    if (typeof summary.hasAudio === 'boolean') {
+        return summary.hasAudio;
+    }
+    if (!songRef || songRef === '!') {
+        return false;
+    }
+    const relative = stripSongsPrefix(songRef);
+    if (relative && relative !== '!') {
+        return AUDIO_FILE_EXTENSION_PATTERN.test(relative);
+    }
+    if (/^https?:\/\//i.test(songRef)) {
+        return true;
+    }
+    return false;
+}
+
+function normalizeSongSummaryAudio(summary) {
+    if (!summary || typeof summary !== 'object') {
+        return summary;
+    }
+    const hasAudio = deriveHasAudioFromSummary(summary);
+    if (summary.hasAudio === hasAudio) {
+        return summary;
+    }
+    return Object.assign({}, summary, { hasAudio });
 }
 
 function normalizeStaticUrl(value) {

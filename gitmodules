@@ -1,0 +1,27 @@
+[submodule "Unilyric"]
+	path = Unilyric
+	url = https://github.com/apoint123/Unilyric.git
+[submodule "amll-ttml-tool"]
+	path = amll-ttml-tool
+	url = https://github.com/Steve-xmh/amll-ttml-tool.git
+[submodule "amll-web"]
+	path = templates/amll-web
+	url = https://github.com/HKLHaoBin/amll-web.git
+[submodule "applemusic-like-lyrics"]
+	path = applemusic-like-lyrics
+	url = https://github.com/HKLHaoBin/applemusic-like-lyrics.git
+[submodule "applemusic-like-lyrics-page"]
+	path = applemusic-like-lyrics-page
+	url = https://github.com/cybaka520/applemusic-like-lyrics-page.git
+[submodule "vercel-LDDC-api-python"]
+	path = vercel-LDDC-api-python
+	url = https://github.com/my-name-is-not-available/vercel-LDDC-api-python.git
+[submodule "图形化编辑歌词顺序"]
+	path = 图形化编辑歌词顺序
+	url = https://github.com/HKLHaoBin/---------.git
+[submodule "velopack"]
+	path = velopack
+	url = https://github.com/velopack/velopack.git
+[submodule "html-liquid-glass-effect-webgl"]
+	path = html-liquid-glass-effect-webgl
+	url = https://github.com/rxing365/html-liquid-glass-effect-webgl.git

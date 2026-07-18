@@ -162,7 +162,7 @@ function shouldSummaryMatchFilter(summary, filterKey) {
     if (filterKey === 'hasLyrics') return hasLyricsSummary(summary)
     if (filterKey === 'noTranslation') return !hasSummaryTranslation(summary)
     if (filterKey === 'ttml') return isSummaryTTML(summary)
-    if (filterKey === 'noAudio') return !summary.hasAudio
+    if (filterKey === 'noAudio') return !deriveHasAudioFromSummary(summary)
     return true
 }
 
@@ -1980,7 +1980,7 @@ function getSummaryTagSearchText(summary) {
     if (!hasLyricsSummary(summary)) {
         tags.push(t('song.tag.instrumental'))
     }
-    if (!summary.hasAudio) {
+    if (!deriveHasAudioFromSummary(summary)) {
         tags.push(t('song.tag.noAudio'))
     }
     if (summary.hasDuet) {
@@ -2045,7 +2045,7 @@ function buildSongTags(summary) {
     if (!hasLyricsSummary(summary)) {
         container.appendChild(createTag(t('song.tag.instrumental'), 'song-tag instrumental-tag'))
     }
-    if (!summary.hasAudio) {
+    if (!deriveHasAudioFromSummary(summary)) {
         container.appendChild(createTag(t('song.tag.noAudio'), 'song-tag no-audio-tag'))
     }
     if (summary.hasDuet) {
@@ -2298,6 +2298,12 @@ function replaceCoverWithVideo(coverEl, videoSrc, posterSrc = '', options = {}) 
 
 function getPathFromUrl(url) {
     if (!url) return ''
+    const mediaFile = typeof parseMediaAudioFileParam === 'function'
+        ? parseMediaAudioFileParam(url)
+        : null
+    if (mediaFile) {
+        return mediaFile
+    }
     const path = url.split('?')[0].split('#')[0]
     return path
 }
@@ -2764,7 +2770,7 @@ function mergeSummariesIntoLibraryCache(summaries) {
     summaries.forEach(summary => {
         const filename = String(summary && summary.filename ? summary.filename : '')
         if (!filename) return
-        songSummaryCache.set(filename, summary)
+        songSummaryCache.set(filename, normalizeSongSummaryAudio(summary))
         refreshSongSummarySearchCacheByFilename(filename)
     })
 }
