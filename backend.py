@@ -3237,6 +3237,21 @@ def _get_backup_write_lock(backup_path: Path) -> threading.Lock:
         return lock
 
 
+STATIC_JSON_WRITE_LOCKS: Dict[str, threading.Lock] = {}
+STATIC_JSON_WRITE_LOCKS_GUARD = threading.Lock()
+
+
+def _get_static_json_write_lock(json_path: Path) -> threading.Lock:
+    """Return a stable write lock for a static/*.json song metadata file."""
+    lock_key = str(json_path.resolve()).lower()
+    with STATIC_JSON_WRITE_LOCKS_GUARD:
+        lock = STATIC_JSON_WRITE_LOCKS.get(lock_key)
+        if lock is None:
+            lock = threading.Lock()
+            STATIC_JSON_WRITE_LOCKS[lock_key] = lock
+        return lock
+
+
 def _write_json_atomically(target_path: Path, payload: Any) -> None:
     """Write JSON data to disk via temp file replacement."""
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -8159,108 +8174,110 @@ def update_file_path():
         return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
+        with _get_static_json_write_lock(json_path):
+            with open(json_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
 
-        # 确保备份目录存在
-        if not BACKUP_DIR.exists():
-            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            # 确保备份目录存在
+            if not BACKUP_DIR.exists():
+                BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 备份原文件
-        timestamp = int(time.time())
-        backup_path = build_backup_path(json_path, timestamp)
-        if json_path.exists():  # 只在文件存在时进行备份
-            shutil.copy2(json_path, backup_path)
+            # 备份原文件
+            timestamp = int(time.time())
+            backup_path = build_backup_path(json_path, timestamp)
+            if json_path.exists():  # 只在文件存在时进行备份
+                shutil.copy2(json_path, backup_path)
 
-        is_url = new_path and (new_path.startswith('http://') or new_path.startswith('https://'))
-        normalized_new_path = ''
-        if new_path:
-            if is_url:
-                normalized_new_path = new_path
-            else:
-                try:
-                    normalized_new_path = _normalize_relative_path(new_path)
-                except ValueError:
-                    return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
-
-        # 更新路径
-        if file_type == 'music':
-            if is_url:
-                json_data['song'] = normalized_new_path
-            else:
-                json_data['song'] = build_public_url('songs', normalized_new_path)
-        elif file_type == 'image':
-            if is_url:
-                json_data['meta']['albumImgSrc'] = normalized_new_path
-            else:
-                json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
-        elif file_type == 'background':
-            meta = json_data.setdefault('meta', {})
+            is_url = new_path and (new_path.startswith('http://') or new_path.startswith('https://'))
+            normalized_new_path = ''
             if new_path:
                 if is_url:
-                    meta['Background-image'] = normalized_new_path
+                    normalized_new_path = new_path
                 else:
-                    normalized_background_path = normalized_new_path
-                    if normalized_background_path.startswith('songs/'):
-                        normalized_background_path = normalized_background_path[len('songs/'):]
-                    meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
-            else:
-                meta['Background-image'] = ''
-        elif file_type == 'dynamicCover':
-            meta = json_data.setdefault('meta', {})
-            if new_path:
-                if is_url:
-                    meta['dynamicCoverSrc'] = normalized_new_path
-                else:
-                    normalized_dynamic_path = normalized_new_path
-                    if normalized_dynamic_path.startswith('songs/'):
-                        normalized_dynamic_path = normalized_dynamic_path[len('songs/'):]
-                    meta['dynamicCoverSrc'] = f"./songs/{normalized_dynamic_path}" if normalized_dynamic_path else ''
-            else:
-                meta['dynamicCoverSrc'] = ''
-        elif file_type == 'dynamicCoverPoster':
-            meta = json_data.setdefault('meta', {})
-            if new_path:
-                if is_url:
-                    meta['dynamicCoverPoster'] = normalized_new_path
-                else:
-                    normalized_poster_path = normalized_new_path
-                    if normalized_poster_path.startswith('songs/'):
-                        normalized_poster_path = normalized_poster_path[len('songs/'):]
-                    meta['dynamicCoverPoster'] = f"./songs/{normalized_poster_path}" if normalized_poster_path else ''
-            else:
-                meta['dynamicCoverPoster'] = ''
-        elif file_type == 'lyrics':
-            current_lyrics = json_data['meta']['lyrics'].split('::')
-            if len(current_lyrics) >= 4:
-                if data.get('index') == 0:  # 歌词文件
-                    if is_url:
-                        new_lyrics_path = normalized_new_path if new_path else '!'
-                    else:
-                        new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                    current_lyrics[1] = new_lyrics_path
-                elif data.get('index') == 1:  # 歌词翻译
-                    if is_url:
-                        new_translation_path = normalized_new_path if new_path else '!'
-                    else:
-                        new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                    current_lyrics[2] = new_translation_path
-                elif data.get('index') == 2:  # 歌词音译
-                    if is_url:
-                        new_transliteration_path = normalized_new_path if new_path else '!'
-                    else:
-                        new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                    current_lyrics[3] = new_transliteration_path
-                json_data['meta']['lyrics'] = '::'.join(current_lyrics)
+                    try:
+                        normalized_new_path = _normalize_relative_path(new_path)
+                    except ValueError:
+                        return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
 
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=2)
+            # 更新路径
+            if file_type == 'music':
+                if is_url:
+                    json_data['song'] = normalized_new_path
+                else:
+                    json_data['song'] = build_public_url('songs', normalized_new_path)
+            elif file_type == 'image':
+                if is_url:
+                    json_data['meta']['albumImgSrc'] = normalized_new_path
+                else:
+                    json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
+            elif file_type == 'background':
+                meta = json_data.setdefault('meta', {})
+                if new_path:
+                    if is_url:
+                        meta['Background-image'] = normalized_new_path
+                    else:
+                        normalized_background_path = normalized_new_path
+                        if normalized_background_path.startswith('songs/'):
+                            normalized_background_path = normalized_background_path[len('songs/'):]
+                        meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
+                else:
+                    meta['Background-image'] = ''
+            elif file_type == 'dynamicCover':
+                meta = json_data.setdefault('meta', {})
+                if new_path:
+                    if is_url:
+                        meta['dynamicCoverSrc'] = normalized_new_path
+                    else:
+                        normalized_dynamic_path = normalized_new_path
+                        if normalized_dynamic_path.startswith('songs/'):
+                            normalized_dynamic_path = normalized_dynamic_path[len('songs/'):]
+                        meta['dynamicCoverSrc'] = f"./songs/{normalized_dynamic_path}" if normalized_dynamic_path else ''
+                else:
+                    meta['dynamicCoverSrc'] = ''
+            elif file_type == 'dynamicCoverPoster':
+                meta = json_data.setdefault('meta', {})
+                if new_path:
+                    if is_url:
+                        meta['dynamicCoverPoster'] = normalized_new_path
+                    else:
+                        normalized_poster_path = normalized_new_path
+                        if normalized_poster_path.startswith('songs/'):
+                            normalized_poster_path = normalized_poster_path[len('songs/'):]
+                        meta['dynamicCoverPoster'] = f"./songs/{normalized_poster_path}" if normalized_poster_path else ''
+                else:
+                    meta['dynamicCoverPoster'] = ''
+            elif file_type == 'lyrics':
+                current_lyrics = json_data['meta']['lyrics'].split('::')
+                if len(current_lyrics) >= 4:
+                    if data.get('index') == 0:  # 歌词文件
+                        if is_url:
+                            new_lyrics_path = normalized_new_path if new_path else '!'
+                        else:
+                            new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                        current_lyrics[1] = new_lyrics_path
+                    elif data.get('index') == 1:  # 歌词翻译
+                        if is_url:
+                            new_translation_path = normalized_new_path if new_path else '!'
+                        else:
+                            new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                        current_lyrics[2] = new_translation_path
+                    elif data.get('index') == 2:  # 歌词音译
+                        if is_url:
+                            new_transliteration_path = normalized_new_path if new_path else '!'
+                        else:
+                            new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                        current_lyrics[3] = new_transliteration_path
+                    json_data['meta']['lyrics'] = '::'.join(current_lyrics)
+
+            _write_json_atomically(json_path, json_data)
+            is_url_for_local_path = is_url
+            normalized_new_path_for_local = normalized_new_path
 
         upsert_song_search_index_for_path(json_path)
 
         # 在更新路径后添加文件创建逻辑（仅对本地路径执行）
-        if normalized_new_path and not is_url:
-            new_local_path = SONGS_DIR / normalized_new_path
+        if normalized_new_path_for_local and not is_url_for_local_path:
+            new_local_path = SONGS_DIR / normalized_new_path_for_local
             if not new_local_path.parent.exists():
                 new_local_path.parent.mkdir(parents=True, exist_ok=True)
 
