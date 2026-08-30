@@ -7,6 +7,16 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Semver bump (major=+1.0.0 large/refactor, minor=+0.1.0 feature, patch=+0.0.1 bugfix)'
+        required: true
+        default: minor
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
 
 permissions:
   contents: write
@@ -73,10 +83,39 @@ jobs:
           }
           $releaseBody = "HKLHaoBin`n$latestMsg"
 
+          # Semver bump rules:
+          #   major (+1.0.0): large changes / refactors / breaking
+          #   minor (+0.1.0): feature updates
+          #   patch (+0.0.1): bug fixes
+          function Resolve-BumpKind([string]$Message, [string]$DispatchBump) {
+            if ($DispatchBump -and $DispatchBump -in @('major', 'minor', 'patch')) {
+              return $DispatchBump
+            }
+            $head = ($Message -split "`n")[0]
+            if ($Message -match '(?im)^breaking change\b' -or $head -match '^(feat|fix|refactor|perf|chore)(\([^)]*\))?!:' -or $head -match '(?i)\b(major|breaking)\b') {
+              return 'major'
+            }
+            if ($head -match '^(fix|hotfix)(\(|:)' -or $head -match '(?i)\b(bug\s*fix|hotfix)\b') {
+              return 'patch'
+            }
+            if ($head -match '^(feat|feature)(\(|:)' -or $head -match '(?i)\b(feature|日常功能)\b') {
+              return 'minor'
+            }
+            if ($head -match '^(refactor)(\(|:)' -or $head -match '(?i)\b(refactor|重构|大量修改)\b') {
+              return 'major'
+            }
+            # Default: feature-style bump so push-to-main still advances auto-update.
+            return 'minor'
+          }
+
           if ("${{ github.ref_type }}" -eq "tag") {
             $tag = "${{ github.ref_name }}"
             Write-Host "Tag trigger detected, use existing tag: $tag"
           } else {
+            $dispatchBump = "${{ github.event.inputs.bump }}"
+            $bump = Resolve-BumpKind -Message $latestMsg -DispatchBump $dispatchBump
+            Write-Host "Semver bump kind: $bump"
+
             $tags = git tag --list "v*.*.*"
             $versionTags = @()
             foreach ($t in $tags) {
@@ -96,11 +135,10 @@ jobs:
               $latest = $versionTags |
                 Sort-Object -Property @{Expression = 'Major'; Descending = $true}, @{Expression = 'Minor'; Descending = $true}, @{Expression = 'Patch'; Descending = $true} |
                 Select-Object -First 1
-              if ($latest.Minor -ge 9) {
-                $tag = "v$($latest.Major + 1).0.0"
-              } else {
-                $nextMinor = $latest.Minor + 1
-                $tag = "v$($latest.Major).$nextMinor.0"
+              switch ($bump) {
+                'major' { $tag = "v$($latest.Major + 1).0.0" }
+                'patch' { $tag = "v$($latest.Major).$($latest.Minor).$($latest.Patch + 1)" }
+                default { $tag = "v$($latest.Major).$($latest.Minor + 1).0" }
               }
             }
 

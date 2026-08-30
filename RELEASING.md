@@ -27,13 +27,25 @@
 
 本地尚未 commit、门禁路径 dirty 时可用 `-AllowDirty` 做首次落盘预览（强制 `releaseEligible=false`，公开 CI 仍会拒绝发版）。干净工作树后再跑一次无该开关的同步即可发版。
 
+## 版本递增（自动更新依赖）
+
+客户端通过比较本地 `APP_VERSION` 与 GitHub Latest Release 的 tag 决定是否更新；**版本号必须递增**，否则用户拉不到新包。
+
+| 变更类型 | 递增 | 示例 |
+|----------|------|------|
+| 大量修改 / 重构 / breaking | `+1.0.0`（major） | `v9.0.0` → `v10.0.0` |
+| 日常功能更新 | `+0.1.0`（minor） | `v9.0.0` → `v9.1.0` |
+| 小 bug 修复 | `+0.0.1`（patch） | `v9.0.0` → `v9.0.1` |
+
+CI 根据最新提交说明推断 bump（`feat!:` / `BREAKING CHANGE` / `refactor` → major；`feat` → minor；`fix` → patch）。也可在 Actions 里 `workflow_dispatch` 手动选择 `major` / `minor` / `patch`。
+
 ## 公开仓 CI（`build-exe-release.yml`）
 
 顺序概要：
 
 1. `check-worktree`（含 `releaseEligible`、占位 `0.0.0-dev`、路径/哈希）
 2. `pip install -r requirements-backend.txt` → `import subsonic`
-3. 解析 tag → 注入 `APP_VERSION` → PyInstaller（`backend.spec` 中 `datas=[]`，`collect_submodules(subsonic)`）
+3. 按上表解析 tag → 注入 `APP_VERSION` → PyInstaller（`backend.spec` 中 `datas=[]`，`collect_submodules(subsonic)`）
 4. 组装干净 `release/LyricSphere.exe/`（exe + templates + `static/{assets,public,icons,monaco}`）
 5. **复制到 `$RUNNER_TEMP`** 后跑 `backend.exe --self-test-subsonic`（超时 60s，保存退出码；finally 删副本）。原始 release **从不执行**
 6. 用干净 release 打 `LyricSphere.exe.zip`，解压后 `check-zip` 全量审计 dist exact-set 与黑名单

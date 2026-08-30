@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### 技术改进
+- 发版版本号改为标准 SemVer 递增：大量修改/重构 `+1.0.0`，功能 `+0.1.0`，bugfix `+0.0.1`（支持 commit 推断与 `workflow_dispatch` 手动选择），保证自动更新可发现新版本
+
+## [v9.0.0]
+
 ### 新增功能
 - 镜像私有仓 Subsonic API（`subsonic/` + `/rest`）：EXE 支持 `--self-test-subsonic`（TestClient `/rest/ping` 断言 error.code == 40）
 
