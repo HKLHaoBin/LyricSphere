@@ -191,33 +191,44 @@ jobs:
         run: |
           $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
           $smokeRoot = Join-Path $env:RUNNER_TEMP "lyricsphere-self-test-$id"
-          $exitCode = 1
+          $stdoutLog = Join-Path $env:RUNNER_TEMP "lyricsphere-self-test-$id-stdout.txt"
+          $stderrLog = Join-Path $env:RUNNER_TEMP "lyricsphere-self-test-$id-stderr.txt"
+          $proc = $null
           try {
             Copy-Item -Path 'release/LyricSphere.exe' -Destination $smokeRoot -Recurse -Force
             $env:FAMYLIAM_SKIP_INDEX_INIT = '1'
             $exe = Join-Path $smokeRoot 'backend.exe'
-            $job = Start-Job -ScriptBlock {
-              param($ExePath)
-              Set-Location (Split-Path -Parent $ExePath)
-              & $ExePath --self-test-subsonic
-              return $LASTEXITCODE
-            } -ArgumentList $exe
-            if (-not (Wait-Job $job -Timeout 60)) {
-              Stop-Job $job -ErrorAction SilentlyContinue
-              Remove-Job $job -Force -ErrorAction SilentlyContinue
+            $proc = Start-Process -FilePath $exe `
+              -ArgumentList '--self-test-subsonic' `
+              -WorkingDirectory $smokeRoot `
+              -PassThru `
+              -NoNewWindow `
+              -RedirectStandardOutput $stdoutLog `
+              -RedirectStandardError $stderrLog
+            if (-not $proc.WaitForExit(60000)) {
+              try { $proc.Kill() } catch {}
               throw 'self-test timed out after 60s'
             }
-            $exitCode = [int](Receive-Job $job)
-            Remove-Job $job -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $stdoutLog) {
+              Get-Content -LiteralPath $stdoutLog | Write-Host
+            }
+            if (Test-Path -LiteralPath $stderrLog) {
+              Get-Content -LiteralPath $stderrLog | Write-Host
+            }
+            $exitCode = $proc.ExitCode
             if ($exitCode -ne 0) {
               throw "self-test failed with exit code $exitCode"
             }
             Write-Host 'SELF_TEST_SUBSONIC_OK (CI)'
           }
           finally {
+            if ($null -ne $proc -and -not $proc.HasExited) {
+              try { $proc.Kill() } catch {}
+            }
             if (Test-Path -LiteralPath $smokeRoot) {
               Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+            Remove-Item -LiteralPath $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
           }
 
       - name: Zip clean release and audit
