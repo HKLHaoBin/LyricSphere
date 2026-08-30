@@ -1,18 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec for backend.exe (CI + local onefile builds).
+# datas=[]: frozen runtime resolves assets beside the exe (templates/ + static/),
+# not from _MEIPASS. Do not embed static/templates in the archive.
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
 _hiddenimports = []
-for _package in ('uvicorn', 'fastapi', 'starlette', 'anyio'):
+for _package in ('uvicorn', 'fastapi', 'starlette', 'anyio', 'subsonic'):
     _hiddenimports += collect_submodules(_package)
 
 a = Analysis(
     ['backend.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('templates', 'templates')],
+    datas=[],
     hiddenimports=_hiddenimports,
     hookspath=[],
     hooksconfig={},

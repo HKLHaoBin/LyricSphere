@@ -8,8 +8,8 @@ bcrypt
 Pillow
 websockets
 requests
+httpx
 python-multipart
 numpy
 librosa
 itsdangerous
-requests

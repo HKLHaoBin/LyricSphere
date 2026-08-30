@@ -2,10 +2,12 @@
 
 ## [Unreleased]
 
+### 新增功能
+- 镜像私有仓 Subsonic API（`subsonic/` + `/rest`）：EXE 支持 `--self-test-subsonic`（TestClient `/rest/ping` 断言 error.code == 40）
+
 ### 技术改进
-- GitHub Actions 打包流程：移除 CI 内 `backend.exe` 冒烟步骤（runner 环境与真实落盘布局差异大，易误报）；发布前请在本地按 release zip 布局做落盘验证
-- 新增 `backend.spec`，通过 `collect_submodules` 收集 uvicorn / fastapi / starlette / anyio，降低 onefile 运行时缺模块风险
-- `backend.py` 支持环境变量 `LYRICSPHERE_NO_BROWSER=1`，便于无头环境启动时不打开浏览器
+- 发版改为：私有仓 `scripts/sync-to-lyricsphere.ps1` 白名单同步 + `sync-manifest.json`；公开 CI 在注入 `APP_VERSION` 前校验 `releaseEligible`，TEMP 副本烟测后 zip 全量 dist 审计（见 `RELEASING.md`）
+- `backend.spec`：`datas=[]`（旁路 templates/static），`collect_submodules` 增加 `subsonic`
 
 ## [v1.5.11] - 2025-11-08
 

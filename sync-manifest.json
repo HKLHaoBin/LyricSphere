@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "b8acb4105afb9fd8ec2ce2237f9f7827f6f54a56",
+  "syncedAt": "2026-08-30T10:04:14.5883905Z",
+  "releaseEligible": true,
+  "gates": {
+    "providerTestsPassed": true,
+    "safeIncrementPassed": true,
+    "frontendBuildPassed": true
+  },
+  "inputs": {
+    "backend.py": "58bbdcdf57191bf48e3f96d797245f7ea35e0dd0e91db2a370b3e8fa1158b534",
+    "conftest.py": "60e2f79112be2392f5090616fa0e70ec6a1ec88d70876e5b9e4ed81db44374e9",
+    "requirements-backend.txt": "ae9344f2601f0e1b7721aee6e7ec60525aa5bbf13d10288c20f82a54a0bed483",
+    "scripts/sync-to-lyricsphere.ps1": "f3ccfc29b32835bb7171cbb39b4d754c49ad652f9c0508fd3c697614056d5529",
+    "scripts/verify_sync_manifest.py": "227e016f81607dcfcce7fe276eaebaf08a331f0b158bc9aeffb4e930bf32d5c7",
+    "subsonic/__init__.py": "95c9f89015cfa41d712cadfa79040371d19358cd5b7e638cb42fd5a0bfe9e184",
+    "subsonic/anchor_merge.py": "a0dd98f55c041caf3f5684b1505d9c9e13e73b2d714e8e1b519d1d4e7d5c4489",
+    "subsonic/auth.py": "6aaa03439d3ab686cd85abb5aa3920a57478ca96e2b59f3fcd4635c2376a3518",
+    "subsonic/catalog.py": "93f79bf7d53299b759b1f2af0db9423d85862906f7f0f359a9eb1471b4a04ed4",
+    "subsonic/credentials.py": "7666144b0633fcb4c2770cc4326b2cefbbcd0dfcf49720a1731c637006de36b3",
+    "subsonic/deps.py": "e7dd524f74c6c3881d11f02e04aad56c3e60b4e6ebdfe31d119837b13c61d379",
+    "subsonic/envelope.py": "f75c8bc302ef21a054a6c4870ed80669185bf8347edfbe3d9d8ec673abfa27e4",
+    "subsonic/handler.py": "1627e01a4f6e8bf6518a2c58d4ef552392872b5cf6303c672dbc5e786900a1f8",
+    "subsonic/ids.py": "02dd768c9fac3728471e5d2d599bc339ca3eae11717159c3fe0029b3ac5f202e",
+    "subsonic/lyrics.py": "820cb3892d4da3ab274e840e961ffb88a11bf334e8212dd33a8aee362b8de36b",
+    "subsonic/mutations.py": "f352a6cf6e28ed4921ebea7b738157c03650b767a681bc3d56f235826bd61c1e",
+    "subsonic/params.py": "4800a844517094defd4cff64977fce3c8f49e7ee05ea6cdc2cdd438316f56ed0",
+    "subsonic/playlists.py": "fa45966bb967000caa35b2bf5b5dea4200a9a95a1f2a611fc5cc53a12e238f8c",
+    "subsonic/stream.py": "978810e2ecdc9f80d1bfc744d94c65802798038f0d279bc0216b10341209c0ee",
+    "templates/lyric-sphere-v2/.npmrc": "a28c9d86a8981049d203ad164cff1e753ed61dc0460ee8765316cbb3d0007d00",
+    "templates/lyric-sphere-v2/index.html": "1e33f31c8386d0d16ab7403b9776c120723d33262ce7532a27010aaaa1d3e6cd",
+    "templates/lyric-sphere-v2/package-lock.json": "f9cef3f97a45bc05ca441063ef2e43bb16d67f7e8f1520faa6cf95ea9974e58b",
+    "templates/lyric-sphere-v2/package.json": "2235979d14dc5a346ecf2ad95af60cee4f40fcc7c92e63c09ca419a7fa829216",
+    "templates/lyric-sphere-v2/postcss.config.js": "8592c6fceb411f2865a99b4debde2721201770545d43a94fafd89fe043e1e1cf",
+    "templates/lyric-sphere-v2/public/vite.svg": "4a748afd443918bb16591c834c401dae33e87861ab5dbad0811c3a3b4a9214fb",
+    "templates/lyric-sphere-v2/scripts/verify-safe-increment.mjs": "b3dcd75e035319ed08049419a6771b66d40caaf4fd22d818fd0df3af2880b9cb",
+    "templates/lyric-sphere-v2/src/App.css": "37b50251edc2098d64b9a574d2bd4401e143debddd15630ec46c3b65ca083f8f",
+    "templates/lyric-sphere-v2/src/App.jsx": "398e897981b0a9e3bd5215cc9ac41420e27861b74e5ee4713bd4bfa40ac23ff6",
+    "templates/lyric-sphere-v2/src/SubsonicSettingsCard.jsx": "69d11a88577cfe3c84f2c41d53536242518ff7b170a76d28dfa8afb4ef8cf146",
+    "templates/lyric-sphere-v2/src/UpdateScreen.jsx": "4f0fda9a44918ffbf1bbbefa593f4d72b3e089c28779dbb791eeea0388de5caf",
+    "templates/lyric-sphere-v2/src/android-bridge/index.js": "3b609db7faaabb805a11e4a3ea5c56d3c42ddae4e44351d43237c7747b765f5e",
+    "templates/lyric-sphere-v2/src/android-bridge/payload.js": "2cd3fcb28167f6768fc5d23c02fc1681b9d36ab78fc34b47aa88243f426e9d52",
+    "templates/lyric-sphere-v2/src/android-bridge/queue-logic.js": "e974350d3fa7236a95567057b128658ffc2e57f667d9c94843658f8a1f5eb6ac",
+    "templates/lyric-sphere-v2/src/android-bridge/state.js": "530b0dea4f54bd15550caac24cf13dafda00f1afe8ca1af623c3263a5af205e4",
+    "templates/lyric-sphere-v2/src/android-bridge/types.js": "ae3b8873ea4abfce1cfbb2b87d04d2b524e23a6ea1d12cdc3ddc5faa6f85f15a",
+    "templates/lyric-sphere-v2/src/api.js": "07e2f7829c747c8b0d306e8b58dd9223ddc6fffd2e4bd5e38493d3c461e1ca6e",
+    "templates/lyric-sphere-v2/src/artistProfilesSync.contract.test.mjs": "d2a069db6823ebc19b5223b55abf55bf8d179d271485e53d30f208c945dd6833",
+    "templates/lyric-sphere-v2/src/artistProfilesSync.js": "c393324a8cde3e1ca1cc6a5ec68bbb59d5d3b32dfee43722ff0a976160c54de7",
+    "templates/lyric-sphere-v2/src/assets/react.svg": "35ef61ed53b323ae94a16a8ec659b3d0af3880698791133f23b084085ab1c2e5",
+    "templates/lyric-sphere-v2/src/backupSnapshotSync.js": "49c3959497b7ec0818124a2704a86153fefd8a53c4b6f3fe87e07c1f42ba617a",
+    "templates/lyric-sphere-v2/src/i18n/check-literals.js": "ca0c1d1a0a3431986e957f70d575e788d10b669e6e407a3b43339efa15d4deb2",
+    "templates/lyric-sphere-v2/src/i18n/index.js": "1169f9d6b9fe5db744bf7e95a5f2c1d6982496ac64212a2febc9764ca1cb23df",
+    "templates/lyric-sphere-v2/src/index.css": "fd978cabf238a3bbe4758223fa50e0aca56c9e1fabfdacacaf75a20a5f9920fa",
+    "templates/lyric-sphere-v2/src/librarySnapshotCache.js": "2f668eb736437c96d13603ddd1b4ee65d4ae8a9a059dfafe5fb7f1561fbfcffb",
+    "templates/lyric-sphere-v2/src/locales/en/common.json": "a69b14cd6412801b2767b779455154b80cb2b370f1ed0b9441f7c8742201522a",
+    "templates/lyric-sphere-v2/src/locales/zh-CN/common.json": "d2385d7d9aa9b9dd09b315a83b92a0de415d1b79aaf869ca50cabea2b995e97c",
+    "templates/lyric-sphere-v2/src/lyrics-player.css": "5a9197c9fe5489f541c7d639b2fdce84cdc9009d353dc85660836f7d34a24c54",
+    "templates/lyric-sphere-v2/src/main.jsx": "ad90cc0e4148a419f9329a8dbde5ddaad9da3aa201cc8bf02026098c3d3fc58b",
+    "templates/lyric-sphere-v2/src/media-audio.contract.test.mjs": "70a0833c080e50f7ff218715b8d00c323b92cba385783ffa2b1571fe1da24736",
+    "templates/lyric-sphere-v2/src/media-audio.js": "2a0f7476b97a1e10d9d28884655f739a791278644c445230b9819e2c5aebc9b7",
+    "templates/lyric-sphere-v2/src/runtime-update.js": "b33e65f492df19344ce3ed09cb4cfee696d709e83a0bbe6cb1aa16e363569883",
+    "templates/lyric-sphere-v2/src/update-screen-main.jsx": "aa3bb43e1ea9b9bdb0084cc8901425da6039b53e03e62c5c5d1220f4b3b2701a",
+    "templates/lyric-sphere-v2/src/update-screen.css": "104812d4cfbb870d2b7438391a011918041ad8f52a6c8189d3536d3451c79791",
+    "templates/lyric-sphere-v2/tailwind.config.js": "5471da63256e687c6a04fc4850bae254fabe4153a2bda255e4af4a5635f02054",
+    "templates/lyric-sphere-v2/update-screen.html": "150147b197512da5c19e47ff20769791da4e67a374f70b535c4a278283a7a4e6",
+    "templates/lyric-sphere-v2/vite.config.js": "c2acb9b0f2739873d4c5d5987ca94f6984a4f9c263ddf7f43aea26e06f410712",
+    "test_subsonic_provider.py": "d433f350e308137a25cf868e47fac7052af2a4c72b435b4e6240e9261a125de9"
+  },
+  "files": [
+    {
+      "path": "backend.py",
+      "role": "backend",
+      "sha256": "58bbdcdf57191bf48e3f96d797245f7ea35e0dd0e91db2a370b3e8fa1158b534"
+    },
+    {
+      "path": "requirements-backend.txt",
+      "role": "requirements",
+      "sha256": "ae9344f2601f0e1b7721aee6e7ec60525aa5bbf13d10288c20f82a54a0bed483"
+    },
+    {
+      "path": "scripts/verify_sync_manifest.py",
+      "role": "contract",
+      "sha256": "227e016f81607dcfcce7fe276eaebaf08a331f0b158bc9aeffb4e930bf32d5c7"
+    },
+    {
+      "path": "subsonic/__init__.py",
+      "role": "subsonic",
+      "sha256": "95c9f89015cfa41d712cadfa79040371d19358cd5b7e638cb42fd5a0bfe9e184"
+    },
+    {
+      "path": "subsonic/anchor_merge.py",
+      "role": "subsonic",
+      "sha256": "a0dd98f55c041caf3f5684b1505d9c9e13e73b2d714e8e1b519d1d4e7d5c4489"
+    },
+    {
+      "path": "subsonic/auth.py",
+      "role": "subsonic",
+      "sha256": "6aaa03439d3ab686cd85abb5aa3920a57478ca96e2b59f3fcd4635c2376a3518"
+    },
+    {
+      "path": "subsonic/catalog.py",
+      "role": "subsonic",
+      "sha256": "93f79bf7d53299b759b1f2af0db9423d85862906f7f0f359a9eb1471b4a04ed4"
+    },
+    {
+      "path": "subsonic/credentials.py",
+      "role": "subsonic",
+      "sha256": "7666144b0633fcb4c2770cc4326b2cefbbcd0dfcf49720a1731c637006de36b3"
+    },
+    {
+      "path": "subsonic/deps.py",
+      "role": "subsonic",
+      "sha256": "e7dd524f74c6c3881d11f02e04aad56c3e60b4e6ebdfe31d119837b13c61d379"
+    },
+    {
+      "path": "subsonic/envelope.py",
+      "role": "subsonic",
+      "sha256": "f75c8bc302ef21a054a6c4870ed80669185bf8347edfbe3d9d8ec673abfa27e4"
+    },
+    {
+      "path": "subsonic/handler.py",
+      "role": "subsonic",
+      "sha256": "1627e01a4f6e8bf6518a2c58d4ef552392872b5cf6303c672dbc5e786900a1f8"
+    },
+    {
+      "path": "subsonic/ids.py",
+      "role": "subsonic",
+      "sha256": "02dd768c9fac3728471e5d2d599bc339ca3eae11717159c3fe0029b3ac5f202e"
+    },
+    {
+      "path": "subsonic/lyrics.py",
+      "role": "subsonic",
+      "sha256": "820cb3892d4da3ab274e840e961ffb88a11bf334e8212dd33a8aee362b8de36b"
+    },
+    {
+      "path": "subsonic/mutations.py",
+      "role": "subsonic",
+      "sha256": "f352a6cf6e28ed4921ebea7b738157c03650b767a681bc3d56f235826bd61c1e"
+    },
+    {
+      "path": "subsonic/params.py",
+      "role": "subsonic",
+      "sha256": "4800a844517094defd4cff64977fce3c8f49e7ee05ea6cdc2cdd438316f56ed0"
+    },
+    {
+      "path": "subsonic/playlists.py",
+      "role": "subsonic",
+      "sha256": "fa45966bb967000caa35b2bf5b5dea4200a9a95a1f2a611fc5cc53a12e238f8c"
+    },
+    {
+      "path": "subsonic/stream.py",
+      "role": "subsonic",
+      "sha256": "978810e2ecdc9f80d1bfc744d94c65802798038f0d279bc0216b10341209c0ee"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/assets/main-BP9D3O4Y.css",
+      "role": "dist",
+      "sha256": "58949219b38d6c13699fe6648effc9a845a2a0225d0312610b15415a2291c0c0"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/assets/main-CGmk27nf.js",
+      "role": "dist",
+      "sha256": "f4e95c39fc8a94a8d68d8b902d94c259c8a3a4572c517e2ea8b37c0124799898"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/assets/runtime-update-F6RjAu0c.js",
+      "role": "dist",
+      "sha256": "b1cb4ffbb9c5b5950faa4c8a561b3abc8e131818dd4398208448a4578bfcc766"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/assets/updateScreen-C6tJWZA5.js",
+      "role": "dist",
+      "sha256": "d5b9c700712458cc333cecf046376796f345da5cc238ed9e94b010dd13afb4ed"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/assets/updateScreen-fLE8xxiI.css",
+      "role": "dist",
+      "sha256": "f07a641921a00017b0b35f3e5c2b236dc9e7b5b1e9fcef18f13c5fc53bb61fd2"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/index.html",
+      "role": "dist",
+      "sha256": "ccce71cbae28df793e5eb973679fb0612a92cd067df21957ed1f8adf9d47bc4f"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/update-screen.html",
+      "role": "dist",
+      "sha256": "e7679a0246aa80ca3c4152c40dceb2d81da76732553d8c7e138a8bfd53b168cd"
+    },
+    {
+      "path": "templates/lyric-sphere-v2/dist/vite.svg",
+      "role": "dist",
+      "sha256": "4a748afd443918bb16591c834c401dae33e87861ab5dbad0811c3a3b4a9214fb"
+    }
+  ]
+}

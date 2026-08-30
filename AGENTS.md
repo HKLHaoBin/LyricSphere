@@ -32,9 +32,9 @@
 - Verify SSE health with `curl -N http://localhost:5000/amll/stream | head` and confirm AI translation flows finish cleanly.
 - Check `logs/upload.log` for warnings and make sure new lyrics produce versioned files in `static/backups/`.
 
-## CI / Release (`.github/workflows/build-exe-release.yml`)
-- Workflow builds `dist/backend.exe` and `dist/updater.exe` with **`pyinstaller --noconfirm backend.spec`** (and a onefile `updater.py` build), then packages `LyricSphere.exe.zip` with `templates/` and selected `static/{assets,public,icons,monaco}`—same layout as a manual install folder.
-- **No automated exe smoke test in CI**; validate the release zip locally (extract, run `backend.exe`, open the UI, spot-check `/api/runtime/version`). Optional: set **`LYRICSPHERE_NO_BROWSER=1`** so `backend.py` skips `webbrowser.open`.
+## CI / Release
+- 权威发版说明见 **[RELEASING.md](./RELEASING.md)**（私有 famyliam 白名单同步 → `sync-manifest.json` → EXE CI → TEMP `--self-test-subsonic` → zip 审计）。
+- Workflow：`.github/workflows/build-exe-release.yml`；`backend.spec` 使用 `datas=[]` 并 `collect_submodules('subsonic')`。
 
 ## Commit & Pull Request Guidelines
 - Follow the Conventional Commit pattern already in history (`feat(scope):`, `docs:`), mixing English or Chinese scopes when helpful.

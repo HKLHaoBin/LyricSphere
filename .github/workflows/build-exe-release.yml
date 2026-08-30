@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: lyricsphere-exe-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: windows-latest
@@ -25,6 +29,36 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Verify sync-manifest (before version inject)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path '.\sync-manifest.json')) {
+            Write-Error 'sync-manifest.json missing; sync from private famyliam first'
+            exit 1
+          }
+          if (-not (Test-Path '.\scripts\verify_sync_manifest.py')) {
+            Write-Error 'scripts/verify_sync_manifest.py missing'
+            exit 1
+          }
+          python .\scripts\verify_sync_manifest.py check-worktree --root . --manifest .\sync-manifest.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-backend.txt
+          pip install pyinstaller
+
+      - name: Import smoke (subsonic + app modules)
+        shell: pwsh
+        run: |
+          python -c "import subsonic; import subsonic.handler; print('subsonic_ok')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path '.\templates\lyric-sphere-v2\dist\index.html')) {
+            Write-Error 'templates/lyric-sphere-v2/dist/index.html missing'
+            exit 1
+          }
 
       - name: Resolve release tag and message
         id: version
@@ -116,12 +150,6 @@ jobs:
             }
           }
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-backend.txt
-          pip install pyinstaller
-
       - name: Build backend.exe
         shell: pwsh
         run: |
@@ -132,19 +160,10 @@ jobs:
         run: |
           pyinstaller --noconfirm --onefile --console ".\updater.py"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-and-updater.exe
-          path: |
-            dist/backend.exe
-            dist/updater.exe
-          if-no-files-found: error
-
-      - name: Prepare release zip
+      - name: Assemble clean release directory
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path release -Force | Out-Null
+          if (Test-Path release) { Remove-Item release -Recurse -Force }
           New-Item -ItemType Directory -Path release/LyricSphere.exe -Force | Out-Null
 
           Copy-Item dist/backend.exe release/LyricSphere.exe/backend.exe -Force
@@ -159,6 +178,51 @@ jobs:
             }
           }
 
+          if (-not (Test-Path 'release/LyricSphere.exe/static/assets')) {
+            Write-Error 'release missing static/assets'
+            exit 1
+          }
+          Copy-Item sync-manifest.json release/LyricSphere.exe/sync-manifest.json -Force
+          New-Item -ItemType Directory -Path release/LyricSphere.exe/scripts -Force | Out-Null
+          Copy-Item scripts/verify_sync_manifest.py release/LyricSphere.exe/scripts/verify_sync_manifest.py -Force
+
+      - name: Self-test Subsonic on TEMP copy
+        shell: pwsh
+        run: |
+          $id = [guid]::NewGuid().ToString('N').Substring(0, 8)
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "lyricsphere-self-test-$id"
+          $exitCode = 1
+          try {
+            Copy-Item -Path 'release/LyricSphere.exe' -Destination $smokeRoot -Recurse -Force
+            $env:FAMYLIAM_SKIP_INDEX_INIT = '1'
+            $exe = Join-Path $smokeRoot 'backend.exe'
+            $job = Start-Job -ScriptBlock {
+              param($ExePath)
+              Set-Location (Split-Path -Parent $ExePath)
+              & $ExePath --self-test-subsonic
+              return $LASTEXITCODE
+            } -ArgumentList $exe
+            if (-not (Wait-Job $job -Timeout 60)) {
+              Stop-Job $job -ErrorAction SilentlyContinue
+              Remove-Job $job -Force -ErrorAction SilentlyContinue
+              throw 'self-test timed out after 60s'
+            }
+            $exitCode = [int](Receive-Job $job)
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+            if ($exitCode -ne 0) {
+              throw "self-test failed with exit code $exitCode"
+            }
+            Write-Host 'SELF_TEST_SUBSONIC_OK (CI)'
+          }
+          finally {
+            if (Test-Path -LiteralPath $smokeRoot) {
+              Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Zip clean release and audit
+        shell: pwsh
+        run: |
           if (Test-Path LyricSphere.exe.zip) {
             Remove-Item LyricSphere.exe.zip -Force
           }
@@ -166,6 +230,31 @@ jobs:
 
           $hash = Get-FileHash -Algorithm SHA256 -Path LyricSphere.exe.zip
           $hash.Hash | Out-File -FilePath LyricSphere.exe.zip.sha256 -Encoding ascii
+
+          $auditDir = Join-Path $env:RUNNER_TEMP ("lyricsphere-zip-audit-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+          try {
+            python .\scripts\verify_sync_manifest.py check-zip `
+              --zip .\LyricSphere.exe.zip `
+              --manifest .\sync-manifest.json `
+              --extract-dir $auditDir
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            if (Test-Path -LiteralPath $auditDir) {
+              Remove-Item -LiteralPath $auditDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-and-updater.exe
+          path: |
+            dist/backend.exe
+            dist/updater.exe
+            LyricSphere.exe.zip
+            LyricSphere.exe.zip.sha256
+          if-no-files-found: error
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2

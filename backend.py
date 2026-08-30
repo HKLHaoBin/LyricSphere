@@ -37,7 +37,7 @@ from starlette.datastructures import QueryParams, Headers, FormData, UploadFile
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import aiofiles
 from re import compile, Pattern, Match
-from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any, Iterable
+from typing import Iterator, TextIO, AnyStr, Optional, Union, Set, List, Dict, Tuple, Any, Iterable, Sequence
 from xml.dom.minicompat import NodeList
 from xml.dom import Node
 from xml.dom.minidom import Document, Element
@@ -49,9 +49,15 @@ import ipaddress
 import asyncio
 import websockets
 import queue
+from contextlib import contextmanager
 from urllib.parse import urlparse, unquote, urlencode, parse_qs
 import requests
 from PIL import Image
+
+# Must run before EXPORTS_DIR.mkdir / index init side effects.
+_SELF_TEST_SUBSONIC = '--self-test-subsonic' in sys.argv
+if _SELF_TEST_SUBSONIC:
+    os.environ['FAMYLIAM_SKIP_INDEX_INIT'] = '1'
 
 APP_VERSION = "0.0.0-dev"
 
@@ -853,9 +859,10 @@ def get_base_path():
 # 全局基础路径
 BASE_PATH = get_base_path()
 
-# 创建导出目录
+# 创建导出目录（self-test 不创建，避免污染 release / 烟测目录）
 EXPORTS_DIR = BASE_PATH / 'exports'
-EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+if not _SELF_TEST_SUBSONIC:
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # FastAPI compatibility config (dynamic paths)
 app = FlaskCompat(
@@ -1977,12 +1984,25 @@ def cleanup_exports_dir(max_keep: int = 20) -> int:
 cleanup_exports_dir(max_keep=20)
 
 
+def _is_static_export_temp_file(path: Path) -> bool:
+    """Exclude runtime atomic-write and legacy in-static snapshot temps from full exports."""
+    name = path.name
+    if name.startswith('.') and name.endswith('.tmp'):
+        return True
+    if name.startswith('.snap-') and name.endswith('.tmp'):
+        return True
+    return False
+
+
 def _collect_static_export_files() -> List[Path]:
     """Collect all files under static/ for the full bundle export."""
     if not STATIC_DIR.exists():
         return []
 
-    files = [path for path in STATIC_DIR.rglob('*') if path.is_file()]
+    files = [
+        path for path in STATIC_DIR.rglob('*')
+        if path.is_file() and not _is_static_export_temp_file(path)
+    ]
     files.sort(key=lambda path: path.relative_to(STATIC_DIR).as_posix().lower())
     return files
 
@@ -2850,13 +2870,92 @@ def apply_cors_headers(response):
     return response
 
 BACKUP_TIMESTAMP_FORMAT = '%Y%m%d_%H%M%S'
-BACKUP_SUFFIX_LENGTH = len(datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)) + 1  # include separator dot
+BACKUP_SUFFIX_LENGTH = len(datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)) + 1
+BACKUP_TIMESTAMP_DATE_PATTERN = re.compile(r'^\d{8}_\d{6}$')
+BACKUP_TIMESTAMP_NS_PATTERN = re.compile(r'^(\d{16,})(?:_\d+)+$')
+BACKUP_EPOCH_MIN_SECONDS = 0.0
+BACKUP_EPOCH_MAX_SECONDS = datetime(2100, 1, 1).timestamp()
 MAX_BACKUP_FILENAME_LENGTH = 255
 BACKUP_HASH_LENGTH = 8
+BACKUP_HASHED_IDENTITY_LEAF = 'backup'
 
 
-def _normalize_backup_basename(original_name: str) -> str:
+def _backup_timestamp_reserve_sample() -> str:
+    """Worst-case unique backup suffix used for filename length budgeting."""
+    return f'{"9" * 19}_999999_999'
+
+
+def _filename_component_length(name: str) -> int:
+    if os.name == 'nt':
+        return len(name.encode('utf-16-le')) // 2
+    return len(name)
+
+
+def _filename_component_max_char_units() -> int:
+    return 2 if os.name == 'nt' else 1
+
+
+def _truncate_filename_component_slack_units() -> int:
+    return _filename_component_max_char_units() - 1
+
+
+def _legacy_prefix_fills_truncation_budget(prefix_units: int, available: int) -> bool:
+    """True when prefix length matches a _truncate_filename_component() stem cut."""
+    slack = _truncate_filename_component_slack_units()
+    return prefix_units >= available - slack
+
+
+def _truncate_filename_component(name: str, max_units: int) -> str:
+    if _filename_component_length(name) <= max_units:
+        return name
+    units = 0
+    result: List[str] = []
+    for char in name:
+        char_units = len(char.encode('utf-16-le')) // 2 if os.name == 'nt' else 1
+        if units + char_units > max_units:
+            break
+        result.append(char)
+        units += char_units
+    return ''.join(result)
+
+
+def _normalize_backup_basename(
+    original_name: str,
+    *,
+    timestamp_str: Optional[str] = None,
+) -> str:
     """Ensure backup filenames stay within common filesystem limits."""
+    if not original_name:
+        return original_name
+    reserve_token = timestamp_str if timestamp_str is not None else _backup_timestamp_reserve_sample()
+    reserved_suffix = 1 + _filename_component_length(reserve_token)
+    if _filename_component_length(original_name) + reserved_suffix <= MAX_BACKUP_FILENAME_LENGTH:
+        return original_name
+
+    suffix = ''.join(Path(original_name).suffixes)
+    stem = original_name[:-len(suffix)] if suffix else original_name
+    hash_part = hashlib.sha1(original_name.encode('utf-8')).hexdigest()[:BACKUP_HASH_LENGTH]
+    suffix_units = _filename_component_length(suffix)
+    hash_units = _filename_component_length(hash_part)
+    separator_units = 1
+    available = (
+        MAX_BACKUP_FILENAME_LENGTH
+        - reserved_suffix
+        - suffix_units
+        - hash_units
+        - separator_units
+    )
+
+    if available <= 0:
+        truncated = f'{hash_part}{suffix}'
+        return _truncate_filename_component(truncated, MAX_BACKUP_FILENAME_LENGTH - reserved_suffix)
+
+    stem_truncated = _truncate_filename_component(stem, available)
+    return f'{stem_truncated}_{hash_part}{suffix}'
+
+
+def _normalize_backup_basename_v1(original_name: str) -> str:
+    """Reproduce legacy by-song basename rules (second-level timestamp budget)."""
     if not original_name:
         return original_name
     if len(original_name) + BACKUP_SUFFIX_LENGTH <= MAX_BACKUP_FILENAME_LENGTH:
@@ -2865,78 +2964,1062 @@ def _normalize_backup_basename(original_name: str) -> str:
     suffix = ''.join(Path(original_name).suffixes)
     stem = original_name[:-len(suffix)] if suffix else original_name
     hash_part = hashlib.sha1(original_name.encode('utf-8')).hexdigest()[:BACKUP_HASH_LENGTH]
-    available = MAX_BACKUP_FILENAME_LENGTH - BACKUP_SUFFIX_LENGTH - len(suffix) - BACKUP_HASH_LENGTH - 1
+    available = (
+        MAX_BACKUP_FILENAME_LENGTH
+        - BACKUP_SUFFIX_LENGTH
+        - len(suffix)
+        - BACKUP_HASH_LENGTH
+        - 1
+    )
 
     if available <= 0:
-        truncated = f"{hash_part}{suffix}"
+        truncated = f'{hash_part}{suffix}'
         return truncated[:MAX_BACKUP_FILENAME_LENGTH - BACKUP_SUFFIX_LENGTH]
 
-    return f"{stem[:available]}_{hash_part}{suffix}"
+    return f'{stem[:available]}_{hash_part}{suffix}'
+
+
+BACKUP_PATH_IDENTITY_SEGMENT = '__'
+BACKUP_PATH_IDENTITY_ENCODING_V2_PREFIX = 'v2.'
+BACKUP_IDENTITY_MANIFEST = '.identity.json'
+BACKUP_IDENTITY_HASH_HEX_LENGTH = 64
+LEGACY_BACKUP_SEGMENT_LIMIT = 32
+LEGACY_BACKUP_CANDIDATE_LIMIT = 64
+
+
+class LegacyBackupIdentityResolutionError(ValueError):
+    """Raised when legacy __ backup identity cannot be resolved safely."""
+
+
+def _encode_backup_path_identity_legacy(identity: str) -> str:
+    return identity.replace('/', BACKUP_PATH_IDENTITY_SEGMENT)
+
+
+def _encode_backup_path_identity_v2(identity: str) -> str:
+    payload = base64.urlsafe_b64encode(identity.encode('utf-8')).decode('ascii').rstrip('=')
+    return f'{BACKUP_PATH_IDENTITY_ENCODING_V2_PREFIX}{payload}'
+
+
+def _backup_identity_hash(identity: str) -> str:
+    return hashlib.sha256(identity.encode('utf-8')).hexdigest()
+
+
+def _is_identity_hash_dir_name(name: str) -> bool:
+    if len(name) != BACKUP_IDENTITY_HASH_HEX_LENGTH:
+        return False
+    try:
+        int(name, 16)
+    except ValueError:
+        return False
+    return True
+
+
+def _ensure_backup_identity_manifest(directory: Path, identity: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest_path = directory / BACKUP_IDENTITY_MANIFEST
+    expected_hash = _backup_identity_hash(identity)
+    if manifest_path.exists():
+        existing = _read_backup_identity_manifest(
+            directory,
+            expected_shard=directory.parent.name,
+        )
+        if existing != identity:
+            raise ValueError('备份身份清单与目标不一致')
+        return
+    payload = {
+        'version': 3,
+        'identity': identity,
+        'identity_hash': expected_hash,
+    }
+    _write_json_atomically(manifest_path, payload)
+
+
+def _read_backup_identity_manifest(
+    identity_dir: Path,
+    *,
+    expected_shard: Optional[str] = None,
+) -> str:
+    manifest_path = identity_dir / BACKUP_IDENTITY_MANIFEST
+    if not manifest_path.exists():
+        raise ValueError('备份身份清单缺失')
+    with open(manifest_path, 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError('备份身份清单格式无效')
+    if payload.get('version') != 3:
+        raise ValueError('不支持的备份身份清单版本')
+    identity = str(payload.get('identity') or '').strip()
+    if not identity:
+        raise ValueError('备份身份清单缺少 identity')
+    recorded_hash = str(payload.get('identity_hash') or '').strip().lower()
+    if not recorded_hash:
+        raise ValueError('备份身份清单缺少 identity_hash')
+    expected_hash = _backup_identity_hash(identity)
+    if recorded_hash != expected_hash:
+        raise ValueError('备份身份哈希校验失败')
+    if not _is_identity_hash_dir_name(identity_dir.name):
+        raise ValueError('备份身份目录名无效')
+    if identity_dir.name != recorded_hash:
+        raise ValueError('备份身份目录哈希校验失败')
+    shard = expected_shard if expected_shard is not None else identity_dir.parent.name
+    if _backup_identity_shard(identity) != shard:
+        raise ValueError('备份路径 shard 校验失败')
+    if identity_dir.parent.name != shard:
+        raise ValueError('备份路径 shard 校验失败')
+    return identity
+
+
+def _decode_backup_path_identity_v2(encoded: str) -> str:
+    if not encoded.startswith(BACKUP_PATH_IDENTITY_ENCODING_V2_PREFIX):
+        raise ValueError('unsupported backup identity encoding')
+    payload = encoded[len(BACKUP_PATH_IDENTITY_ENCODING_V2_PREFIX):]
+    padding = '=' * (-len(payload) % 4)
+    return base64.urlsafe_b64decode((payload + padding).encode('ascii')).decode('utf-8')
+
+
+def _backup_identity_shard(identity: str) -> str:
+    return hashlib.sha1(identity.encode('utf-8')).hexdigest()[:2]
+
+
+def _iter_legacy_identity_candidates(encoded: str) -> Iterator[str]:
+    if BACKUP_PATH_IDENTITY_SEGMENT not in encoded:
+        yield encoded
+        return
+    parts = encoded.split(BACKUP_PATH_IDENTITY_SEGMENT)
+    if len(parts) - 1 > LEGACY_BACKUP_SEGMENT_LIMIT:
+        raise LegacyBackupIdentityResolutionError('旧备份身份无法安全确定')
+    stack: List[Tuple[int, str]] = [(0, '')]
+    yielded = 0
+    while stack:
+        pos, current = stack.pop()
+        if pos == len(parts):
+            if current:
+                yielded += 1
+                if yielded > LEGACY_BACKUP_CANDIDATE_LIMIT:
+                    raise LegacyBackupIdentityResolutionError('旧备份身份候选过多，无法安全确定')
+                yield current
+            continue
+        segment = parts[pos]
+        if pos == 0:
+            stack.append((pos + 1, segment))
+            continue
+        stack.append((pos + 1, f'{current}{BACKUP_PATH_IDENTITY_SEGMENT}{segment}'))
+        stack.append((pos + 1, f'{current}/{segment}'))
+
+
+def _collect_legacy_identity_candidates(encoded: str, shard: str) -> List[str]:
+    matched: List[str] = []
+    for identity in _iter_legacy_identity_candidates(encoded):
+        if _backup_identity_shard(identity) != shard:
+            continue
+        if _encode_backup_path_identity_legacy(identity) != encoded:
+            continue
+        if matched:
+            ambiguous_paths = [
+                (STATIC_DIR / _normalize_relative_path(item)).resolve()
+                for item in (matched[0], identity)
+            ]
+            raise BackupRestoreTargetAmbiguous(encoded, ambiguous_paths)
+        matched.append(identity)
+    return matched
+
+
+def _static_files_matching_legacy_backup_encoding(encoded: str, shard: str) -> List[Path]:
+    matches: List[Path] = []
+    static_root = STATIC_DIR.resolve()
+    if not static_root.exists():
+        return matches
+    for candidate in static_root.rglob('*'):
+        if not candidate.is_file():
+            continue
+        try:
+            identity = _backup_identity_from_target_path(candidate)
+        except ValueError:
+            continue
+        if _backup_identity_shard(identity) != shard:
+            continue
+        if _encode_backup_path_identity_legacy(identity) != encoded:
+            continue
+        matches.append(candidate.resolve())
+    return list(dict.fromkeys(matches))
+
+
+def _legacy_backup_basename_from_filename(backup_filename: str) -> str:
+    if '.' not in backup_filename:
+        return backup_filename
+    return '.'.join(backup_filename.split('.')[:-1])
+
+
+class InvalidBackupRestoreSource(ValueError):
+    """Raised when a backup path is not a valid restorable backup payload."""
+
+
+def _require_parsable_backup_timestamp(timestamp_part: Optional[str]) -> str:
+    if not timestamp_part or parse_backup_timestamp_part(timestamp_part) is None:
+        raise InvalidBackupRestoreSource('备份文件名缺少有效时间戳')
+    return timestamp_part
+
+
+def _reject_invalid_backup_restore_filename(name: str) -> None:
+    if name.startswith('.'):
+        raise InvalidBackupRestoreSource('无法恢复隐藏或清单文件')
+    if name.endswith('.tmp'):
+        raise InvalidBackupRestoreSource('无法恢复临时备份文件')
+    if name == BACKUP_IDENTITY_MANIFEST:
+        raise InvalidBackupRestoreSource('无法恢复身份清单文件')
+
+
+def _resolve_validated_flat_backup_restore_source(filename: str) -> Path:
+    parsed = _parse_flat_backup_filename(filename)
+    if parsed is None or parsed['is_tmp'] or not parsed['is_timestamp_valid']:
+        raise InvalidBackupRestoreSource('备份文件名缺少有效时间戳')
+    return _resolve_legacy_normalized_basename_target(
+        parsed['normalized_basename'],
+        normalize_rules=_legacy_normalize_rules_for_flat_backup(),
+    )
+
+
+def _resolve_validated_by_song_backup_restore_source(parts: Tuple[str, ...]) -> Path:
+    shard, normalized_basename, filename = parts[1], parts[2], parts[3]
+    expected_shard = hashlib.sha1(normalized_basename.encode('utf-8')).hexdigest()[:2]
+    if shard != expected_shard:
+        raise InvalidBackupRestoreSource('备份路径 shard 校验失败')
+    prefix = f'{normalized_basename}.'
+    if not filename.startswith(prefix):
+        raise InvalidBackupRestoreSource('备份文件名与目录身份不匹配')
+    timestamp_part = filename[len(normalized_basename) + 1:]
+    _require_parsable_backup_timestamp(timestamp_part)
+    return _resolve_legacy_normalized_basename_target(
+        normalized_basename,
+        normalize_rules=_legacy_normalize_rules_for_by_song_backup(normalized_basename),
+    )
+
+
+def _resolve_validated_by_path_backup_restore_source(parts: Tuple[str, ...]) -> Path:
+    shard, dir_component, filename = parts[1], parts[2], parts[3]
+    identity_dir = (BACKUP_DIR / 'by-path' / shard / dir_component).resolve()
+    try:
+        target = _resolve_by_path_backup_target(
+            dir_component,
+            shard,
+            identity_dir=identity_dir,
+        )
+    except BackupRestoreTargetAmbiguous as exc:
+        raise InvalidBackupRestoreSource(str(exc)) from exc
+    except ValueError as exc:
+        raise InvalidBackupRestoreSource(str(exc)) from exc
+
+    if _is_identity_hash_dir_name(dir_component):
+        allowed_prefixes = _hashed_identity_backup_prefixes()
+    else:
+        allowed_prefixes = _legacy_backup_filename_prefixes(target)
+    timestamp_part = extract_backup_timestamp_part(filename, allowed_prefixes)
+    _require_parsable_backup_timestamp(timestamp_part)
+    return target
+
+
+def _resolve_validated_backup_restore_source(backup_path: Path) -> Path:
+    """Validate backup layout/prefix and return the bound live target path."""
+    _reject_untrusted_backup_path(backup_path)
+    resolved = _assert_backup_path_within_root(backup_path)
+    if not resolved.is_file():
+        raise InvalidBackupRestoreSource('备份路径不是有效备份文件')
+
+    filename = resolved.name
+    _reject_invalid_backup_restore_filename(filename)
+
+    relative = resolved.relative_to(_backup_root_resolved())
+    parts = relative.parts
+    if len(parts) == 1:
+        return _resolve_validated_flat_backup_restore_source(filename)
+    if len(parts) != 4:
+        raise InvalidBackupRestoreSource('备份路径层级无效')
+    if parts[0] == 'by-path':
+        return _resolve_validated_by_path_backup_restore_source(parts)
+    if parts[0] == 'by-song':
+        return _resolve_validated_by_song_backup_restore_source(parts)
+    raise InvalidBackupRestoreSource('无法识别备份路径布局')
+
+
+def _legacy_backup_basename_max_plain_length_v1() -> int:
+    return MAX_BACKUP_FILENAME_LENGTH - BACKUP_SUFFIX_LENGTH
+
+
+def _legacy_backup_basename_max_plain_length_current() -> int:
+    reserve = _backup_timestamp_reserve_sample()
+    return MAX_BACKUP_FILENAME_LENGTH - (1 + _filename_component_length(reserve))
+
+
+def _split_stem_hash_basename(basename: str) -> Optional[Tuple[str, str, str]]:
+    suffix = ''.join(Path(basename).suffixes)
+    stem = basename[:-len(suffix)] if suffix else basename
+    if len(stem) <= BACKUP_HASH_LENGTH + 1 or stem[-(BACKUP_HASH_LENGTH + 1)] != '_':
+        return None
+    hash_part = stem[-BACKUP_HASH_LENGTH:]
+    if not all(char in '0123456789abcdef' for char in hash_part):
+        return None
+    prefix = stem[:-(BACKUP_HASH_LENGTH + 1)]
+    return prefix, hash_part, suffix
+
+
+def _v1_stem_hash_available_units(suffix: str) -> int:
+    return (
+        MAX_BACKUP_FILENAME_LENGTH
+        - BACKUP_SUFFIX_LENGTH
+        - len(suffix)
+        - BACKUP_HASH_LENGTH
+        - 1
+    )
+
+
+def _current_stem_hash_available_units(suffix: str) -> int:
+    reserve = _backup_timestamp_reserve_sample()
+    reserved_suffix = 1 + _filename_component_length(reserve)
+    return (
+        MAX_BACKUP_FILENAME_LENGTH
+        - reserved_suffix
+        - _filename_component_length(suffix)
+        - BACKUP_HASH_LENGTH
+        - 1
+    )
+
+
+def _legacy_basename_is_v1_stem_hash_truncation_output(basename: str) -> bool:
+    parsed = _split_stem_hash_basename(basename)
+    if not parsed:
+        return False
+    prefix, _hash_part, suffix = parsed
+    return len(prefix) >= _v1_stem_hash_available_units(suffix)
+
+
+def _legacy_basename_is_current_stem_hash_truncation_output(basename: str) -> bool:
+    parsed = _split_stem_hash_basename(basename)
+    if not parsed:
+        return False
+    prefix, _hash_part, suffix = parsed
+    available = _current_stem_hash_available_units(suffix)
+    return _legacy_prefix_fills_truncation_budget(
+        _filename_component_length(prefix),
+        available,
+    )
+
+
+def _legacy_basename_is_v1_hash_head_truncation_output(basename: str) -> bool:
+    suffix = ''.join(Path(basename).suffixes)
+    if len(suffix) <= BACKUP_HASH_LENGTH:
+        return False
+    stem = basename[:-len(suffix)] if suffix else basename
+    if len(stem) < BACKUP_HASH_LENGTH:
+        return False
+    if not all(char in '0123456789abcdef' for char in stem[:BACKUP_HASH_LENGTH]):
+        return False
+    if _split_stem_hash_basename(basename) is not None:
+        return False
+    if len(basename) < _legacy_backup_basename_max_plain_length_v1() - 4:
+        return False
+    return True
+
+
+def _legacy_basename_is_current_hash_head_truncation_output(basename: str) -> bool:
+    suffix = ''.join(Path(basename).suffixes)
+    if _filename_component_length(suffix) <= BACKUP_HASH_LENGTH:
+        return False
+    stem = basename[:-len(suffix)] if suffix else basename
+    if _filename_component_length(stem) < BACKUP_HASH_LENGTH:
+        return False
+    if not all(char in '0123456789abcdef' for char in stem[:BACKUP_HASH_LENGTH]):
+        return False
+    if _split_stem_hash_basename(basename) is not None:
+        return False
+    max_plain = _legacy_backup_basename_max_plain_length_current()
+    if _filename_component_length(basename) < max_plain - 4:
+        return False
+    return True
+
+
+def _legacy_basename_is_v1_truncation_output(basename: str) -> bool:
+    return (
+        _legacy_basename_is_v1_hash_head_truncation_output(basename)
+        or _legacy_basename_is_v1_stem_hash_truncation_output(basename)
+    )
+
+
+def _legacy_basename_is_current_truncation_output(basename: str) -> bool:
+    return (
+        _legacy_basename_is_current_hash_head_truncation_output(basename)
+        or _legacy_basename_is_current_stem_hash_truncation_output(basename)
+    )
+
+
+def _legacy_basename_is_definitely_plain_v1(basename: str) -> bool:
+    if not basename:
+        return False
+    if len(basename) + BACKUP_SUFFIX_LENGTH > MAX_BACKUP_FILENAME_LENGTH:
+        return False
+    return _normalize_backup_basename_v1(basename) == basename
+
+
+def _legacy_basename_is_definitely_plain_current(basename: str) -> bool:
+    if not basename:
+        return False
+    reserve = _backup_timestamp_reserve_sample()
+    reserved_suffix = 1 + _filename_component_length(reserve)
+    if _filename_component_length(basename) + reserved_suffix > MAX_BACKUP_FILENAME_LENGTH:
+        return False
+    return _normalize_backup_basename(basename, timestamp_str=reserve) == basename
+
+
+def _legacy_basename_is_definitely_plain(rule: str, basename: str) -> bool:
+    if rule == 'v1':
+        return _legacy_basename_is_definitely_plain_v1(basename)
+    return _legacy_basename_is_definitely_plain_current(basename)
+
+
+def _legacy_normalize_rules_applicable_to_basename(
+    basename: str,
+    candidate_rules: Sequence[str],
+) -> Tuple[str, ...]:
+    applicable: List[str] = []
+    max_v1 = _legacy_backup_basename_max_plain_length_v1()
+    max_current = _legacy_backup_basename_max_plain_length_current()
+    name_len = len(basename)
+    name_units = _filename_component_length(basename)
+
+    if 'v1' in candidate_rules:
+        if name_len <= max_v1 or _legacy_basename_is_v1_truncation_output(basename):
+            applicable.append('v1')
+    if 'current' in candidate_rules:
+        if name_units <= max_current or _legacy_basename_is_current_truncation_output(basename):
+            applicable.append('current')
+    return tuple(applicable)
+
+
+def _legacy_basename_can_recreate(
+    normalized_basename: str,
+    *,
+    normalize_rules: Sequence[str],
+) -> bool:
+    applicable = _legacy_normalize_rules_applicable_to_basename(
+        normalized_basename,
+        normalize_rules,
+    )
+    if not applicable:
+        return False
+    for rule in applicable:
+        if rule == 'v1' and _legacy_basename_is_v1_truncation_output(normalized_basename):
+            return False
+        if rule == 'current' and _legacy_basename_is_current_truncation_output(normalized_basename):
+            return False
+    return all(
+        _legacy_basename_is_definitely_plain(rule, normalized_basename)
+        for rule in applicable
+    )
+
+
+def _legacy_normalize_rules_for_flat_backup() -> Tuple[str, ...]:
+    return ('v1', 'current')
+
+
+def _legacy_normalize_rules_for_by_song_backup(normalized_basename: str) -> Tuple[str, ...]:
+    return ('v1', 'current')
+
+
+def _is_excluded_legacy_restore_candidate(candidate: Path) -> bool:
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(BACKUP_DIR.resolve())
+        return True
+    except ValueError:
+        pass
+    name = candidate.name
+    if name.startswith('.') or name.endswith('.tmp'):
+        return True
+    return False
+
+
+def _legacy_restore_recreate_target(normalized_basename: str) -> Path:
+    static_root = STATIC_DIR.resolve()
+    suffix = Path(normalized_basename).suffix.lower()
+    if suffix == '.json':
+        target = (static_root / normalized_basename).resolve()
+    else:
+        target = (SONGS_DIR / normalized_basename).resolve()
+    target.relative_to(static_root)
+    return target
+
+
+def _file_matches_legacy_normalized_basename(file_path: Path, normalized_basename: str) -> bool:
+    candidate_name = file_path.name
+    if candidate_name == normalized_basename:
+        return True
+    reserve = _backup_timestamp_reserve_sample()
+    if _normalize_backup_basename_v1(candidate_name) == normalized_basename:
+        return True
+    if _normalize_backup_basename(candidate_name, timestamp_str=reserve) == normalized_basename:
+        return True
+    return False
+
+
+def _find_static_files_matching_legacy_normalized_basename(normalized_basename: str) -> List[Path]:
+    matches: List[Path] = []
+    static_root = STATIC_DIR.resolve()
+    if not static_root.exists():
+        return matches
+    for candidate in static_root.rglob('*'):
+        if not candidate.is_file():
+            continue
+        if _is_excluded_legacy_restore_candidate(candidate):
+            continue
+        try:
+            candidate.resolve().relative_to(static_root)
+        except ValueError:
+            continue
+        if _file_matches_legacy_normalized_basename(candidate, normalized_basename):
+            matches.append(candidate.resolve())
+    return list(dict.fromkeys(matches))
+
+
+def _resolve_legacy_normalized_basename_target(
+    normalized_basename: str,
+    *,
+    normalize_rules: Optional[Sequence[str]] = None,
+) -> Path:
+    matches = _find_static_files_matching_legacy_normalized_basename(normalized_basename)
+    if len(matches) > 1:
+        raise BackupRestoreTargetAmbiguous(normalized_basename, matches)
+    if len(matches) == 1:
+        return matches[0]
+    rules = tuple(normalize_rules or _legacy_normalize_rules_for_flat_backup())
+    if not _legacy_basename_can_recreate(normalized_basename, normalize_rules=rules):
+        raise ValueError(f'无法找到与备份匹配的目标文件: {normalized_basename}')
+    return _legacy_restore_recreate_target(normalized_basename)
+
+
+def _resolve_by_song_backup_target(relative: Path) -> Path:
+    shard = relative.parts[1]
+    normalized_basename = relative.parts[2]
+    expected_shard = hashlib.sha1(normalized_basename.encode('utf-8')).hexdigest()[:2]
+    if shard != expected_shard:
+        raise ValueError('备份路径 shard 校验失败')
+    rules = _legacy_normalize_rules_for_by_song_backup(normalized_basename)
+    return _resolve_legacy_normalized_basename_target(
+        normalized_basename,
+        normalize_rules=rules,
+    )
+
+
+def _resolve_by_path_backup_target(
+    dir_component: str,
+    shard: str,
+    *,
+    identity_dir: Optional[Path] = None,
+) -> Path:
+    if _is_identity_hash_dir_name(dir_component):
+        if identity_dir is None:
+            identity_dir = BACKUP_DIR / 'by-path' / shard / dir_component
+        identity = _read_backup_identity_manifest(
+            identity_dir,
+            expected_shard=shard,
+        )
+        target = (STATIC_DIR / _normalize_relative_path(identity)).resolve()
+        target.relative_to(STATIC_DIR.resolve())
+        return target
+
+    if dir_component.startswith(BACKUP_PATH_IDENTITY_ENCODING_V2_PREFIX):
+        identity = _decode_backup_path_identity_v2(dir_component)
+        if _backup_identity_shard(identity) != shard:
+            raise ValueError('备份路径 shard 校验失败')
+        target = (STATIC_DIR / _normalize_relative_path(identity)).resolve()
+        target.relative_to(STATIC_DIR.resolve())
+        return target
+
+    file_matches = _static_files_matching_legacy_backup_encoding(dir_component, shard)
+    if len(file_matches) == 1:
+        return file_matches[0]
+
+    identity_candidates = _collect_legacy_identity_candidates(dir_component, shard)
+    if len(identity_candidates) == 1:
+        target = (STATIC_DIR / _normalize_relative_path(identity_candidates[0])).resolve()
+        target.relative_to(STATIC_DIR.resolve())
+        return target
+    if len(file_matches) > 1:
+        raise BackupRestoreTargetAmbiguous(dir_component, file_matches)
+    raise ValueError('无法唯一解析旧版备份路径')
+
+
+def _coerce_static_target_path(name_or_path: Union[str, Path]) -> Path:
+    path_obj = name_or_path if isinstance(name_or_path, Path) else Path(str(name_or_path))
+    resolved = _normalize_resolved_path(path_obj)
+    static_root = _normalize_resolved_path(STATIC_DIR)
+    try:
+        resolved.relative_to(static_root)
+        return resolved
+    except ValueError:
+        pass
+    songs_root = _normalize_resolved_path(SONGS_DIR)
+    try:
+        resolved.relative_to(songs_root)
+        return resolved
+    except ValueError:
+        pass
+    if path_obj.is_absolute():
+        if resolved.suffix.lower() == '.json':
+            return resolved
+        raise ValueError('路径不在 static 目录内')
+    return _normalize_resolved_path(SONGS_DIR / path_obj)
+
+
+def _backup_identity_from_target_path(target_path: Path) -> str:
+    resolved = _coerce_static_target_path(target_path)
+    static_root = _normalize_resolved_path(STATIC_DIR)
+    try:
+        return _path_relative_to_static(resolved)
+    except ValueError:
+        pass
+    songs_root = _normalize_resolved_path(SONGS_DIR)
+    try:
+        relative = resolved.relative_to(songs_root)
+        return f"songs/{relative.as_posix()}"
+    except ValueError:
+        pass
+    if resolved.suffix.lower() == '.json':
+        return resolved.name
+    raise ValueError('无法解析备份目标路径')
+
+
+def _legacy_backup_subdirectory_for_basename_v1(basename: str) -> Path:
+    base_name = _normalize_backup_basename_v1(basename)
+    shard = hashlib.sha1(base_name.encode('utf-8')).hexdigest()[:2]
+    return BACKUP_DIR / 'by-song' / shard / base_name
+
+
+def _legacy_backup_subdirectory_for_basename(basename: str) -> Path:
+    base_name = _normalize_backup_basename(
+        basename,
+        timestamp_str=_backup_timestamp_reserve_sample(),
+    )
+    shard = hashlib.sha1(base_name.encode('utf-8')).hexdigest()[:2]
+    return BACKUP_DIR / 'by-song' / shard / base_name
+
+
+def _legacy_backup_filename_prefixes(name_or_path: Union[str, Path]) -> Set[str]:
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    leaf_name = Path(identity).name
+    reserve = _backup_timestamp_reserve_sample()
+    legacy_prefix = f"{_normalize_backup_basename(leaf_name, timestamp_str=reserve)}."
+    legacy_v1_prefix = f'{_normalize_backup_basename_v1(leaf_name)}.'
+    return {legacy_prefix, legacy_v1_prefix}
+
+
+def _legacy_normalized_basenames_for_target(name_or_path: Union[str, Path]) -> Set[str]:
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    leaf_name = Path(identity).name
+    reserve = _backup_timestamp_reserve_sample()
+    return {
+        _normalize_backup_basename(leaf_name, timestamp_str=reserve),
+        _normalize_backup_basename_v1(leaf_name),
+    }
+
+
+def _parse_flat_backup_filename(filename: str) -> Optional[Dict[str, Any]]:
+    """Parse flat backup filenames as '<normalized_basename>.<timestamp>[.tmp]'."""
+    if not filename or filename.startswith('.'):
+        return None
+
+    is_tmp = filename.endswith('.tmp')
+    working_name = filename[:-4] if is_tmp else filename
+    if '.' not in working_name:
+        return None
+
+    timestamp_part = working_name.rsplit('.', 1)[-1]
+    normalized_basename = working_name[: -(len(timestamp_part) + 1)]
+    if not normalized_basename:
+        return None
+
+    return {
+        'normalized_basename': normalized_basename,
+        'timestamp_part': timestamp_part,
+        'is_tmp': is_tmp,
+        'is_timestamp_valid': parse_backup_timestamp_part(timestamp_part) is not None,
+    }
+
+
+def _hashed_identity_backup_prefixes() -> Set[str]:
+    return {f'{BACKUP_HASHED_IDENTITY_LEAF}.'}
+
+
+def _backup_filename_prefixes(name_or_path: Union[str, Path]) -> Set[str]:
+    """Legacy basename prefixes used by flat and by-song layouts."""
+    return _legacy_backup_filename_prefixes(name_or_path)
+
+
+def _prefixes_for_backup_subdirectory(
+    subdir: Path,
+    legacy_prefixes: Set[str],
+) -> Set[str]:
+    if _is_identity_hash_dir_name(subdir.name):
+        return _hashed_identity_backup_prefixes()
+    return legacy_prefixes
+
+
+def _is_backup_filename_candidate(filename: str, allowed_prefixes: Set[str]) -> bool:
+    return any(filename.startswith(prefix) for prefix in allowed_prefixes)
+
+
+def _is_eligible_backup_file(backup_file: Path, allowed_prefixes: Set[str]) -> bool:
+    if not backup_file.is_file():
+        return False
+    name = backup_file.name
+    if name.startswith('.') or name.endswith('.tmp') or name == BACKUP_IDENTITY_MANIFEST:
+        return False
+    if not _is_backup_filename_candidate(name, allowed_prefixes):
+        return False
+    timestamp_part = extract_backup_timestamp_part(name, allowed_prefixes)
+    return bool(timestamp_part and parse_backup_timestamp_part(timestamp_part) is not None)
+
+
+def _backup_root_resolved() -> Path:
+    return BACKUP_DIR.resolve()
+
+
+def _assert_backup_path_within_root(path: Path) -> Path:
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(_backup_root_resolved())
+    except ValueError as exc:
+        raise InvalidBackupRestoreSource('备份路径越界') from exc
+    return resolved
+
+
+def _reject_untrusted_backup_path(path: Path) -> None:
+    if path.is_symlink():
+        raise InvalidBackupRestoreSource('备份路径不能使用符号链接')
+    _assert_backup_path_within_root(path)
+
+
+def _classify_target_backup_candidate(
+    backup_file: Path,
+    allowed_prefixes: Set[str],
+    *,
+    dedicated_directory: bool,
+    allowed_flat_basenames: Optional[Set[str]] = None,
+) -> str:
+    """Return 'eligible', 'ineligible', or 'ignore' for a backup directory entry."""
+    name = backup_file.name
+    if name.startswith('.') or name == BACKUP_IDENTITY_MANIFEST:
+        return 'ignore'
+
+    hashed_leaf_prefix = f'{BACKUP_HASHED_IDENTITY_LEAF}.'
+
+    if dedicated_directory:
+        if backup_file.is_symlink():
+            return 'ineligible'
+        try:
+            backup_file.resolve().relative_to(_backup_root_resolved())
+        except (ValueError, OSError, RuntimeError):
+            return 'ineligible'
+        if not backup_file.is_file():
+            return 'ignore'
+        if name.endswith('.tmp'):
+            return 'ineligible'
+        if hashed_leaf_prefix not in allowed_prefixes and name.startswith(hashed_leaf_prefix):
+            return 'ineligible'
+        if _is_eligible_backup_file(backup_file, allowed_prefixes):
+            return 'eligible'
+        if _is_backup_filename_candidate(name, allowed_prefixes):
+            return 'ineligible'
+        return 'ineligible'
+
+    parsed = _parse_flat_backup_filename(name)
+    if parsed is None:
+        return 'ignore'
+    if not allowed_flat_basenames or parsed['normalized_basename'] not in allowed_flat_basenames:
+        return 'ignore'
+
+    if backup_file.is_symlink():
+        return 'ineligible'
+    try:
+        backup_file.resolve().relative_to(_backup_root_resolved())
+    except (ValueError, OSError, RuntimeError):
+        return 'ineligible'
+    if not backup_file.is_file():
+        return 'ignore'
+    if parsed['is_tmp']:
+        return 'ineligible'
+    if parsed['is_timestamp_valid']:
+        return 'eligible'
+    return 'ineligible'
+
+
+def _scan_target_backup_candidates(
+    name_or_path: Union[str, Path],
+) -> Tuple[List[Path], bool]:
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    legacy_prefixes = _legacy_backup_filename_prefixes(target_path)
+    legacy_basenames = _legacy_normalized_basenames_for_target(target_path)
+    backup_root = _backup_root_resolved()
+    eligible: List[Path] = []
+    found_ineligible = False
+
+    def inspect_file(backup_file: Path, allowed_prefixes: Set[str], *, dedicated_directory: bool) -> None:
+        nonlocal found_ineligible
+        classification = _classify_target_backup_candidate(
+            backup_file,
+            allowed_prefixes,
+            dedicated_directory=dedicated_directory,
+            allowed_flat_basenames=legacy_basenames if not dedicated_directory else None,
+        )
+        if classification == 'eligible':
+            eligible.append(backup_file)
+        elif classification == 'ineligible':
+            found_ineligible = True
+
+    def scan_directory(subdir: Path, allowed_prefixes: Set[str], *, dedicated_directory: bool) -> None:
+        nonlocal found_ineligible
+        if subdir.is_symlink():
+            found_ineligible = True
+            return
+        try:
+            resolved_subdir = subdir.resolve()
+            resolved_subdir.relative_to(backup_root)
+        except (ValueError, OSError, RuntimeError):
+            found_ineligible = True
+            return
+        if not resolved_subdir.is_dir():
+            return
+        try:
+            children = list(resolved_subdir.iterdir())
+        except OSError:
+            found_ineligible = True
+            return
+        for backup_file in children:
+            inspect_file(backup_file, allowed_prefixes, dedicated_directory=dedicated_directory)
+
+    candidate_dirs = [
+        _backup_identity_hash_subdirectory(identity),
+        _legacy_v2_backup_subdirectory(identity),
+        _legacy_segment_backup_subdirectory(identity),
+        _legacy_backup_subdirectory_for_basename_v1(target_path.name),
+        _legacy_backup_subdirectory_for_basename(target_path.name),
+    ]
+    seen_dirs: Set[Path] = set()
+    for subdir in candidate_dirs:
+        if subdir.is_symlink():
+            found_ineligible = True
+            continue
+        try:
+            resolved_subdir = subdir.resolve()
+            resolved_subdir.relative_to(backup_root)
+        except (ValueError, OSError, RuntimeError):
+            found_ineligible = True
+            continue
+        if resolved_subdir in seen_dirs:
+            continue
+        seen_dirs.add(resolved_subdir)
+        dir_prefixes = _prefixes_for_backup_subdirectory(subdir, legacy_prefixes)
+        scan_directory(subdir, dir_prefixes, dedicated_directory=True)
+
+    if BACKUP_DIR.is_dir():
+        try:
+            flat_children = list(BACKUP_DIR.iterdir())
+        except OSError:
+            found_ineligible = True
+        else:
+            for backup_file in flat_children:
+                inspect_file(backup_file, legacy_prefixes, dedicated_directory=False)
+
+    return _sort_eligible_backup_files(name_or_path, eligible), found_ineligible
+
+
+def _sort_eligible_backup_files(
+    name_or_path: Union[str, Path],
+    eligible: Sequence[Path],
+) -> List[Path]:
+    target_path = _coerce_static_target_path(name_or_path)
+    legacy_prefixes = _legacy_backup_filename_prefixes(target_path)
+    deduped: Dict[str, Path] = {}
+    for backup_file in eligible:
+        try:
+            resolved_key = str(backup_file.resolve())
+        except (OSError, RuntimeError):
+            continue
+        deduped[resolved_key] = backup_file
+    return sorted(
+        deduped.values(),
+        key=lambda path: _backup_file_recency_key_for_file(
+            path,
+            _prefixes_for_backup_subdirectory(path.parent, legacy_prefixes),
+        ),
+        reverse=True,
+    )
+
+
+def _backup_identity_hash_subdirectory(identity: str) -> Path:
+    shard = _backup_identity_shard(identity)
+    identity_hash = _backup_identity_hash(identity)
+    return BACKUP_DIR / 'by-path' / shard / identity_hash
+
+
+def _legacy_v2_backup_subdirectory(identity: str) -> Path:
+    encoded = _encode_backup_path_identity_v2(identity)
+    shard = _backup_identity_shard(identity)
+    return BACKUP_DIR / 'by-path' / shard / encoded
+
+
+def _legacy_segment_backup_subdirectory(identity: str) -> Path:
+    encoded = _encode_backup_path_identity_legacy(identity)
+    shard = _backup_identity_shard(identity)
+    return BACKUP_DIR / 'by-path' / shard / encoded
 
 
 def backup_song_subdirectory(name_or_path: Union[str, Path]) -> Path:
-    """Per-song backup subdirectory under static/backups/by-song/{shard}/{basename}/."""
-    original_name = name_or_path.name if isinstance(name_or_path, Path) else Path(str(name_or_path)).name
-    base_name = _normalize_backup_basename(original_name)
-    shard = hashlib.sha1(base_name.encode('utf-8')).hexdigest()[:2]
-    return BACKUP_DIR / 'by-song' / shard / base_name
+    """Per-target backup subdirectory keyed by hashed static-relative identity."""
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    directory = _backup_identity_hash_subdirectory(identity)
+    _ensure_backup_identity_manifest(directory, identity)
+    return directory
 
 
 def build_backup_path(name_or_path: Union[str, Path],
                       timestamp: Optional[Union[str, int]] = None,
                       directory: Optional[Path] = None) -> Path:
     """Create a filesystem-safe backup path for the given target file."""
-    original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
-    base_name = _normalize_backup_basename(original_name)
-    if directory is None:
-        directory = backup_song_subdirectory(name_or_path)
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    leaf_name = Path(identity).name
     if isinstance(timestamp, (int, float)):
         timestamp_str = str(int(timestamp))
     elif timestamp is not None:
         timestamp_str = str(timestamp)
     else:
         timestamp_str = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
+    if directory is None:
+        directory = backup_song_subdirectory(target_path)
+    if _is_identity_hash_dir_name(directory.name):
+        base_name = BACKUP_HASHED_IDENTITY_LEAF
+    else:
+        base_name = _normalize_backup_basename(leaf_name, timestamp_str=timestamp_str)
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{base_name}.{timestamp_str}"
+    backup_name = f'{base_name}.{timestamp_str}'
+    if _filename_component_length(backup_name) > MAX_BACKUP_FILENAME_LENGTH:
+        raise ValueError('备份文件名超过平台限制')
+    return directory / backup_name
 
 
 def backup_prefix(name_or_path: Union[str, Path]) -> str:
-    """Return the normalized prefix used for locating backups."""
-    original_name = name_or_path.name if isinstance(name_or_path, Path) else str(name_or_path)
-    return f"{_normalize_backup_basename(original_name)}."
+    """Return the primary normalized prefix used for locating backups."""
+    target_path = _coerce_static_target_path(name_or_path)
+    identity = _backup_identity_from_target_path(target_path)
+    leaf_name = Path(identity).name
+    return f"{_normalize_backup_basename(leaf_name, timestamp_str=_backup_timestamp_reserve_sample())}."
+
+
+def parse_backup_timestamp_part(timestamp_part: str) -> Optional[float]:
+    """Parse backup suffix into sortable epoch seconds."""
+    if not timestamp_part:
+        return None
+
+    if BACKUP_TIMESTAMP_DATE_PATTERN.fullmatch(timestamp_part):
+        try:
+            parsed = datetime.strptime(timestamp_part, BACKUP_TIMESTAMP_FORMAT)
+            epoch = parsed.timestamp()
+            if BACKUP_EPOCH_MIN_SECONDS <= epoch <= BACKUP_EPOCH_MAX_SECONDS:
+                return epoch
+        except (ValueError, OSError, OverflowError):
+            return None
+        return None
+
+    ns_match = BACKUP_TIMESTAMP_NS_PATTERN.fullmatch(timestamp_part)
+    if ns_match:
+        try:
+            token = int(ns_match.group(1))
+            epoch = token / 1_000_000_000.0
+            if BACKUP_EPOCH_MIN_SECONDS <= epoch <= BACKUP_EPOCH_MAX_SECONDS:
+                return epoch
+        except (OSError, OverflowError, ValueError):
+            return None
+        return None
+
+    if timestamp_part.isdigit():
+        try:
+            epoch = float(int(timestamp_part))
+            if BACKUP_EPOCH_MIN_SECONDS <= epoch <= BACKUP_EPOCH_MAX_SECONDS:
+                return epoch
+        except (OSError, OverflowError, ValueError):
+            return None
+        return None
+
+    return None
+
+
+def backup_epoch_to_datetime(epoch: float) -> Optional[datetime]:
+    try:
+        return datetime.fromtimestamp(epoch)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _match_backup_filename_prefix(
+    backup_filename: str,
+    prefixes: Set[str],
+) -> Optional[str]:
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if backup_filename.startswith(prefix):
+            return prefix
+    return None
+
+
+def extract_backup_timestamp_part(
+    backup_filename: str,
+    prefixes: Set[str],
+) -> Optional[str]:
+    matched_prefix = _match_backup_filename_prefix(backup_filename, prefixes)
+    if matched_prefix is None:
+        return None
+    timestamp_part = backup_filename[len(matched_prefix):]
+    return timestamp_part or None
+
+
+def extract_backup_timestamp_part_from_file(
+    backup_file: Path,
+    name_or_path: Union[str, Path],
+) -> Optional[str]:
+    prefixes = _prefixes_for_backup_subdirectory(
+        backup_file.parent,
+        _legacy_backup_filename_prefixes(name_or_path),
+    )
+    return extract_backup_timestamp_part(backup_file.name, prefixes)
+
+
+def _has_ineligible_backup_files(name_or_path: Union[str, Path]) -> bool:
+    _eligible, found_ineligible = _scan_target_backup_candidates(name_or_path)
+    return found_ineligible
 
 
 def _backup_file_recency_key(backup_file: Path, prefix: str) -> Tuple[int, float]:
     """Sort key for iter_backup_files: parsed backups by epoch, unparseable last."""
     timestamp_part = backup_file.name[len(prefix):]
-    parsed_time: Optional[datetime] = None
-    try:
-        parsed_time = datetime.strptime(timestamp_part, BACKUP_TIMESTAMP_FORMAT)
-    except ValueError:
-        if timestamp_part.isdigit():
-            try:
-                parsed_time = datetime.fromtimestamp(int(timestamp_part))
-            except (OSError, OverflowError, ValueError):
-                parsed_time = None
-    if parsed_time is None:
+    parsed_epoch = parse_backup_timestamp_part(timestamp_part)
+    if parsed_epoch is None:
         return (0, 0.0)
-    return (1, parsed_time.timestamp())
+    return (1, parsed_epoch)
+
+
+def _backup_file_recency_key_for_file(backup_file: Path, prefixes: Set[str]) -> Tuple[int, float]:
+    matched_prefix = _match_backup_filename_prefix(backup_file.name, prefixes)
+    if matched_prefix is None:
+        return (0, 0.0)
+    return _backup_file_recency_key(backup_file, matched_prefix)
 
 
 def iter_backup_files(name_or_path: Union[str, Path]) -> List[Path]:
-    """List backups for a file: per-song subdir first, then legacy flat BACKUP_DIR."""
-    prefix = backup_prefix(name_or_path)
-    collected: List[Path] = []
-    subdir = backup_song_subdirectory(name_or_path)
-    if subdir.is_dir():
-        for backup_file in subdir.iterdir():
-            if backup_file.is_file() and backup_file.name.startswith(prefix):
-                collected.append(backup_file)
-    if BACKUP_DIR.is_dir():
-        for backup_file in BACKUP_DIR.iterdir():
-            if backup_file.is_file() and backup_file.name.startswith(prefix):
-                collected.append(backup_file)
-    return sorted(collected, key=lambda p: _backup_file_recency_key(p, prefix), reverse=True)
+    """List eligible backups for a file across hashed and legacy layouts."""
+    eligible, _found_ineligible = _scan_target_backup_candidates(name_or_path)
+    return eligible
 
 
 def backup_public_relative_path(backup_file: Path) -> str:
@@ -2961,22 +4044,7 @@ def _sanitize_client_id(raw_id: str) -> str:
 
 def _resolve_import_target(target_path: Path, reserved_paths: Set[str]) -> Tuple[Path, bool]:
     """Return a non-conflicting target path for import."""
-    relative_key = str(target_path.relative_to(STATIC_DIR)).lower()
-    if not target_path.exists() and relative_key not in reserved_paths:
-        reserved_paths.add(relative_key)
-        return target_path, False
-
-    stem = target_path.stem
-    suffix = target_path.suffix
-    counter = 1
-    while True:
-        candidate = target_path.with_name(f"{stem}_imported_{counter}{suffix}")
-        relative_candidate = str(candidate.relative_to(STATIC_DIR)).lower()
-        if not candidate.exists() and relative_candidate not in reserved_paths:
-            reserved_paths.add(relative_candidate)
-            return candidate, True
-        counter += 1
-
+    return plan_import_target_path(target_path, reserved_paths)
 
 def _rebuild_import_url(parsed, new_path: str) -> str:
     if parsed.scheme or parsed.netloc:
@@ -3207,13 +4275,33 @@ def _normalize_backup_payload_data(data):
         tracks = item.get('tracks')
         if not isinstance(tracks, list):
             tracks = []
-        normalized_playlists.append({
+        # Dedupe while preserving first-seen order
+        seen = set()
+        unique_tracks = []
+        for track in tracks:
+            track_name = str(track) if track is not None else ''
+            if not track_name or track_name in seen:
+                continue
+            seen.add(track_name)
+            unique_tracks.append(track_name)
+        row = {
             'id': playlist_id,
             'name': name,
             'type': playlist_type or 'manual',
             'artistName': artist_name or '',
-            'tracks': tracks
-        })
+            'tracks': unique_tracks
+        }
+        removed = item.get('removedTracks')
+        if isinstance(removed, dict):
+            cleaned = {}
+            for key, value in removed.items():
+                rname = str(key) if key is not None else ''
+                if not rname:
+                    continue
+                if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9007199254740991:
+                    cleaned[rname] = value
+            row['removedTracks'] = {k: cleaned[k] for k in sorted(cleaned.keys())}
+        normalized_playlists.append(row)
 
     for item in artist_shortcuts:
         normalized = normalize_artist_shortcut(item)
@@ -3223,6 +4311,30 @@ def _normalize_backup_payload_data(data):
 
     data['playlists'] = normalized_playlists
     data['artistShortcuts'] = normalized_artist_shortcuts
+
+    # Preserve Phase-3 sync metadata (revision + deletedPlaylistIds).
+    if 'revision' in data:
+        rev = data.get('revision')
+        if isinstance(rev, int) and not isinstance(rev, bool) and 0 <= rev <= 9007199254740991:
+            data['revision'] = rev
+        elif rev is None:
+            data.pop('revision', None)
+        else:
+            # Leave invalid revision for callers that validate explicitly; do not silently drop to empty.
+            pass
+    deleted = data.get('deletedPlaylistIds')
+    if isinstance(deleted, dict):
+        cleaned_deleted = {}
+        for key, value in deleted.items():
+            dname = str(key) if key is not None else ''
+            if not dname:
+                continue
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9007199254740991:
+                cleaned_deleted[dname] = value
+        data['deletedPlaylistIds'] = {k: cleaned_deleted[k] for k in sorted(cleaned_deleted.keys())}
+    elif 'deletedPlaylistIds' in data and deleted is None:
+        data['deletedPlaylistIds'] = {}
+
     return data
 
 
@@ -3252,6 +4364,714 @@ def _get_static_json_write_lock(json_path: Path) -> threading.Lock:
         return lock
 
 
+STATIC_ENTRY_CLAIM_LOCKS: Dict[str, threading.Lock] = {}
+STATIC_ENTRY_CLAIM_GUARD = threading.Lock()
+STATIC_ENTRY_CLAIMED: Set[str] = set()
+
+
+def _normalize_resolved_path(path: Path) -> Path:
+    text = str(path.resolve())
+    if text.startswith('\\\\?\\'):
+        return Path(text[4:])
+    return Path(text)
+
+
+def _path_relative_to_static(path: Path) -> str:
+    resolved = _normalize_resolved_path(path)
+    static_root = _normalize_resolved_path(STATIC_DIR)
+    return str(resolved.relative_to(static_root)).replace('\\', '/')
+
+
+def _static_relative_key_from_path(path: Path) -> str:
+    try:
+        return _path_relative_to_static(path).lower()
+    except ValueError:
+        return str(_normalize_resolved_path(path)).replace('\\', '/').lower()
+
+
+def _get_static_entry_claim_lock(relative_key: str) -> threading.Lock:
+    with STATIC_ENTRY_CLAIM_GUARD:
+        lock = STATIC_ENTRY_CLAIM_LOCKS.get(relative_key)
+        if lock is None:
+            lock = threading.Lock()
+            STATIC_ENTRY_CLAIM_LOCKS[relative_key] = lock
+        return lock
+
+
+def _discard_unused_static_entry_claim_lock(relative_key: str, lock: threading.Lock) -> None:
+    """Drop a claim lock registry entry when acquisition failed before reservation."""
+    lock.release()
+    with STATIC_ENTRY_CLAIM_GUARD:
+        if relative_key not in STATIC_ENTRY_CLAIMED and STATIC_ENTRY_CLAIM_LOCKS.get(relative_key) is lock:
+            STATIC_ENTRY_CLAIM_LOCKS.pop(relative_key, None)
+
+
+class StaticPathClaim:
+    """Hold a cross-request reservation for a static-relative path until release()."""
+
+    def __init__(self, path: Path, lock: threading.Lock, relative_key: str):
+        self.path = path
+        self._lock = lock
+        self._relative_key = relative_key
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        with STATIC_ENTRY_CLAIM_GUARD:
+            STATIC_ENTRY_CLAIMED.discard(self._relative_key)
+        self._lock.release()
+        with STATIC_ENTRY_CLAIM_GUARD:
+            if self._relative_key not in STATIC_ENTRY_CLAIMED:
+                STATIC_ENTRY_CLAIM_LOCKS.pop(self._relative_key, None)
+
+    def __enter__(self) -> 'StaticPathClaim':
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.release()
+
+
+class StaticPathClaimUnavailable(Exception):
+    """Raised when an exact static path is already present or reserved."""
+
+    def __init__(self, relative_key: str):
+        self.relative_key = relative_key
+        super().__init__(f'path unavailable: {relative_key}')
+
+
+class BackupRestoreTargetAmbiguous(Exception):
+    """Raised when a legacy backup basename maps to multiple live static files."""
+
+    def __init__(self, basename: str, candidates: Sequence[Path]):
+        self.basename = basename
+        self.candidates = list(candidates)
+        labels = []
+        for candidate in self.candidates:
+            try:
+                labels.append(_path_relative_to_static(candidate))
+            except ValueError:
+                labels.append(str(candidate))
+        joined = ', '.join(labels)
+        super().__init__(f'备份目标存在多个匹配路径，无法恢复: {basename} ({joined})')
+
+
+class QuickEditorUnsupportedLyricsFormat(Exception):
+    """Raised when quick editor cannot convert an existing lyrics file format."""
+
+
+def claim_exact_static_path(base_dir: Path, filename: str) -> StaticPathClaim:
+    """Reserve an exact static path; fail if the file exists or is already claimed."""
+    candidate = (base_dir / filename).resolve()
+    relative_key = _static_relative_key_from_path(candidate)
+    lock = _get_static_entry_claim_lock(relative_key)
+    if not lock.acquire(blocking=False):
+        raise StaticPathClaimUnavailable(relative_key)
+    try:
+        with STATIC_ENTRY_CLAIM_GUARD:
+            if relative_key in STATIC_ENTRY_CLAIMED or candidate.exists():
+                raise StaticPathClaimUnavailable(relative_key)
+            STATIC_ENTRY_CLAIMED.add(relative_key)
+            return StaticPathClaim(candidate, lock, relative_key)
+    except StaticPathClaimUnavailable:
+        _discard_unused_static_entry_claim_lock(relative_key, lock)
+        raise
+    except Exception:
+        _discard_unused_static_entry_claim_lock(relative_key, lock)
+        raise
+
+
+def claim_unique_static_path(
+    base_dir: Path,
+    filename: str,
+    *,
+    imported_suffix: bool = False,
+) -> StaticPathClaim:
+    """Reserve a non-existing static path across concurrent create/import requests."""
+    stem, ext = os.path.splitext(filename)
+    counter = 0
+    while True:
+        if counter == 0:
+            candidate_name = filename
+        elif imported_suffix:
+            candidate_name = f"{stem}_imported_{counter}{ext}"
+        else:
+            candidate_name = f"{stem}_{counter}{ext}"
+        candidate = (base_dir / candidate_name).resolve()
+        relative_key = _static_relative_key_from_path(candidate)
+        lock = _get_static_entry_claim_lock(relative_key)
+        if not lock.acquire(blocking=False):
+            counter += 1
+            continue
+        try:
+            should_skip = False
+            with STATIC_ENTRY_CLAIM_GUARD:
+                if relative_key in STATIC_ENTRY_CLAIMED or candidate.exists():
+                    should_skip = True
+                else:
+                    STATIC_ENTRY_CLAIMED.add(relative_key)
+            if should_skip:
+                _discard_unused_static_entry_claim_lock(relative_key, lock)
+                counter += 1
+                continue
+            return StaticPathClaim(candidate, lock, relative_key)
+        except Exception:
+            _discard_unused_static_entry_claim_lock(relative_key, lock)
+            raise
+
+
+def claim_static_path_for_mutation(path: Path) -> StaticPathClaim:
+    """Reserve a static path for delete/rename/update/restore operations."""
+    candidate = path.resolve()
+    relative_key = _static_relative_key_from_path(candidate)
+    lock = _get_static_entry_claim_lock(relative_key)
+    lock.acquire()
+    try:
+        with STATIC_ENTRY_CLAIM_GUARD:
+            if relative_key in STATIC_ENTRY_CLAIMED:
+                raise StaticPathClaimUnavailable(relative_key)
+            STATIC_ENTRY_CLAIMED.add(relative_key)
+            return StaticPathClaim(candidate, lock, relative_key)
+    except StaticPathClaimUnavailable:
+        lock.release()
+        raise
+    except Exception:
+        lock.release()
+        raise
+
+
+@contextmanager
+def _acquire_static_json_path_operations(*path_specs: Tuple[Path, str]):
+    """Acquire namespace claims and JSON write locks in a consistent global order."""
+    if not path_specs:
+        yield []
+        return
+
+    ordered_specs = sorted(
+        path_specs,
+        key=lambda item: _static_relative_key_from_path(item[0].resolve()),
+    )
+    claims: List[StaticPathClaim] = []
+    try:
+        for path, mode in ordered_specs:
+            resolved = path.resolve()
+            if mode == 'mutate':
+                claims.append(claim_static_path_for_mutation(resolved))
+            elif mode == 'exact_create':
+                claims.append(claim_exact_static_path(resolved.parent, resolved.name))
+            else:
+                raise ValueError(f'unsupported static path operation mode: {mode}')
+        with _acquire_static_json_locks(*[claim.path for claim in claims]):
+            yield claims
+    finally:
+        for claim in reversed(claims):
+            claim.release()
+
+
+def _rollback_import_writes(written_paths: List[Path]) -> None:
+    """Remove files written during a failed import attempt."""
+    for path in reversed(written_paths):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def claim_static_resource_write(path: Path) -> StaticPathClaim:
+    """Reserve a static-relative path for create-or-overwrite resource writes."""
+    resolved = path.resolve()
+    relative_key = _static_relative_key_from_path(resolved)
+    with STATIC_ENTRY_CLAIM_GUARD:
+        if relative_key in STATIC_ENTRY_CLAIMED:
+            raise StaticPathClaimUnavailable(relative_key)
+    if resolved.exists():
+        return claim_static_path_for_mutation(resolved)
+    return claim_exact_static_path(resolved.parent, resolved.name)
+
+
+async def _commit_upload_to_path(
+    upload: Union[FileStorageAdapter, UploadFile],
+    target_path: Path,
+    *,
+    with_meta: bool = False,
+) -> Tuple[Optional[int], Optional[str]]:
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='wb',
+            dir=str(target_path.parent),
+            prefix=f'.{target_path.stem}.',
+            suffix='.tmp',
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+        if with_meta:
+            size, checksum = await save_upload_file_with_meta(upload, temp_path)
+        else:
+            await save_upload_file(upload, temp_path)
+            size, checksum = None, None
+        os.replace(temp_path, target_path)
+        temp_path = None
+        return size, checksum
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+async def write_uploaded_static_resource(
+    upload: Union[FileStorageAdapter, UploadFile],
+    target_path: Path,
+    *,
+    with_meta: bool = False,
+) -> Tuple[Optional[int], Optional[str]]:
+    claim = claim_static_resource_write(target_path)
+    try:
+        return await _commit_upload_to_path(upload, target_path, with_meta=with_meta)
+    finally:
+        claim.release()
+
+
+def write_static_resource_bytes(target_path: Path, payload: bytes) -> None:
+    claim = claim_static_resource_write(target_path)
+    try:
+        _write_bytes_atomically(target_path, payload)
+    finally:
+        claim.release()
+
+
+def write_static_resource_text(target_path: Path, text: str, *, encoding: str = 'utf-8') -> None:
+    claim = claim_static_resource_write(target_path)
+    try:
+        _write_text_atomically(target_path, text, encoding=encoding)
+    finally:
+        claim.release()
+
+
+def _write_songs_resource_text_with_claim(
+    target_path: Path,
+    text: str,
+    *,
+    encoding: str = 'utf-8',
+) -> Dict[str, Any]:
+    """Claim a songs resource path, backup existing content, and atomically write text."""
+    claim = claim_static_resource_write(target_path)
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_warning = _backup_songs_resource_file(target_path)
+        _write_text_atomically(target_path, text, encoding=encoding)
+        if backup_warning:
+            return {'backupWarning': backup_warning}
+        return {}
+    finally:
+        claim.release()
+
+
+def _copy_bytes_to_static_path(source_path: Path, target_path: Path) -> None:
+    """Atomically copy bytes into a path that is already claimed for write."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(source_path, 'rb') as source_file:
+        _copy_fileobj_atomically(source_file, target_path)
+
+
+DISK_SNAPSHOT_DIR = BASE_PATH / '.runtime' / 'disk-snapshots'
+DISK_SNAPSHOT_SESSION_TTL_SECONDS = 6 * 3600
+DISK_SNAPSHOT_SESSION_MANIFEST = '.session.json'
+_DISK_SNAPSHOT_SESSION_DIR: Optional[Path] = None
+_DISK_SNAPSHOT_SESSION_TOKEN = f'{os.getpid()}-{time.time_ns()}'
+
+
+def _read_snapshot_session_manifest(session_dir: Path) -> Optional[Dict[str, Any]]:
+    manifest_path = session_dir / DISK_SNAPSHOT_SESSION_MANIFEST
+    if not manifest_path.exists():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding='utf-8'))
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _should_remove_snapshot_session(
+    session_dir: Path,
+    now: float,
+    *,
+    pid_probe=None,
+) -> bool:
+    if session_dir.name == _DISK_SNAPSHOT_SESSION_TOKEN:
+        return False
+    manifest = _read_snapshot_session_manifest(session_dir)
+    if manifest:
+        last_touch = float(manifest.get('heartbeat') or manifest.get('started_at') or 0.0)
+    else:
+        try:
+            last_touch = session_dir.stat().st_mtime
+        except OSError:
+            last_touch = 0.0
+    if now - last_touch <= DISK_SNAPSHOT_SESSION_TTL_SECONDS:
+        return False
+    if manifest:
+        pid = int(manifest.get('pid') or -1)
+        probe = pid_probe if pid_probe is not None else _is_process_running
+        if probe(pid):
+            return False
+    return True
+
+
+def _write_snapshot_session_manifest(session_dir: Path) -> None:
+    manifest = {
+        'pid': os.getpid(),
+        'token': _DISK_SNAPSHOT_SESSION_TOKEN,
+        'started_at': time.time(),
+        'heartbeat': time.time(),
+    }
+    manifest_path = session_dir / DISK_SNAPSHOT_SESSION_MANIFEST
+    manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+
+
+def _touch_snapshot_session_heartbeat(session_dir: Path) -> None:
+    manifest = _read_snapshot_session_manifest(session_dir) or {
+        'pid': os.getpid(),
+        'token': _DISK_SNAPSHOT_SESSION_TOKEN,
+        'started_at': time.time(),
+    }
+    manifest['pid'] = os.getpid()
+    manifest['heartbeat'] = time.time()
+    (session_dir / DISK_SNAPSHOT_SESSION_MANIFEST).write_text(
+        json.dumps(manifest),
+        encoding='utf-8',
+    )
+
+
+def _cleanup_current_disk_snapshot_session_on_exit() -> None:
+    global _DISK_SNAPSHOT_SESSION_DIR
+    session_dir = _DISK_SNAPSHOT_SESSION_DIR
+    if session_dir is None or not session_dir.exists():
+        return
+    try:
+        for entry in session_dir.iterdir():
+            if not entry.is_file():
+                return
+            if entry.name == DISK_SNAPSHOT_SESSION_MANIFEST:
+                continue
+            return
+        shutil.rmtree(session_dir, ignore_errors=True)
+    except OSError as exc:
+        app.logger.warning('failed to cleanup disk snapshot session on exit %s: %s', session_dir, exc)
+    finally:
+        _DISK_SNAPSHOT_SESSION_DIR = None
+
+
+atexit.register(_cleanup_current_disk_snapshot_session_on_exit)
+
+
+def _cleanup_stale_disk_snapshot_sessions() -> None:
+    if not DISK_SNAPSHOT_DIR.exists():
+        return
+    now = time.time()
+    pid_cache: Dict[int, bool] = {}
+
+    def pid_probe(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        cached = pid_cache.get(pid)
+        if cached is not None:
+            return cached
+        alive = _is_process_running(pid)
+        pid_cache[pid] = alive
+        return alive
+
+    for child in DISK_SNAPSHOT_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        if not _should_remove_snapshot_session(child, now, pid_probe=pid_probe):
+            continue
+        try:
+            shutil.rmtree(child, ignore_errors=True)
+        except OSError as exc:
+            app.logger.warning('failed to cleanup stale disk snapshot session %s: %s', child, exc)
+
+
+def _initialize_disk_snapshot_runtime(*, force: bool = False) -> None:
+    global _DISK_SNAPSHOT_SESSION_DIR
+    if _DISK_SNAPSHOT_SESSION_DIR is not None and not force:
+        if _DISK_SNAPSHOT_SESSION_DIR.exists():
+            _touch_snapshot_session_heartbeat(_DISK_SNAPSHOT_SESSION_DIR)
+            return
+        _DISK_SNAPSHOT_SESSION_DIR = None
+    _cleanup_stale_disk_snapshot_sessions()
+    session_dir = DISK_SNAPSHOT_DIR / _DISK_SNAPSHOT_SESSION_TOKEN
+    session_dir.mkdir(parents=True, exist_ok=True)
+    _write_snapshot_session_manifest(session_dir)
+    _DISK_SNAPSHOT_SESSION_DIR = session_dir
+
+
+def _disk_snapshot_directory() -> Path:
+    global _DISK_SNAPSHOT_SESSION_DIR
+    if _DISK_SNAPSHOT_SESSION_DIR is None or not _DISK_SNAPSHOT_SESSION_DIR.exists():
+        _DISK_SNAPSHOT_SESSION_DIR = None
+        _initialize_disk_snapshot_runtime(force=True)
+    else:
+        _touch_snapshot_session_heartbeat(_DISK_SNAPSHOT_SESSION_DIR)
+    assert _DISK_SNAPSHOT_SESSION_DIR is not None
+    return _DISK_SNAPSHOT_SESSION_DIR
+
+
+def _create_disk_snapshot(path: Path) -> Optional[Path]:
+    """Create a streaming on-disk copy of path for rollback. Returns None if path is missing."""
+    if not path.exists():
+        return None
+    suffix = path.suffix if path.suffix else '.tmp'
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f'snap-{path.stem}.',
+        suffix=f'{suffix}.tmp',
+        dir=str(_disk_snapshot_directory()),
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        shutil.copyfile(path, tmp_path)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return tmp_path
+
+
+def _restore_target_from_disk_snapshot(path: Path, snapshot: Optional[Path]) -> None:
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(snapshot, 'rb') as snapshot_file:
+        _copy_fileobj_atomically(snapshot_file, path)
+
+
+def _cleanup_disk_snapshot_files(snapshots: Iterable[Path]) -> None:
+    for snap in snapshots:
+        try:
+            snap.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _rollback_disk_snapshots(snapshots: Dict[Path, Optional[Path]]) -> None:
+    for path in sorted(
+        snapshots.keys(),
+        key=lambda item: _static_relative_key_from_path(item.resolve()),
+        reverse=True,
+    ):
+        try:
+            _restore_target_from_disk_snapshot(path, snapshots.get(path))
+        except OSError:
+            app.logger.error('restore rollback failed for %s', path, exc_info=True)
+
+
+def _atomic_commit_text_targets(writes: Sequence[Tuple[Path, str]]) -> None:
+    """Commit multiple text targets with rollback on partial failure."""
+    snapshots: Dict[Path, Optional[Path]] = {}
+    owned_snapshots: List[Path] = []
+    committed: List[Path] = []
+    try:
+        for path, _ in writes:
+            snap = _create_disk_snapshot(path)
+            snapshots[path] = snap
+            if snap is not None:
+                owned_snapshots.append(snap)
+        for path, text in writes:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text_atomically(path, text)
+            committed.append(path)
+    except Exception:
+        for path in reversed(committed):
+            _restore_target_from_disk_snapshot(path, snapshots.get(path))
+        raise
+    finally:
+        _cleanup_disk_snapshot_files(owned_snapshots)
+
+
+def copy_static_resource_from_path(source_path: Path, target_path: Path) -> None:
+    claim = claim_static_resource_write(target_path)
+    try:
+        with open(source_path, 'rb') as source_file:
+            _copy_fileobj_atomically(source_file, target_path)
+    finally:
+        claim.release()
+
+
+def _backup_songs_resource_file(file_path: Path) -> Optional[str]:
+    """Create a timestamped backup for a songs/ resource. Returns a warning message on failure."""
+    if not file_path.exists():
+        return None
+    try:
+        if not BACKUP_DIR.exists():
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+        backups = iter_backup_files(file_path)
+        for old_backup in backups[6:]:
+            try:
+                old_backup.unlink()
+            except OSError:
+                continue
+
+        backup_path = allocate_unique_backup_path(file_path)
+        shutil.copy2(file_path, backup_path)
+        return None
+    except Exception as exc:
+        app.logger.error(
+            'backup failed for %s: %s',
+            file_path,
+            exc,
+            exc_info=True,
+        )
+        return '备份过程中出现错误，可能无法创建新的备份。'
+
+
+def _song_index_warning_fields(
+    path: Optional[Path] = None,
+    *,
+    rebuild_full: bool = False,
+) -> Dict[str, Any]:
+    try:
+        if rebuild_full:
+            rebuild_song_search_index_full()
+        elif path is not None:
+            upsert_song_search_index_for_path(path)
+        return {}
+    except Exception as exc:
+        app.logger.error('song search index update failed: %s', exc, exc_info=True)
+        return {
+            'indexWarning': (
+                '搜索索引更新失败，请稍后调用 POST /internal/rebuild_song_search_index 修复索引。'
+            ),
+            'indexRepairRequired': True,
+            'indexError': str(exc),
+        }
+
+
+def _song_index_remove_warning_fields(filename: str) -> Dict[str, Any]:
+    try:
+        remove_song_search_index_entry(filename)
+        return {}
+    except Exception as exc:
+        app.logger.error(
+            'song search index remove failed for %s: %s',
+            filename,
+            exc,
+            exc_info=True,
+        )
+        return {
+            'indexWarning': (
+                '搜索索引删除失败，请稍后调用 POST /internal/rebuild_song_search_index 修复索引。'
+            ),
+            'indexRepairRequired': True,
+            'indexError': str(exc),
+        }
+
+
+def _song_index_reconcile_deleted_filename(filename: str) -> Dict[str, Any]:
+    """Remove index only when the JSON file is actually gone; otherwise refresh it."""
+    key = Path(str(filename)).name
+    json_path = (STATIC_DIR / key).resolve()
+    try:
+        json_path.relative_to(STATIC_DIR.resolve())
+    except ValueError:
+        return _song_index_remove_warning_fields(key)
+    try:
+        with _song_search_index_lock:
+            _reconcile_deleted_song_json_index_locked(json_path)
+        return {}
+    except Exception as exc:
+        app.logger.error(
+            'song search index reconcile failed for %s: %s',
+            key,
+            exc,
+            exc_info=True,
+        )
+        return {
+            'indexWarning': (
+                '搜索索引更新失败，请稍后调用 POST /internal/rebuild_song_search_index 修复索引。'
+            ),
+            'indexRepairRequired': True,
+            'indexError': str(exc),
+        }
+
+
+def _merge_warning_fields(*parts: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    messages: List[str] = []
+    errors: List[str] = []
+    repair_required = False
+    for part in parts:
+        if not part:
+            continue
+        for key in ('indexWarning', 'backupWarning', 'message'):
+            value = part.get(key)
+            if value:
+                messages.append(str(value))
+        index_error = part.get('indexError')
+        if index_error:
+            errors.append(str(index_error))
+        if part.get('indexRepairRequired'):
+            repair_required = True
+    if messages:
+        merged['indexWarning'] = '\n'.join(dict.fromkeys(messages))
+    if errors:
+        merged['indexError'] = errors[-1]
+    if repair_required or messages:
+        merged['indexRepairRequired'] = True
+    return merged
+
+
+def _song_index_rename_warning_fields(old_filename: str, new_path: Path) -> Dict[str, Any]:
+    parts: List[Dict[str, Any]] = []
+    if old_filename.lower() != new_path.name.lower():
+        parts.append(_song_index_reconcile_deleted_filename(old_filename))
+    parts.append(_song_index_warning_fields(new_path))
+    return _merge_warning_fields(*parts)
+
+
+@contextmanager
+def _acquire_resource_write_claims(paths: Iterable[Path]):
+    """Acquire static resource write claims for multiple paths in stable order."""
+    unique_paths = sorted({Path(path).resolve() for path in paths}, key=_static_relative_key_from_path)
+    claims: List[StaticPathClaim] = []
+    try:
+        for path in unique_paths:
+            claims.append(claim_static_resource_write(path))
+        yield claims
+    finally:
+        for claim in reversed(claims):
+            claim.release()
+
+
+def plan_import_target_path(target_path: Path, reserved_paths: Set[str]) -> Tuple[Path, bool]:
+    """Plan a non-conflicting import target within a single archive."""
+    relative_key = _static_relative_key_from_path(target_path)
+    if not target_path.exists() and relative_key not in reserved_paths:
+        reserved_paths.add(relative_key)
+        return target_path, False
+
+    stem = target_path.stem
+    suffix = target_path.suffix
+    counter = 1
+    while True:
+        candidate = target_path.with_name(f"{stem}_imported_{counter}{suffix}")
+        candidate_key = _static_relative_key_from_path(candidate)
+        if not candidate.exists() and candidate_key not in reserved_paths:
+            reserved_paths.add(candidate_key)
+            return candidate, True
+        counter += 1
+
+
 def _write_json_atomically(target_path: Path, payload: Any) -> None:
     """Write JSON data to disk via temp file replacement."""
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3279,7 +5099,412 @@ def _write_json_atomically(target_path: Path, payload: Any) -> None:
                 pass
         raise
 
-# 配置日志
+
+def _write_bytes_atomically(target_path: Path, data: bytes) -> None:
+    """Write binary data to disk via temp file replacement."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='wb',
+            dir=str(target_path.parent),
+            prefix=f'.{target_path.stem}.',
+            suffix='.tmp',
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(data)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, target_path)
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _write_text_atomically(target_path: Path, text: str, *, encoding: str = 'utf-8') -> None:
+    """Write text data to disk via temp file replacement."""
+    _write_bytes_atomically(target_path, text.encode(encoding))
+
+
+def _copy_fileobj_atomically(source, target_path: Path) -> None:
+    """Copy a readable stream to disk via temp file replacement."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='wb',
+            dir=str(target_path.parent),
+            prefix=f'.{target_path.stem}.',
+            suffix='.tmp',
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            shutil.copyfileobj(source, temp_file)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, target_path)
+    except Exception:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+class StaticJsonConflictError(Exception):
+    """Raised when optimistic concurrency check fails for a song JSON file."""
+
+    def __init__(self, current_hash: str):
+        self.current_hash = current_hash
+        super().__init__('version conflict')
+
+
+_BACKUP_PATH_SEQUENCE = 0
+_BACKUP_PATH_SEQUENCE_GUARD = threading.Lock()
+
+BATCH_IMAGE_PATH_FILE_TYPES = frozenset({
+    'image',
+    'background',
+    'dynamicCover',
+    'dynamicCoverPoster',
+})
+
+_IMAGE_PATH_EXTENSIONS = {
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.apng',
+}
+_VIDEO_PATH_EXTENSIONS = {'.mp4', '.webm', '.ogg', '.m4v', '.mov'}
+_BACKGROUND_PATH_EXTENSIONS = _IMAGE_PATH_EXTENSIONS | _VIDEO_PATH_EXTENSIONS
+
+
+def compute_static_json_content_hash(payload: Any) -> str:
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def read_static_json_file(json_path: Path) -> Dict[str, Any]:
+    with open(json_path, 'r', encoding='utf-8') as file:
+        payload = json.load(file)
+    if not isinstance(payload, dict):
+        raise ValueError('JSON 非对象')
+    return payload
+
+
+def allocate_unique_backup_path(target_path: Path) -> Path:
+    global _BACKUP_PATH_SEQUENCE
+    with _BACKUP_PATH_SEQUENCE_GUARD:
+        _BACKUP_PATH_SEQUENCE += 1
+        sequence = _BACKUP_PATH_SEQUENCE
+    timestamp_token = f'{time.time_ns()}_{sequence}'
+    candidate = build_backup_path(target_path, timestamp_token)
+    collision_index = 0
+    while candidate.exists():
+        collision_index += 1
+        candidate = build_backup_path(target_path, f'{timestamp_token}_{collision_index}')
+    return candidate
+
+
+def backup_static_json_file(json_path: Path) -> Optional[Path]:
+    if not json_path.exists():
+        return None
+    if not BACKUP_DIR.exists():
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    backup_path = allocate_unique_backup_path(json_path)
+    shutil.copy2(json_path, backup_path)
+    return backup_path
+
+
+def resolve_backup_restore_target(
+    original_name: str,
+    *,
+    backup_path: Optional[Path] = None,
+) -> Path:
+    """Map a backup identity back to its live target path under static/."""
+    if backup_path is not None:
+        return _resolve_validated_backup_restore_source(backup_path)
+
+    normalized = original_name.replace('\\', '/').strip().lstrip('/')
+    if not normalized:
+        raise ValueError('无效的备份文件名')
+    if '/' in normalized:
+        target = (STATIC_DIR / _normalize_relative_path(normalized)).resolve()
+        target.relative_to(STATIC_DIR.resolve())
+        return target
+
+    matches: List[Path] = []
+    static_root = STATIC_DIR.resolve()
+    if static_root.exists():
+        for candidate in static_root.rglob(normalized):
+            if not candidate.is_file():
+                continue
+            if candidate.name != Path(normalized).name:
+                continue
+            try:
+                matches.append(candidate.resolve())
+            except OSError:
+                continue
+    unique_matches = list(dict.fromkeys(matches))
+    if len(unique_matches) > 1:
+        raise BackupRestoreTargetAmbiguous(normalized, unique_matches)
+    if len(unique_matches) == 1:
+        return unique_matches[0]
+
+    suffix = Path(normalized).suffix.lower()
+    if suffix == '.json':
+        base_dir = static_root
+    else:
+        base_dir = SONGS_DIR.resolve()
+    target = (base_dir / normalized).resolve()
+    target.relative_to(static_root)
+    return target
+
+
+@contextmanager
+def _acquire_static_json_locks(*json_paths: Path):
+    ordered_paths = sorted({path.resolve() for path in json_paths}, key=lambda item: str(item).lower())
+    acquired_locks = [_get_static_json_write_lock(path) for path in ordered_paths]
+    for lock in acquired_locks:
+        lock.acquire()
+    try:
+        yield
+    finally:
+        for lock in reversed(acquired_locks):
+            lock.release()
+
+
+def mutate_static_json_file(
+    json_path: Path,
+    mutator,
+    *,
+    create_backup: bool = True,
+    expected_content_hash: Optional[str] = None,
+) -> Tuple[Dict[str, Any], str]:
+    with claim_static_path_for_mutation(json_path):
+        with _get_static_json_write_lock(json_path):
+            json_data = read_static_json_file(json_path)
+            current_hash = compute_static_json_content_hash(json_data)
+            if expected_content_hash and expected_content_hash != current_hash:
+                raise StaticJsonConflictError(current_hash)
+            if create_backup:
+                backup_static_json_file(json_path)
+            mutator(json_data)
+            if not json_path.exists():
+                raise StaticJsonConflictError('')
+            _write_json_atomically(json_path, json_data)
+            return json_data, compute_static_json_content_hash(json_data)
+
+
+def replace_static_json_file(
+    json_path: Path,
+    payload: Dict[str, Any],
+    *,
+    create_backup: bool = True,
+    expected_content_hash: Optional[str] = None,
+    require_content_hash: bool = True,
+) -> str:
+    if not isinstance(payload, dict):
+        raise ValueError('JSON 非对象')
+    with claim_static_path_for_mutation(json_path):
+        with _get_static_json_write_lock(json_path):
+            if not json_path.exists():
+                if require_content_hash:
+                    raise StaticJsonConflictError('')
+                _write_json_atomically(json_path, payload)
+                return compute_static_json_content_hash(payload)
+            if require_content_hash and not expected_content_hash:
+                raise ValueError('缺少 contentHash，请刷新后重试')
+            current_data = read_static_json_file(json_path)
+            current_hash = compute_static_json_content_hash(current_data)
+            if expected_content_hash and expected_content_hash != current_hash:
+                raise StaticJsonConflictError(current_hash)
+            if create_backup:
+                backup_static_json_file(json_path)
+            if not json_path.exists():
+                raise StaticJsonConflictError('')
+            _write_json_atomically(json_path, payload)
+            return compute_static_json_content_hash(payload)
+
+
+def _ensure_local_song_parent_directories(local_paths: Iterable[str]) -> None:
+    seen: Set[str] = set()
+    for relative_path in local_paths:
+        normalized = str(relative_path or '').replace('\\', '/').strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        local_path = SONGS_DIR / normalized
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _file_path_extension(path: str) -> str:
+    if not path:
+        return ''
+    candidate = urlparse(path).path if path.startswith(('http://', 'https://')) else path
+    return Path(candidate).suffix.lower()
+
+
+def _validate_batch_image_path_value(file_type: str, new_path: Optional[str]) -> None:
+    if not new_path:
+        return
+    extension = _file_path_extension(new_path)
+    if file_type in ('image', 'dynamicCoverPoster'):
+        if extension not in _IMAGE_PATH_EXTENSIONS:
+            raise ValueError(f'{file_type} 路径扩展名无效')
+    elif file_type == 'background':
+        if extension not in _BACKGROUND_PATH_EXTENSIONS:
+            raise ValueError('background 路径扩展名无效')
+    elif file_type == 'dynamicCover':
+        if extension not in (_IMAGE_PATH_EXTENSIONS | _VIDEO_PATH_EXTENSIONS):
+            raise ValueError('dynamicCover 路径扩展名无效')
+
+
+def _normalize_file_path_update_input(new_path: Optional[str]) -> Tuple[bool, str]:
+    is_url = bool(new_path and (new_path.startswith('http://') or new_path.startswith('https://')))
+    normalized_new_path = ''
+    if new_path:
+        if is_url:
+            normalized_new_path = new_path
+        else:
+            normalized_new_path = _normalize_relative_path(new_path)
+    return is_url, normalized_new_path
+
+
+def _apply_file_path_update_to_json_data(
+    json_data: Dict[str, Any],
+    file_type: str,
+    new_path: Optional[str],
+    *,
+    lyrics_index: Optional[int] = None,
+) -> Tuple[bool, str]:
+    is_url, normalized_new_path = _normalize_file_path_update_input(new_path)
+
+    if file_type == 'music':
+        if is_url:
+            json_data['song'] = normalized_new_path
+        else:
+            json_data['song'] = build_public_url('songs', normalized_new_path)
+    elif file_type == 'image':
+        if is_url:
+            json_data['meta']['albumImgSrc'] = normalized_new_path
+        else:
+            json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
+    elif file_type == 'background':
+        meta = json_data.setdefault('meta', {})
+        if new_path:
+            if is_url:
+                meta['Background-image'] = normalized_new_path
+            else:
+                normalized_background_path = normalized_new_path
+                if normalized_background_path.startswith('songs/'):
+                    normalized_background_path = normalized_background_path[len('songs/'):]
+                meta['Background-image'] = f'./songs/{normalized_background_path}' if normalized_background_path else ''
+        else:
+            meta['Background-image'] = ''
+    elif file_type == 'dynamicCover':
+        meta = json_data.setdefault('meta', {})
+        if new_path:
+            if is_url:
+                meta['dynamicCoverSrc'] = normalized_new_path
+            else:
+                normalized_dynamic_path = normalized_new_path
+                if normalized_dynamic_path.startswith('songs/'):
+                    normalized_dynamic_path = normalized_dynamic_path[len('songs/'):]
+                meta['dynamicCoverSrc'] = f'./songs/{normalized_dynamic_path}' if normalized_dynamic_path else ''
+        else:
+            meta['dynamicCoverSrc'] = ''
+    elif file_type == 'dynamicCoverPoster':
+        meta = json_data.setdefault('meta', {})
+        if new_path:
+            if is_url:
+                meta['dynamicCoverPoster'] = normalized_new_path
+            else:
+                normalized_poster_path = normalized_new_path
+                if normalized_poster_path.startswith('songs/'):
+                    normalized_poster_path = normalized_poster_path[len('songs/'):]
+                meta['dynamicCoverPoster'] = f'./songs/{normalized_poster_path}' if normalized_poster_path else ''
+        else:
+            meta['dynamicCoverPoster'] = ''
+    elif file_type == 'lyrics':
+        current_lyrics = json_data['meta']['lyrics'].split('::')
+        if len(current_lyrics) >= 4:
+            if lyrics_index == 0:
+                if is_url:
+                    new_lyrics_path = normalized_new_path if new_path else '!'
+                else:
+                    new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                current_lyrics[1] = new_lyrics_path
+            elif lyrics_index == 1:
+                if is_url:
+                    new_translation_path = normalized_new_path if new_path else '!'
+                else:
+                    new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                current_lyrics[2] = new_translation_path
+            elif lyrics_index == 2:
+                if is_url:
+                    new_transliteration_path = normalized_new_path if new_path else '!'
+                else:
+                    new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
+                current_lyrics[3] = new_transliteration_path
+            json_data['meta']['lyrics'] = '::'.join(current_lyrics)
+    else:
+        raise ValueError(f'不支持的文件类型: {file_type}')
+
+    return is_url, normalized_new_path
+
+
+def apply_batch_image_path_updates(
+    json_path: Path,
+    updates: List[Dict[str, Any]],
+    *,
+    expected_content_hash: Optional[str] = None,
+) -> Tuple[Dict[str, Any], str, List[str]]:
+    if not updates:
+        raise ValueError('updates 不能为空')
+    if not expected_content_hash:
+        raise ValueError('缺少 expectedContentHash，请刷新后重试')
+
+    normalized_updates: List[Tuple[str, Optional[str], Optional[int]]] = []
+    applied_fields: List[str] = []
+    local_paths_to_create: List[str] = []
+
+    for item in updates:
+        file_type = item.get('fileType')
+        if file_type not in BATCH_IMAGE_PATH_FILE_TYPES:
+            raise ValueError(f'不支持的批量字段: {file_type}')
+        new_path = item.get('newPath')
+        _validate_batch_image_path_value(file_type, new_path)
+        try:
+            is_url, normalized_new_path = _normalize_file_path_update_input(new_path)
+        except ValueError as exc:
+            raise ValueError(f'{file_type} 路径包含非法字符') from exc
+        if normalized_new_path and not is_url:
+            local_paths_to_create.append(normalized_new_path)
+        normalized_updates.append((file_type, new_path, item.get('index')))
+
+    def _mutator(json_data: Dict[str, Any]) -> None:
+        json_data.setdefault('meta', {})
+        for file_type, new_path, lyrics_index in normalized_updates:
+            _apply_file_path_update_to_json_data(
+                json_data,
+                file_type,
+                new_path,
+                lyrics_index=lyrics_index,
+            )
+            applied_fields.append(file_type)
+
+    payload, content_hash = mutate_static_json_file(
+        json_path,
+        _mutator,
+        expected_content_hash=expected_content_hash,
+    )
+    _ensure_local_song_parent_directories(local_paths_to_create)
+    return payload, content_hash, applied_fields
+
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
 log_handler = TimedRotatingFileHandler(os.path.join(LOG_DIR, 'upload.log'),
                                        when='midnight',
@@ -5986,93 +8211,126 @@ def qe_register_doc(doc: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) 
     return doc
 
 
+def _write_ttml_file_to_claimed_outputs(
+    source_ttml_path: Path,
+    target_lys_path: Path,
+    target_trans_path: Path,
+) -> bool:
+    """Convert TTML on disk into already-claimed LYS / translation targets."""
+    with open(source_ttml_path, 'r', encoding='utf-8', errors='ignore') as handle:
+        raw_ttml = handle.read()
+    ok, lys_parts, trans_parts, err = ttml_text_to_lys_parts(raw_ttml)
+    if not ok or not lys_parts:
+        raise ValueError(err or 'TTML 转换失败，无法生成 LYS')
+    writes: List[Tuple[Path, str]] = [
+        (target_lys_path, "\n".join(lys_parts) + "\n"),
+    ]
+    has_trans = bool(trans_parts)
+    if has_trans:
+        writes.append((target_trans_path, "\n".join(trans_parts) + "\n"))
+    _atomic_commit_text_targets(writes)
+    return has_trans
+
+
 def ensure_lys_file_for_editor(source_path: Path, base_name: str) -> Tuple[Path, Optional[Path], bool]:
     """
     确保提供的歌词文件最终转为标准 LYS 文件并返回其路径。
     若源为 LRC/TTML 会自动转换，若缺失则创建空文件。
+    已有或缺失的 .lys 均保持 source_path 语义；仅 LRC/TTML 转换写入 JSON 同名的 base_name 目标。
     返回 (lyrics_path, translation_path_or_none, 是否发生变更)。
     """
-    changed = False
-    translation_path: Optional[Path] = None
-
     if not source_path.suffix:
         source_path = source_path.with_suffix('.lys')
 
-    if not source_path.exists():
-        if source_path.suffix.lower() == '.lys':
-            source_path.parent.mkdir(parents=True, exist_ok=True)
-            source_path.touch()
-            changed = True
-        else:
-            source_path = SONGS_DIR / f"{base_name}.lys"
-            source_path.parent.mkdir(parents=True, exist_ok=True)
-            if not source_path.exists():
-                source_path.touch()
-            changed = True
-
-    ext = source_path.suffix.lower()
-    if ext == '.lys':
-        lyrics_path = source_path
-    elif ext == '.ttml':
-        success, lyric_path, trans_path = ttml_to_lys(str(source_path), str(SONGS_DIR))
-        if not success or not lyric_path:
-            raise ValueError('TTML 转换失败，无法生成 LYS')
-        lyrics_path = Path(lyric_path)
-        translation_path = Path(trans_path) if trans_path else None
-        changed = True
-    elif ext == '.lrc':
-        ttml_temp = SONGS_DIR / f"{base_name}.ttml"
-        ttml_temp.parent.mkdir(parents=True, exist_ok=True)
-        success, error_msg = lrc_to_ttml(str(source_path), str(ttml_temp))
-        if not success:
-            raise ValueError(f"LRC 转换失败: {error_msg or '未知错误'}")
-        success, lyric_path, trans_path = ttml_to_lys(str(ttml_temp), str(SONGS_DIR))
-        if not success or not lyric_path:
-            raise ValueError('LRC 转换后的 TTML 转 LYS 失败')
-        lyrics_path = Path(lyric_path)
-        translation_path = Path(trans_path) if trans_path else None
-        changed = True
-        if ttml_temp.exists():
-            try:
-                ttml_temp.unlink()
-            except Exception:
-                pass
-    else:
-        lyrics_path = SONGS_DIR / f"{base_name}.lys"
-        lyrics_path.parent.mkdir(parents=True, exist_ok=True)
-        if not lyrics_path.exists():
-            lyrics_path.touch()
-            changed = True
-
     target_path = SONGS_DIR / f"{base_name}.lys"
-    if lyrics_path.resolve() != target_path.resolve():
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.exists():
-            backup_path = build_backup_path(target_path)
-            shutil.copy2(target_path, backup_path)
-        try:
-            shutil.move(str(lyrics_path), str(target_path))
-        except Exception:
-            shutil.copy2(lyrics_path, target_path)
-        lyrics_path = target_path
+    trans_target = SONGS_DIR / f"{base_name}_trans.lrc"
+    source_exists = source_path.exists()
+    ext = source_path.suffix.lower()
+
+    if source_exists and ext not in {'.lys', '.lrc', '.ttml'}:
+        raise QuickEditorUnsupportedLyricsFormat(
+            f'快速编辑器暂不支持 {ext or "未知"} 格式歌词，请使用 LYS/LRC/TTML。'
+        )
+
+    claim_paths: Set[Path] = set()
+    lyrics_result = target_path
+    changed = False
+    translation_path: Optional[Path] = None
+    created_by_run: Set[Path] = set()
+
+    def _mark_created(path: Path) -> None:
+        created_by_run.add(path.resolve())
+
+    def _cleanup_created_outputs() -> None:
+        for path in sorted(created_by_run, key=lambda item: str(item), reverse=True):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def _write_claimed_text(path: Path, text: str) -> None:
+        nonlocal changed
+        existed = path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_text_atomically(path, text)
+        if not existed:
+            _mark_created(path)
         changed = True
 
-    if translation_path:
-        trans_target = SONGS_DIR / f"{base_name}_trans.lrc"
-        if trans_target.resolve() != translation_path.resolve():
-            trans_target.parent.mkdir(parents=True, exist_ok=True)
-            if trans_target.exists():
-                backup_path = build_backup_path(trans_target)
-                shutil.copy2(trans_target, backup_path)
-            try:
-                shutil.move(str(translation_path), str(trans_target))
-            except Exception:
-                shutil.copy2(translation_path, trans_target)
-            translation_path = trans_target
-        else:
-            translation_path = trans_target
+    if ext == '.lys':
+        lyrics_result = source_path
+        if not source_exists:
+            claim_paths.add(source_path)
+    elif ext in {'.lrc', '.ttml'}:
+        lyrics_result = target_path
+        claim_paths.add(target_path)
+        if source_exists:
+            claim_paths.add(trans_target)
+    elif not source_exists:
+        lyrics_result = target_path
+        claim_paths.add(target_path)
 
-    return lyrics_path, translation_path, changed
+    try:
+        with _acquire_resource_write_claims(claim_paths):
+            if ext == '.lys':
+                if not source_exists and not source_path.exists():
+                    _write_claimed_text(source_path, '')
+            elif ext == '.ttml':
+                if source_exists:
+                    if _write_ttml_file_to_claimed_outputs(source_path, target_path, trans_target):
+                        translation_path = trans_target
+                    changed = True
+                elif not target_path.exists():
+                    _write_claimed_text(target_path, '')
+            elif ext == '.lrc':
+                if source_exists:
+                    fd, tmp_name = tempfile.mkstemp(
+                        suffix='.ttml',
+                        prefix=f'.qe-lrc-{base_name}.',
+                        dir=str(SONGS_DIR),
+                    )
+                    os.close(fd)
+                    ttml_temp = Path(tmp_name)
+                    try:
+                        success, error_msg = lrc_to_ttml(str(source_path), str(ttml_temp))
+                        if not success:
+                            raise ValueError(f"LRC 转换失败: {error_msg or '未知错误'}")
+                        if _write_ttml_file_to_claimed_outputs(ttml_temp, target_path, trans_target):
+                            translation_path = trans_target
+                        changed = True
+                    finally:
+                        ttml_temp.unlink(missing_ok=True)
+                elif not target_path.exists():
+                    _write_claimed_text(target_path, '')
+            elif not source_exists and not target_path.exists():
+                _write_claimed_text(target_path, '')
+
+            return lyrics_result, translation_path, changed
+    except StaticPathClaimUnavailable:
+        raise
+    except Exception:
+        _cleanup_created_outputs()
+        raise
 
 # ===== 解析.lys格式歌词的工具函数 =====
 def compute_disappear_times(lines, *, delta1=500, delta2=0, t_anim=None):
@@ -6759,7 +9017,12 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
     translation_relative = None
     json_changed = False
 
-    lyrics_path, trans_path, converted = ensure_lys_file_for_editor(lyrics_path, base_name)
+    try:
+        lyrics_path, trans_path, converted = ensure_lys_file_for_editor(lyrics_path, base_name)
+    except StaticPathClaimUnavailable:
+        return None, ('文件路径正在被其他操作占用，请稍后重试', 409)
+    except QuickEditorUnsupportedLyricsFormat as exc:
+        return None, (str(exc), 400)
     translation_relative = resource_relative_from_path(trans_path, 'songs') if trans_path else None
     json_changed = json_changed or converted
 
@@ -6787,15 +9050,13 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
     except Exception:
         song_url = song_url or ''
 
+    index_fields: Dict[str, Any] = {}
     if json_changed:
-        if not BACKUP_DIR.exists():
-            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-        backup_path = build_backup_path(json_path, int(time.time()))
-        if json_path.exists():
-            shutil.copy2(json_path, backup_path)
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=2)
-        upsert_song_search_index_for_path(json_path)
+        def _mutator(json_data: Dict[str, Any]) -> None:
+            json_data.setdefault('meta', {})['lyrics'] = new_meta_lyrics
+
+        mutate_static_json_file(json_path, _mutator)
+        index_fields = _song_index_warning_fields(json_path)
 
     try:
         with open(lyrics_path, 'r', encoding='utf-8') as f:
@@ -6814,7 +9075,7 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
     })
 
     payload = {
-        'status': 'success',
+        'status': 'warning' if index_fields else 'success',
         'doc': doc,
         'jsonFile': json_file,
         'lyricsPath': lyrics_url,
@@ -6822,8 +9083,9 @@ def quick_editor_load_payload(json_file: str) -> Tuple[Optional[Dict[str, Any]],
         'songUrl': song_url,
         'title': meta.get('title', ''),
         'artists': meta.get('artists', []),
-        'updatedJson': json_changed
+        'updatedJson': json_changed,
     }
+    payload.update(index_fields)
     return payload, None
 
 
@@ -7213,21 +9475,27 @@ def quick_editor_save():
     if not lyrics_path:
         return jsonify({'status': 'error', 'message': '当前文档缺少保存路径，请从管理页进入快速编辑'}), 400
 
-    lyrics_path.parent.mkdir(parents=True, exist_ok=True)
-    if lyrics_path.exists():
-        backup_path = build_backup_path(lyrics_path, int(time.time()))
-        shutil.copy2(lyrics_path, backup_path)
-
-    with open(lyrics_path, 'w', encoding='utf-8') as f:
-        f.write(qe_dump_lys(doc))
+    lyrics_content = qe_dump_lys(doc)
+    try:
+        backup_fields = _write_songs_resource_text_with_claim(
+            lyrics_path,
+            lyrics_content,
+            encoding='utf-8',
+        )
+    except StaticPathClaimUnavailable:
+        return jsonify({
+            'status': 'error',
+            'message': '文件路径正在被其他操作占用，请稍后重试',
+        }), 409
 
     json_path_hint = meta.get('json_path')
     if json_path_hint and Path(json_path_hint).is_file():
         related_json_paths = [str(Path(json_path_hint).resolve())]
     else:
         related_json_paths = find_related_json(str(lyrics_path))
+    index_fields: Dict[str, Any] = {}
     for jp in related_json_paths:
-        upsert_song_search_index_for_path(Path(jp))
+        index_fields.update(_song_index_warning_fields(Path(jp)))
 
     try:
         lyrics_relative = resource_relative_from_path(lyrics_path, 'songs')
@@ -7235,7 +9503,13 @@ def quick_editor_save():
     except Exception:
         lyrics_url = str(lyrics_path)
 
-    return jsonify({'status': 'success', 'lyricsPath': lyrics_url})
+    response = {
+        'status': 'warning' if (index_fields or backup_fields) else 'success',
+        'lyricsPath': lyrics_url,
+    }
+    response.update(backup_fields)
+    response.update(index_fields)
+    return jsonify(response)
 
 # Register a custom Jinja2 filter for the compatibility layer
 @app.template_filter('escape_js')
@@ -7255,20 +9529,47 @@ def backup_file():
     """
     if not is_request_allowed():
         return abort(403)
-    file_path = request.json.get('file_path')
+    raw_path = (request.json or {}).get('file_path')
+    if not raw_path:
+        return jsonify({'status': 'error', 'message': '缺少文件路径'}), 400
+    try:
+        if isinstance(raw_path, str) and (
+            raw_path.startswith('/static/')
+            or raw_path.startswith('static/')
+            or raw_path.startswith('/songs/')
+            or raw_path.startswith('songs/')
+        ):
+            resource = 'static' if raw_path.lstrip('/').startswith('static/') else 'songs'
+            target_path = resolve_resource_path(raw_path, resource)
+        else:
+            target_path = _coerce_static_target_path(Path(str(raw_path)))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': f'无法解析文件路径: {exc}'}), 400
+
+    if not target_path.exists() or not target_path.is_file():
+        return jsonify({'status': 'error', 'message': '目标文件不存在'}), 404
+
     if not BACKUP_DIR.exists():
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
-    backup_path = build_backup_path(Path(file_path), timestamp)
-    shutil.copy2(file_path, backup_path)
-    return jsonify({'status': 'success'})
+    claim = claim_static_resource_write(target_path)
+    try:
+        backup_path = allocate_unique_backup_path(target_path)
+        shutil.copy2(target_path, backup_path)
+    finally:
+        claim.release()
+    return jsonify({
+        'status': 'success',
+        'backup_path': backup_public_relative_path(backup_path),
+    })
 
 
 @app.route('/backup_client_state', methods=['POST'])
 def backup_client_state():
     if not is_request_allowed():
         return abort(403)
+    from subsonic import anchor_merge as _am
+
     payload = request.get_json(silent=True) or {}
     client_id = _sanitize_client_id(payload.get('client_id') or payload.get('clientId'))
     anchor_id = _sanitize_client_id(payload.get('anchor_id') or payload.get('anchorId'))
@@ -7278,41 +9579,131 @@ def backup_client_state():
     if not client_id and not anchor_id:
         return jsonify({'status': 'error', 'message': '缺少 client_id 或 anchor_id'}), 400
 
-    if anchor_id:
-        backup_dir = BACKUP_DIR / 'anchors'
-        filename = f"{anchor_id}.json"
-    else:
+    if not anchor_id:
+        # Pure client_id backups remain whole-file overwrite.
         backup_dir = BACKUP_DIR / 'clients'
         filename = f"{client_id}.json"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / filename
+        data = _normalize_backup_payload_data(data if isinstance(data, dict) else {})
+        payload['data'] = data
+        envelope = {
+            'client_id': client_id or None,
+            'anchor_id': None,
+            'saved_at': datetime.now().isoformat(),
+            'source': 'lyric-sphere-v2',
+            'payload': payload
+        }
+        try:
+            with _get_backup_write_lock(backup_path):
+                _write_json_atomically(backup_path, envelope)
+        except Exception as exc:
+            app.logger.exception(
+                "保存备份失败: client_id=%s path=%s",
+                client_id or '',
+                backup_path
+            )
+            return jsonify({'status': 'error', 'message': f'备份保存失败: {exc}'}), 500
+        try:
+            public_path = build_public_url('backups', f"clients/{client_id}.json")
+        except Exception:
+            public_path = str(backup_path)
+        return jsonify({
+            'status': 'success',
+            'message': '备份已保存',
+            'path': public_path,
+            'anchorId': None,
+        })
+
+    backup_dir = BACKUP_DIR / 'anchors'
+    filename = f"{anchor_id}.json"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / filename
-    data = _normalize_backup_payload_data(data)
-    payload['data'] = data
 
-    envelope = {
-        'client_id': client_id or None,
-        'anchor_id': anchor_id or None,
-        'saved_at': datetime.now().isoformat(),
-        'source': 'lyric-sphere-v2',
-        'payload': payload
-    }
     try:
         with _get_backup_write_lock(backup_path):
-            _write_json_atomically(backup_path, envelope)
+            file_exists = backup_path.is_file()
+            disk_data = {}
+            disk_revision = 0
+            content = None
+            if file_exists:
+                try:
+                    raw = backup_path.read_bytes()
+                    content = json.loads(raw.decode('utf-8'))
+                except Exception:
+                    return jsonify({'status': 'error', 'message': '备份文件损坏'}), 500
+                if not isinstance(content, dict):
+                    return jsonify({'status': 'error', 'message': '备份文件损坏'}), 500
+                disk_payload = content.get('payload')
+                if not isinstance(disk_payload, dict):
+                    return jsonify({'status': 'error', 'message': '备份文件损坏'}), 500
+                disk_data = disk_payload.get('data')
+                if not isinstance(disk_data, dict):
+                    return jsonify({'status': 'error', 'message': '备份文件损坏'}), 500
+                try:
+                    disk_revision = _am.get_revision(disk_data)
+                    _am.normalize_tombstone_map(disk_data.get('deletedPlaylistIds'))
+                    for item in (disk_data.get('playlists') or []):
+                        if isinstance(item, dict):
+                            _am.normalize_tombstone_map(item.get('removedTracks'))
+                except Exception:
+                    return jsonify({'status': 'error', 'message': '备份文件损坏：同步元数据非法'}), 500
+                if disk_revision >= _am.MAX_SAFE_INTEGER:
+                    return jsonify({
+                        'status': 'error',
+                        'message': 'revision exhausted',
+                    }), 409
+
+            try:
+                incoming = _am.validate_incoming_backup_data(
+                    data if isinstance(data, dict) else {},
+                    disk_revision=disk_revision if file_exists else None,
+                    file_exists=file_exists,
+                )
+            except _am.IncomingValidationError as exc:
+                return jsonify({'status': 'error', 'message': str(exc)}), 400
+
+            if not file_exists:
+                merged = dict(incoming)
+                changed = True
+                disk_revision = 0
+            else:
+                merged, changed = _am.apply_lyricsphere_snapshot(disk_data, incoming)
+
+            if changed:
+                try:
+                    _am.finalize_changed_data(merged, disk_revision)
+                except _am.RevisionExhaustedError:
+                    return jsonify({'status': 'error', 'message': 'revision exhausted'}), 409
+                merged = _normalize_backup_payload_data(merged)
+                saved_at = datetime.now().isoformat()
+                envelope = {
+                    'client_id': client_id or (content.get('client_id') if isinstance(content, dict) else None),
+                    'anchor_id': anchor_id,
+                    'saved_at': saved_at,
+                    'source': 'lyric-sphere-v2',
+                    'payload': {
+                        **(content.get('payload') if isinstance(content, dict) and isinstance(content.get('payload'), dict) else {}),
+                        'data': merged,
+                    },
+                }
+                _write_json_atomically(backup_path, envelope)
+            else:
+                merged = _normalize_backup_payload_data(dict(disk_data) if file_exists else dict(incoming))
+                if file_exists and isinstance(content, dict):
+                    saved_at = content.get('saved_at')
+                else:
+                    saved_at = datetime.now().isoformat()
     except Exception as exc:
         app.logger.exception(
-            "保存备份失败: anchor_id=%s client_id=%s path=%s",
-            anchor_id or '',
-            client_id or '',
+            "保存锚点备份失败: anchor_id=%s path=%s",
+            anchor_id,
             backup_path
         )
         return jsonify({'status': 'error', 'message': f'备份保存失败: {exc}'}), 500
 
     try:
-        if anchor_id:
-            public_path = build_public_url('backups', f"anchors/{anchor_id}.json")
-        else:
-            public_path = build_public_url('backups', f"clients/{client_id}.json")
+        public_path = build_public_url('backups', f"anchors/{anchor_id}.json")
     except Exception:
         public_path = str(backup_path)
 
@@ -7320,7 +9711,10 @@ def backup_client_state():
         'status': 'success',
         'message': '备份已保存',
         'path': public_path,
-        'anchorId': anchor_id or None
+        'anchorId': anchor_id,
+        'savedAt': saved_at,
+        'changed': bool(changed),
+        'data': merged,
     })
 
 
@@ -7419,6 +9813,17 @@ def get_anchor_backup():
 
     payload = content.get('payload', {}) if isinstance(content, dict) else {}
     data = payload.get('data', {}) if isinstance(payload, dict) else {}
+    if not isinstance(data, dict):
+        return jsonify({'status': 'error', 'message': '备份文件损坏：data 非法'}), 500
+    try:
+        from subsonic import anchor_merge as _am
+        _am.get_revision(data)
+        _am.normalize_tombstone_map(data.get('deletedPlaylistIds'))
+        for item in (data.get('playlists') or []):
+            if isinstance(item, dict):
+                _am.normalize_tombstone_map(item.get('removedTracks'))
+    except Exception:
+        return jsonify({'status': 'error', 'message': '备份文件损坏：同步元数据非法'}), 500
     data = _normalize_backup_payload_data(data)
 
     return jsonify({
@@ -7449,35 +9854,27 @@ def delete_json():
         delete_backup_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        if json_path.exists():
-            # 备份JSON文件
-            relative_path = json_path.relative_to(BASE_PATH)
-            backup_path = delete_backup_dir / f"{str(relative_path).replace('/', '__')}.{timestamp}"
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(json_path, backup_path)
+        try:
+            with _acquire_static_json_path_operations((json_path, 'mutate')):
+                if not json_path.exists():
+                    return jsonify({'status': 'success'})
 
-            # 删除JSON文件
-            json_path.unlink()
-            deleted_name = json_path.name
-            try:
-                remove_song_search_index_entry(deleted_name)
-            except Exception as exc:
-                app.logger.error(
-                    'song search index: remove after delete failed for %s: %s',
-                    deleted_name,
-                    exc,
-                    exc_info=True,
-                )
-                return jsonify({
-                    'status': 'error',
-                    'message': (
-                        '歌曲 JSON 已删除，但搜索索引更新失败；请稍后重试或调用 '
-                        'POST /internal/rebuild_song_search_index 修复索引。'
-                        f' 详情: {exc}'
-                    ),
-                }), 500
+                relative_path = _path_relative_to_static(json_path)
+                backup_path = delete_backup_dir / f"{relative_path.replace('/', '__')}.{timestamp}"
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(json_path, backup_path)
+                json_path.unlink()
+                deleted_name = json_path.name
+        except StaticPathClaimUnavailable:
+            return jsonify({
+                'status': 'error',
+                'message': '文件正在被其他操作占用，请稍后重试',
+            }), 409
 
-        return jsonify({'status': 'success'})
+        index_fields = _song_index_reconcile_deleted_filename(deleted_name)
+        response = {'status': 'warning' if index_fields else 'success'}
+        response.update(index_fields)
+        return jsonify(response)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -7693,12 +10090,14 @@ def import_static_bundle():
     imported_jsons: List[str] = []
     imported_assets = 0
     renamed_files: List[str] = []
+    skipped: List[Dict[str, str]] = []
+
+    claims: List[StaticPathClaim] = []
+    written_paths: List[Path] = []
 
     try:
         with zipfile.ZipFile(buffer) as archive:
-            entries: List[Tuple[zipfile.ZipInfo, str, Path, bool]] = []
-            reserved_paths: Set[str] = set()
-            rename_map: Dict[str, str] = {}
+            scanned_entries: List[Tuple[zipfile.ZipInfo, str, Path, bool]] = []
 
             for info in archive.infolist():
                 if info.is_dir():
@@ -7720,6 +10119,7 @@ def import_static_bundle():
                 try:
                     relative_path = _normalize_relative_path(normalized)
                 except ValueError:
+                    skipped.append({'path': normalized, 'reason': 'invalid_path'})
                     continue
 
                 lower_relative = relative_path.lower()
@@ -7730,53 +10130,257 @@ def import_static_bundle():
                 else:
                     continue
 
-                target_path.parent.mkdir(parents=True, exist_ok=True)
                 is_json_file = target_path.suffix.lower() == '.json'
-                resolved_path, renamed = _resolve_import_target(target_path, reserved_paths)
-                resolved_relative = str(resolved_path.relative_to(STATIC_DIR)).replace('\\', '/')
-                if renamed:
-                    rename_map[relative_path] = resolved_relative
-                    renamed_files.append(resolved_relative)
+                scanned_entries.append((info, relative_path, target_path, is_json_file))
 
-                entries.append((info, relative_path, resolved_path, is_json_file))
+            json_entries: List[Dict[str, Any]] = []
+            asset_entries: List[Tuple[zipfile.ZipInfo, str, Path]] = []
 
-            for info, relative_path, target_path, is_json_file in entries:
-                with archive.open(info) as source:
-                    if is_json_file:
-                        raw = source.read()
-                        try:
-                            payload = json.loads(raw.decode('utf-8'))
-                            if rename_map:
-                                payload = _replace_import_paths(payload, rename_map)
-                            with open(target_path, 'w', encoding='utf-8') as destination:
-                                json.dump(payload, destination, ensure_ascii=False, indent=2)
-                        except Exception:
-                            with open(target_path, 'wb') as destination:
-                                destination.write(raw)
-                        imported_jsons.append(target_path.name)
-                    else:
-                        with open(target_path, 'wb') as destination:
-                            shutil.copyfileobj(source, destination)
+            for info, relative_path, target_path, is_json_file in scanned_entries:
+                if is_json_file:
+                    raw = archive.read(info.filename)
+                    try:
+                        payload = json.loads(raw.decode('utf-8'))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        skipped.append({
+                            'path': relative_path,
+                            'reason': f'invalid_json: {exc}',
+                        })
+                        continue
+                    json_entries.append({
+                        'info': info,
+                        'relative_path': relative_path,
+                        'target_path': target_path,
+                        'payload': payload,
+                    })
+                else:
+                    asset_entries.append((info, relative_path, target_path))
+
+            if not json_entries:
+                return jsonify({
+                    'status': 'error',
+                    'message': '压缩包中未发现可导入的 JSON 文件',
+                    'skipped': skipped,
+                }), 400
+
+            json_entries.sort(key=lambda entry: entry['relative_path'].lower())
+            asset_entries.sort(key=lambda entry: entry[1].lower())
+
+            claim_plans: List[Dict[str, Any]] = []
+            final_rename_map: Dict[str, str] = {}
+
+            try:
+                for entry in json_entries:
+                    claim = claim_unique_static_path(
+                        entry['target_path'].parent,
+                        entry['target_path'].name,
+                        imported_suffix=True,
+                    )
+                    claims.append(claim)
+                    final_rel = _path_relative_to_static(claim.path)
+                    if final_rel != entry['relative_path']:
+                        final_rename_map[entry['relative_path']] = final_rel
+                        renamed_files.append(final_rel)
+                    claim_plans.append({
+                        'type': 'json',
+                        'info': entry['info'],
+                        'relative_path': entry['relative_path'],
+                        'claim': claim,
+                        'payload': entry['payload'],
+                    })
+
+                for info, relative_path, target_path in asset_entries:
+                    claim = claim_unique_static_path(
+                        target_path.parent,
+                        target_path.name,
+                        imported_suffix=True,
+                    )
+                    claims.append(claim)
+                    final_rel = _path_relative_to_static(claim.path)
+                    if final_rel != relative_path:
+                        final_rename_map[relative_path] = final_rel
+                        if final_rel not in renamed_files:
+                            renamed_files.append(final_rel)
+                    claim_plans.append({
+                        'type': 'asset',
+                        'info': info,
+                        'relative_path': relative_path,
+                        'claim': claim,
+                    })
+
+                for plan in claim_plans:
+                    if plan['type'] != 'asset':
+                        continue
+                    claim = plan['claim']
+                    try:
+                        with archive.open(plan['info'].filename) as source:
+                            _copy_fileobj_atomically(source, claim.path)
+                        written_paths.append(claim.path)
                         imported_assets += 1
+                    except Exception as exc:
+                        _rollback_import_writes(written_paths)
+                        app.logger.error(
+                            "导入资源写入失败 %s: %s",
+                            plan['relative_path'],
+                            exc,
+                            exc_info=True,
+                        )
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'资源写入失败: {plan["relative_path"]}',
+                            'skipped': skipped + [{
+                                'path': plan['relative_path'],
+                                'reason': f'write_failed: {exc}',
+                            }],
+                        }), 500
+
+                for plan in claim_plans:
+                    if plan['type'] != 'json':
+                        continue
+                    claim = plan['claim']
+                    payload = plan['payload']
+                    if final_rename_map:
+                        payload = _replace_import_paths(payload, final_rename_map)
+                    try:
+                        claim.path.parent.mkdir(parents=True, exist_ok=True)
+                        with _get_static_json_write_lock(claim.path):
+                            _write_json_atomically(claim.path, payload)
+                        written_paths.append(claim.path)
+                        imported_jsons.append(claim.path.name)
+                    except Exception as exc:
+                        _rollback_import_writes(written_paths)
+                        app.logger.error(
+                            "导入 JSON 写入失败 %s: %s",
+                            plan['relative_path'],
+                            exc,
+                            exc_info=True,
+                        )
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'JSON 写入失败: {plan["relative_path"]}',
+                            'skipped': skipped + [{
+                                'path': plan['relative_path'],
+                                'reason': f'write_failed: {exc}',
+                            }],
+                        }), 500
+            finally:
+                for claim in claims:
+                    claim.release()
 
     except zipfile.BadZipFile:
         return jsonify({'status': 'error', 'message': '文件不是有效的 ZIP 压缩包'}), 400
 
     if not imported_jsons:
-        return jsonify({'status': 'error', 'message': '压缩包中未发现 JSON 文件'}), 400
+        return jsonify({
+            'status': 'error',
+            'message': '压缩包中的 JSON 文件均未能成功导入',
+            'skipped': skipped,
+        }), 400
 
-    rebuild_song_search_index_full()
+    index_fields = _song_index_warning_fields(rebuild_full=True)
 
     message = f'导入完成。JSON: {len(imported_jsons)} 个，资源文件: {imported_assets} 个'
     if renamed_files:
         message += f'，重名处理: {len(renamed_files)} 个'
+    if skipped:
+        message += f'，跳过: {len(skipped)} 个'
 
-    return jsonify({
-        'status': 'success',
+    response = {
+        'status': 'warning' if index_fields else 'success',
         'message': message,
         'jsonFiles': imported_jsons,
-        'renamed': renamed_files
-    })
+        'renamed': renamed_files,
+        'skipped': skipped,
+    }
+    response.update(index_fields)
+    return jsonify(response)
+
+
+@contextmanager
+def _acquire_restore_path_claims(target_specs: List[Tuple[Path, str]]):
+    ordered = sorted(
+        target_specs,
+        key=lambda item: _static_relative_key_from_path(item[0].resolve()),
+    )
+    claims: List[StaticPathClaim] = []
+    json_paths: List[Path] = []
+    try:
+        for path, mode in ordered:
+            resolved = path.resolve()
+            if mode == 'json_mutate':
+                claims.append(claim_static_path_for_mutation(resolved))
+                json_paths.append(resolved)
+            elif mode == 'json_exact':
+                claims.append(claim_exact_static_path(resolved.parent, resolved.name))
+                json_paths.append(resolved)
+            elif mode == 'resource':
+                claims.append(claim_static_resource_write(resolved))
+            else:
+                raise ValueError(f'unsupported restore claim mode: {mode}')
+        with _acquire_static_json_locks(*json_paths):
+            yield
+    finally:
+        for claim in reversed(claims):
+            claim.release()
+
+
+def _restore_targets_from_backups(
+    tasks: List[Tuple[Path, Path, List[Path]]],
+) -> Dict[str, Any]:
+    """Restore multiple targets atomically. tasks: (target, backup, old_backups_to_delete)."""
+    if not tasks:
+        return {}
+
+    target_specs: List[Tuple[Path, str]] = []
+    for target_path, _, _ in tasks:
+        if target_path.suffix.lower() == '.json':
+            target_specs.append((
+                target_path,
+                'json_mutate' if target_path.exists() else 'json_exact',
+            ))
+        else:
+            target_specs.append((target_path, 'resource'))
+
+    index_fields: Dict[str, Any] = {}
+
+    try:
+        with _acquire_restore_path_claims(target_specs):
+            snapshot_files: Dict[Path, Optional[Path]] = {}
+            owned_snapshots: List[Path] = []
+            try:
+                for target_path, _, _ in tasks:
+                    snap = _create_disk_snapshot(target_path)
+                    snapshot_files[target_path] = snap
+                    if snap is not None:
+                        owned_snapshots.append(snap)
+                for target_path, backup_path, _ in tasks:
+                    if target_path.suffix.lower() == '.json':
+                        payload = read_static_json_file(backup_path)
+                        _write_json_atomically(target_path, payload)
+                    else:
+                        _copy_bytes_to_static_path(backup_path, target_path)
+            except Exception:
+                _rollback_disk_snapshots(snapshot_files)
+                raise
+            finally:
+                _cleanup_disk_snapshot_files(owned_snapshots)
+    except StaticPathClaimUnavailable:
+        raise
+
+    for target_path, _, old_backups in tasks:
+        for old_backup in old_backups:
+            try:
+                old_backup.unlink()
+            except OSError:
+                pass
+        if target_path.suffix.lower() == '.json' and target_path.name.lower() != 'artists.json':
+            try:
+                target_path.resolve().relative_to(STATIC_DIR.resolve())
+                index_fields.update(_song_index_warning_fields(target_path))
+            except ValueError:
+                pass
+
+    return index_fields
 
 
 @app.route('/restore_file', methods=['POST'])
@@ -7784,6 +10388,7 @@ def restore_file():
     if not is_request_allowed():
         return abort(403)
     file_path = request.json.get('file_path')
+    index_fields: Dict[str, Any] = {}
     try:
         if not file_path:
             return jsonify({'status': 'error', 'message': '缺少文件路径'})
@@ -7791,47 +10396,49 @@ def restore_file():
         # 如果是备份文件路径
         if '/backups/' in file_path:
             backup_path = resolve_resource_path(file_path, 'backups')
-            original_name = '.'.join(backup_path.name.split('.')[:-1])
-            restore_path = (STATIC_DIR / original_name).resolve()
+            restore_path = _resolve_validated_backup_restore_source(backup_path)
             restore_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup_path, restore_path)
-            if restore_path.suffix.lower() == '.json' and restore_path.name.lower() != 'artists.json':
-                try:
-                    restore_path.resolve().relative_to(STATIC_DIR.resolve())
-                    upsert_song_search_index_for_path(restore_path)
-                except ValueError:
-                    pass
+            try:
+                index_fields = _restore_targets_from_backups([(restore_path, backup_path, [])])
+            except StaticPathClaimUnavailable:
+                return jsonify({
+                    'status': 'error',
+                    'message': '目标路径正在被其他操作占用，请稍后重试',
+                }), 409
         else:
             target_path = resolve_resource_path(file_path, 'static')
             if not target_path.exists():
                 return jsonify({'status': 'error', 'message': '目标文件不存在'})
 
-            # 获取所有关联文件备份
-            related_files = get_related_files(target_path)  # 新增关联文件获取方法
-            backups = []
-
-            # 为每个关联文件创建恢复任务
+            related_files = get_related_files(target_path)
+            tasks: List[Tuple[Path, Path, List[Path]]] = []
             for file in related_files:
-                file_backups = iter_backup_files(Path(file))
-
+                file_path_obj = Path(file)
+                file_backups, ineligible = _scan_target_backup_candidates(file_path_obj)
                 if not file_backups:
+                    if ineligible:
+                        raise InvalidBackupRestoreSource('未找到可恢复的合法备份文件')
                     continue
+                tasks.append((file_path_obj, file_backups[0], file_backups[7:]))
 
-                latest_backup = file_backups[0]
-                shutil.copy2(latest_backup, file)  # 恢复文件
-                try:
-                    fp = Path(file).resolve()
-                    if fp.suffix.lower() == '.json' and fp.name.lower() != 'artists.json':
-                        fp.relative_to(STATIC_DIR.resolve())
-                        upsert_song_search_index_for_path(fp)
-                except ValueError:
-                    pass
+            if not tasks:
+                raise InvalidBackupRestoreSource('没有可恢复的备份文件')
 
-                # 清理旧备份保持7个版本
-                for old_backup in file_backups[7:]:
-                    old_backup.unlink()
+            try:
+                index_fields = _restore_targets_from_backups(tasks)
+            except StaticPathClaimUnavailable:
+                return jsonify({
+                    'status': 'error',
+                    'message': '目标路径正在被其他操作占用，请稍后重试',
+                }), 409
 
-        return jsonify({'status': 'success'})
+        response = {'status': 'warning' if index_fields else 'success'}
+        response.update(index_fields)
+        return jsonify(response)
+    except InvalidBackupRestoreSource as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
+    except BackupRestoreTargetAmbiguous as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 409
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -7899,20 +10506,34 @@ def update_json():
         return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
-        # 确保备份目录存在
-        if not BACKUP_DIR.exists():
-            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        expected_hash = data.get('contentHash') or data.get('baseHash')
+        content = data.get('content')
+        if not isinstance(content, dict):
+            return jsonify({'status': 'error', 'message': 'content 必须是 JSON 对象'}), 400
+        if not expected_hash:
+            return jsonify({'status': 'error', 'message': '缺少 contentHash，请刷新后重试'}), 400
 
-        # 备份原文件
-        backup_path = build_backup_path(file_path, int(time.time()))
-        if file_path.exists():  # 只在文件存在时进行备份
-            shutil.copy2(file_path, backup_path)
-
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data['content'], f, ensure_ascii=False, indent=2)
-
-        upsert_song_search_index_for_path(file_path)
-        return jsonify({'status': 'success', 'filename': filename})
+        new_hash = replace_static_json_file(
+            file_path,
+            content,
+            expected_content_hash=expected_hash,
+        )
+        index_fields = _song_index_warning_fields(file_path)
+        response = {
+            'status': 'warning' if index_fields else 'success',
+            'filename': filename,
+            'contentHash': new_hash,
+        }
+        response.update(index_fields)
+        return jsonify(response)
+    except StaticJsonConflictError as exc:
+        return jsonify({
+            'status': 'error',
+            'message': '文件已被其他操作修改，请刷新后重试',
+            'contentHash': exc.current_hash,
+        }), 409
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -7960,27 +10581,6 @@ def save_lyrics():
             return jsonify({'status': 'error', 'message': '请选择具体文件'})
 
         related_json_paths: List[str] = []
-
-        # 修改保存逻辑，添加目录创建
-        file_dir = file_path.parent
-        if not file_dir.exists():
-            try:
-                file_dir.mkdir(parents=True, exist_ok=True)
-                app.logger.info(f"创建目录成功: {file_dir}")
-            except Exception as e:
-                app.logger.error(f"创建目录失败: {file_dir}, 错误: {str(e)}, 权限: {oct(file_dir.parent.stat().st_mode)[-3:] if file_dir.parent.exists() else 'N/A'}")
-                return jsonify({'status': 'error', 'message': f'创建目录失败: {str(e)}'})
-
-        # 如果文件不存在则创建
-        if not file_path.exists():
-            try:
-                open(file_path, 'w', encoding='utf-8').close()
-                app.logger.info(f"创建文件成功: {file_path}")
-            except Exception as e:
-                app.logger.error(f"创建文件失败: {file_path}, 错误: {str(e)}, 权限: {oct(file_path.parent.stat().st_mode)[-3:] if file_path.parent.exists() else 'N/A'}")
-                return jsonify({'status': 'error', 'message': f'创建文件失败: {str(e)}'})
-
-        # 扩展备份逻辑：同时备份关联的JSON文件
         if '/songs/' in data['path']:
             related_json_paths = _resolve_related_json_paths(file_path, data.get('jsonFile'))
             for json_file in related_json_paths:
@@ -7989,64 +10589,34 @@ def save_lyrics():
                     if not json_path.is_absolute():
                         app.logger.warning(f"跳过无效的JSON文件路径: {json_file}")
                         continue
-                    backup_path = build_backup_path(json_path, int(time.time()))
+                    backup_path = allocate_unique_backup_path(json_path)
                     shutil.copy2(json_path, backup_path)
                     app.logger.info(f"备份JSON文件成功: {json_path} -> {backup_path}")
                 except Exception as e:
                     app.logger.error(f"备份JSON文件失败: {json_file}, 错误: {str(e)}, 权限: {oct(Path(json_file).parent.stat().st_mode)[-3:] if Path(json_file).parent.exists() else 'N/A'}")
 
-        # 备份管理(保留最近7个版本)
-        if file_path.exists():
-            try:
-                # 确保备份目录存在
-                if not BACKUP_DIR.exists():
-                    try:
-                        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-                        app.logger.info(f"创建备份目录成功: {BACKUP_DIR}")
-                    except Exception as e:
-                        app.logger.error(f"创建备份目录失败: {BACKUP_DIR}, 错误: {str(e)}, 权限: {oct(BACKUP_DIR.parent.stat().st_mode)[-3:] if BACKUP_DIR.parent.exists() else 'N/A'}")
-                        raise
-                    
-                backups = iter_backup_files(file_path)
-                
-                # 删除旧备份(保留6个历史版本+当前版本)
-                for old_backup in backups[6:]:
-                    try:
-                        old_backup.unlink()
-                        app.logger.info(f"删除旧备份成功: {old_backup}")
-                    except PermissionError:
-                        app.logger.error(f"删除旧备份失败(权限不足): {old_backup}, 权限: {oct(old_backup.parent.stat().st_mode)[-3:] if old_backup.parent.exists() else 'N/A'}")
-                        continue
-                    except Exception as e:
-                        app.logger.error(f"删除旧备份失败: {old_backup}, 错误: {str(e)}, 权限: {oct(old_backup.parent.stat().st_mode)[-3:] if old_backup.parent.exists() else 'N/A'}")
-                        continue
-                        
-                # 创建新备份
-                timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
-                backup_path = build_backup_path(file_path, timestamp)
-                try:
-                    shutil.copy2(file_path, backup_path)
-                    app.logger.info(f"创建新备份成功: {file_path} -> {backup_path}")
-                except Exception as e:
-                    app.logger.error(f"创建新备份失败: {file_path} -> {backup_path}, 错误: {str(e)}, 权限: {oct(backup_path.parent.stat().st_mode)[-3:] if backup_path.parent.exists() else 'N/A'}")
-                    raise
-            except Exception as e:
-                app.logger.error(f"备份过程中出错: {str(e)}, 文件: {file_path}, 备份目录: {BACKUP_DIR}, 权限: {oct(BACKUP_DIR.stat().st_mode)[-3:] if BACKUP_DIR.exists() else 'N/A'}")
-                # 继续执行，不中断保存操作
-                return jsonify({
-                    'status': 'warning',
-                    'message': '文件已保存，但备份过程中出现错误，可能无法创建新的备份。（重启一下电脑也许就解决了（'
-                })
-
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content_to_write)
+            backup_fields = _write_songs_resource_text_with_claim(
+                file_path,
+                content_to_write,
+                encoding='utf-8',
+            )
             app.logger.info(f"保存文件成功: {file_path}")
             if not related_json_paths and '/songs/' in data['path']:
                 related_json_paths = _resolve_related_json_paths(file_path, data.get('jsonFile'))
+            index_fields: Dict[str, Any] = {}
             for jp in related_json_paths:
-                upsert_song_search_index_for_path(Path(jp))
-            return jsonify({'status': 'success'})
+                index_fields.update(_song_index_warning_fields(Path(jp)))
+            response: Dict[str, Any] = {
+                'status': 'warning' if (index_fields or backup_fields) else 'success',
+            }
+            if backup_fields.get('backupWarning'):
+                response['message'] = '文件已保存，但备份过程中出现错误，可能无法创建新的备份。'
+            response.update(backup_fields)
+            response.update(index_fields)
+            return jsonify(response)
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
         except Exception as e:
             app.logger.error(f"保存文件失败: {file_path}, 错误: {str(e)}, 权限: {oct(file_path.parent.stat().st_mode)[-3:] if file_path.parent.exists() else 'N/A'}")
             return jsonify({'status': 'error', 'message': str(e)})
@@ -8174,116 +10744,82 @@ def update_file_path():
         return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
-        with _get_static_json_write_lock(json_path):
-            with open(json_path, 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
+        normalized_new_path_for_local = ''
+        is_url_for_local_path = False
 
-            # 确保备份目录存在
-            if not BACKUP_DIR.exists():
-                BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        def _mutator(json_data: Dict[str, Any]) -> None:
+            nonlocal normalized_new_path_for_local, is_url_for_local_path
+            is_url_for_local_path, normalized_new_path_for_local = _apply_file_path_update_to_json_data(
+                json_data,
+                file_type,
+                new_path,
+                lyrics_index=data.get('index'),
+            )
 
-            # 备份原文件
-            timestamp = int(time.time())
-            backup_path = build_backup_path(json_path, timestamp)
-            if json_path.exists():  # 只在文件存在时进行备份
-                shutil.copy2(json_path, backup_path)
+        mutate_static_json_file(json_path, _mutator)
+        index_fields = _song_index_warning_fields(json_path)
 
-            is_url = new_path and (new_path.startswith('http://') or new_path.startswith('https://'))
-            normalized_new_path = ''
-            if new_path:
-                if is_url:
-                    normalized_new_path = new_path
-                else:
-                    try:
-                        normalized_new_path = _normalize_relative_path(new_path)
-                    except ValueError:
-                        return jsonify({'status': 'error', 'message': '文件路径包含非法字符'})
-
-            # 更新路径
-            if file_type == 'music':
-                if is_url:
-                    json_data['song'] = normalized_new_path
-                else:
-                    json_data['song'] = build_public_url('songs', normalized_new_path)
-            elif file_type == 'image':
-                if is_url:
-                    json_data['meta']['albumImgSrc'] = normalized_new_path
-                else:
-                    json_data['meta']['albumImgSrc'] = build_public_url('songs', normalized_new_path)
-            elif file_type == 'background':
-                meta = json_data.setdefault('meta', {})
-                if new_path:
-                    if is_url:
-                        meta['Background-image'] = normalized_new_path
-                    else:
-                        normalized_background_path = normalized_new_path
-                        if normalized_background_path.startswith('songs/'):
-                            normalized_background_path = normalized_background_path[len('songs/'):]
-                        meta['Background-image'] = f"./songs/{normalized_background_path}" if normalized_background_path else ''
-                else:
-                    meta['Background-image'] = ''
-            elif file_type == 'dynamicCover':
-                meta = json_data.setdefault('meta', {})
-                if new_path:
-                    if is_url:
-                        meta['dynamicCoverSrc'] = normalized_new_path
-                    else:
-                        normalized_dynamic_path = normalized_new_path
-                        if normalized_dynamic_path.startswith('songs/'):
-                            normalized_dynamic_path = normalized_dynamic_path[len('songs/'):]
-                        meta['dynamicCoverSrc'] = f"./songs/{normalized_dynamic_path}" if normalized_dynamic_path else ''
-                else:
-                    meta['dynamicCoverSrc'] = ''
-            elif file_type == 'dynamicCoverPoster':
-                meta = json_data.setdefault('meta', {})
-                if new_path:
-                    if is_url:
-                        meta['dynamicCoverPoster'] = normalized_new_path
-                    else:
-                        normalized_poster_path = normalized_new_path
-                        if normalized_poster_path.startswith('songs/'):
-                            normalized_poster_path = normalized_poster_path[len('songs/'):]
-                        meta['dynamicCoverPoster'] = f"./songs/{normalized_poster_path}" if normalized_poster_path else ''
-                else:
-                    meta['dynamicCoverPoster'] = ''
-            elif file_type == 'lyrics':
-                current_lyrics = json_data['meta']['lyrics'].split('::')
-                if len(current_lyrics) >= 4:
-                    if data.get('index') == 0:  # 歌词文件
-                        if is_url:
-                            new_lyrics_path = normalized_new_path if new_path else '!'
-                        else:
-                            new_lyrics_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                        current_lyrics[1] = new_lyrics_path
-                    elif data.get('index') == 1:  # 歌词翻译
-                        if is_url:
-                            new_translation_path = normalized_new_path if new_path else '!'
-                        else:
-                            new_translation_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                        current_lyrics[2] = new_translation_path
-                    elif data.get('index') == 2:  # 歌词音译
-                        if is_url:
-                            new_transliteration_path = normalized_new_path if new_path else '!'
-                        else:
-                            new_transliteration_path = build_public_url('songs', normalized_new_path) if new_path else '!'
-                        current_lyrics[3] = new_transliteration_path
-                    json_data['meta']['lyrics'] = '::'.join(current_lyrics)
-
-            _write_json_atomically(json_path, json_data)
-            is_url_for_local_path = is_url
-            normalized_new_path_for_local = normalized_new_path
-
-        upsert_song_search_index_for_path(json_path)
-
-        # 在更新路径后添加文件创建逻辑（仅对本地路径执行）
         if normalized_new_path_for_local and not is_url_for_local_path:
             new_local_path = SONGS_DIR / normalized_new_path_for_local
             if not new_local_path.parent.exists():
                 new_local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        return jsonify({'status': 'success'})
+        response = {'status': 'warning' if index_fields else 'success'}
+        response.update(index_fields)
+        return jsonify(response)
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
+
+
+@app.route('/update_file_paths_batch', methods=['POST'])
+def update_file_paths_batch():
+    if not is_request_allowed():
+        return abort(403)
+    locked_response = require_unlocked_device('修改文件路径')
+    if locked_response:
+        return locked_response
+    data = request.get_json(silent=True) or {}
+    updates = data.get('updates')
+
+    try:
+        _, json_path = _resolve_existing_static_json_filename(data.get('jsonFile'))
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
+
+    if not isinstance(updates, list) or not updates:
+        return jsonify({'status': 'error', 'message': 'updates 必须是非空数组'}), 400
+
+    try:
+        expected_hash = (
+            data.get('expectedContentHash')
+            or data.get('contentHash')
+            or data.get('baseHash')
+        )
+        _, content_hash, applied_fields = apply_batch_image_path_updates(
+            json_path,
+            updates,
+            expected_content_hash=expected_hash,
+        )
+        index_fields = _song_index_warning_fields(json_path)
+        response = {
+            'status': 'warning' if index_fields else 'success',
+            'contentHash': content_hash,
+            'appliedFields': applied_fields,
+        }
+        response.update(index_fields)
+        return jsonify(response)
+    except StaticJsonConflictError as exc:
+        return jsonify({
+            'status': 'error',
+            'message': '文件已被其他操作修改，请刷新后重试',
+            'contentHash': exc.current_hash,
+        }), 409
+    except ValueError as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
 
 
 @app.route('/create_json', methods=['POST'])
@@ -8301,17 +10837,29 @@ def create_json():
         return jsonify({'status': 'error', 'message': str(exc)})
 
     try:
-        if file_path.exists():
-            return jsonify({'status': 'error', 'message': '文件已存在！'})
+        content = data.get('content')
+        if not isinstance(content, dict):
+            return jsonify({'status': 'error', 'message': 'content 必须是 JSON 对象'}), 400
 
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        print(f"创建JSON文件: {file_path}")
+        try:
+            with _acquire_static_json_path_operations((file_path, 'exact_create')) as claims:
+                claim = claims[0]
+                if claim.path.exists():
+                    return jsonify({'status': 'error', 'message': '文件已存在！'}), 409
+                print(f"创建JSON文件: {claim.path}")
+                _write_json_atomically(claim.path, content)
+                file_path = claim.path
+                filename = claim.path.name
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件已存在！'}), 409
 
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data['content'], f, ensure_ascii=False, indent=2)
-
-        upsert_song_search_index_for_path(file_path)
-        return jsonify({'status': 'success', 'filename': filename})
+        index_fields = _song_index_warning_fields(file_path)
+        response = {
+            'status': 'warning' if index_fields else 'success',
+            'filename': filename,
+        }
+        response.update(index_fields)
+        return jsonify(response)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -8338,43 +10886,46 @@ def rename_json():
         return jsonify({'status': 'error', 'message': '歌曲名和歌手名不能为空'})
 
     try:
-        if not old_path.exists():
-            return jsonify({'status': 'error', 'message': '原文件不存在！'})
+        if old_path.resolve() == new_path.resolve():
+            path_specs = [(old_path, 'mutate')]
+        else:
+            path_specs = [(old_path, 'mutate'), (new_path, 'exact_create')]
 
-        # 检查新文件名是否已存在
-        if new_path.exists() and str(old_path).lower() != str(new_path).lower():
-            return jsonify({'status': 'error', 'message': '文件名已存在！'})
+        try:
+            with _acquire_static_json_path_operations(*path_specs):
+                if not old_path.exists():
+                    return jsonify({'status': 'error', 'message': '原文件不存在！'})
 
-        # 确保备份目录存在
-        if not BACKUP_DIR.exists():
-            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+                if new_path.exists() and old_path.resolve() != new_path.resolve():
+                    return jsonify({
+                        'status': 'error',
+                        'message': '目标文件名已存在',
+                    }), 409
 
-        # 读取原文件内容
-        with open(old_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
+                json_data = read_static_json_file(old_path)
+                backup_static_json_file(old_path)
 
-        # 备份原文件
-        timestamp = int(time.time())
-        backup_path = build_backup_path(old_path, timestamp)
-        shutil.copy2(old_path, backup_path)
+                json_data.setdefault('meta', {})
+                json_data['meta']['title'] = title
+                json_data['meta']['artists'] = artists
 
-        # 更新JSON内容
-        json_data['meta']['title'] = title
-        json_data['meta']['artists'] = artists
+                _write_json_atomically(new_path, json_data)
 
-        # 写入新文件
-        with open(new_path, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=2)
+                if old_path.resolve() != new_path.resolve():
+                    old_path.unlink()
+        except StaticPathClaimUnavailable:
+            return jsonify({
+                'status': 'error',
+                'message': '目标路径正在被其他操作占用，请稍后重试',
+            }), 409
 
-        # 如果新旧文件名不同，删除旧文件
-        if str(old_path).lower() != str(new_path).lower():
-            old_path.unlink()
-
-        if old_path.name.lower() != new_path.name.lower():
-            remove_song_search_index_entry(old_path.name)
-        upsert_song_search_index_for_path(new_path)
-
-        return jsonify({'status': 'success', 'filename': new_filename})
+        index_fields = _song_index_rename_warning_fields(old_path.name, new_path)
+        response = {
+            'status': 'warning' if index_fields else 'success',
+            'filename': new_filename,
+        }
+        response.update(index_fields)
+        return jsonify(response)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)})
 
@@ -8852,6 +11403,24 @@ def upsert_song_search_index_for_path(path: Path) -> None:
         _apply_single_path_to_index_locked(path)
         _schedule_persist_song_search_index_locked()
         _schedule_persist_artist_playlist_index_locked()
+
+
+def _reconcile_deleted_song_json_index_locked(json_path: Path) -> None:
+    """Remove index only when the JSON file is missing; otherwise refresh it. Caller holds lock."""
+    key = json_path.name
+    if json_path.is_file():
+        _apply_single_path_to_index_locked(json_path)
+        _schedule_persist_song_search_index_locked()
+        _schedule_persist_artist_playlist_index_locked()
+        return
+    old_row = _song_search_index.get(key)
+    old_summary = old_row.get('summary') if isinstance(old_row, dict) else None
+    if _song_search_index.pop(key, None) is None:
+        return
+    _remove_json_from_lyrics_resource_index_locked(key, old_summary)
+    _artist_index_remove_file_locked(key)
+    _schedule_persist_song_search_index_locked()
+    _schedule_persist_artist_playlist_index_locked()
 
 
 def remove_song_search_index_entry(filename: str) -> None:
@@ -9666,24 +12235,29 @@ def get_backups():
     except ValueError as exc:
         return jsonify({'status': 'error', 'message': f'无法解析文件路径: {exc}'})
 
-    prefix = backup_prefix(file_path)
-
     try:
         collected = []
-        prefix_len = len(prefix)
         for f in iter_backup_files(file_path):
-            timestamp_part = f.name[prefix_len:]
-            parsed_time: Optional[datetime] = None
-            try:
-                parsed_time = datetime.strptime(timestamp_part, BACKUP_TIMESTAMP_FORMAT)
-            except ValueError:
-                if timestamp_part.isdigit():
-                    try:
-                        parsed_time = datetime.fromtimestamp(int(timestamp_part))
-                    except (OSError, OverflowError, ValueError):
-                        parsed_time = None
-
-            if not parsed_time:
+            timestamp_part = extract_backup_timestamp_part_from_file(f, file_path)
+            if timestamp_part is None:
+                app.logger.warning(
+                    'skipping backup with unrecognized prefix: %s',
+                    backup_public_relative_path(f),
+                )
+                continue
+            parsed_epoch = parse_backup_timestamp_part(timestamp_part)
+            if parsed_epoch is None:
+                app.logger.warning(
+                    'skipping backup with unparseable timestamp: %s',
+                    backup_public_relative_path(f),
+                )
+                continue
+            parsed_time = backup_epoch_to_datetime(parsed_epoch)
+            if parsed_time is None:
+                app.logger.warning(
+                    'skipping backup with out-of-range timestamp: %s',
+                    backup_public_relative_path(f),
+                )
                 continue
 
             collected.append({
@@ -9723,8 +12297,10 @@ async def upload_music():
         except ValueError as exc:
             return jsonify({'status': 'error', 'message': str(exc)})
 
-        # 如果文件已存在则覆盖
-        await save_upload_file(file, save_path)
+        try:
+            await write_uploaded_static_resource(file, save_path)
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
 
         return jsonify({'status': 'success', 'filename': clean_name})
 
@@ -9778,19 +12354,29 @@ async def upload_music_from_url():
             return jsonify({'status': 'error', 'message': '不支持的文件格式'})
 
         clean_name, save_path = _resolve_new_filename_in_directory(SONGS_DIR, filename)
-        shutil.move(str(tmp_path), str(save_path))
-        tmp_path = None
+        try:
+            claim = claim_static_resource_write(save_path)
+            try:
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp_path, save_path)
+                tmp_path = None
+            finally:
+                claim.release()
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
 
         return jsonify({'status': 'success', 'filename': clean_name})
 
     except ValueError as exc:
-        if tmp_path and tmp_path.exists():
-            tmp_path.unlink()
         return jsonify({'status': 'error', 'message': str(exc)})
     except Exception as e:
-        if tmp_path and tmp_path.exists():
-            tmp_path.unlink()
         return jsonify({'status': 'error', 'message': str(e)})
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 @app.route('/upload_image', methods=['POST'])
@@ -9819,8 +12405,10 @@ async def upload_image():
         except ValueError as exc:
             return jsonify({'status': 'error', 'message': str(exc)})
 
-        # 如果文件已存在则覆盖
-        await save_upload_file(file, save_path)
+        try:
+            await write_uploaded_static_resource(file, save_path)
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
 
         return jsonify({'status': 'success', 'filename': clean_name})
 
@@ -9947,8 +12535,14 @@ async def upload_lyrics():
         except ValueError as exc:
             return jsonify({'status': 'error', 'message': str(exc)})
 
-        # 保存文件并计算大小/校验
-        file_size, checksum = await save_upload_file_with_meta(file, save_path)
+        try:
+            file_size, checksum = await write_uploaded_static_resource(
+                file,
+                save_path,
+                with_meta=True,
+            )
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
 
         app.logger.info(
             f'[{client_ip}] {username} 上传成功: {clean_name} | 大小: {file_size}字节 | MD5: {checksum}'
@@ -9996,8 +12590,14 @@ async def upload_translation():
         except ValueError as exc:
             return jsonify({'status': 'error', 'message': str(exc)})
 
-        # 保存文件并计算大小/校验
-        file_size, checksum = await save_upload_file_with_meta(file, save_path)
+        try:
+            file_size, checksum = await write_uploaded_static_resource(
+                file,
+                save_path,
+                with_meta=True,
+            )
+        except StaticPathClaimUnavailable:
+            return jsonify({'status': 'error', 'message': '文件路径正在被其他操作占用，请稍后重试'}), 409
 
         app.logger.info(
             f'[{client_ip}] {username} 翻译上传成功: {clean_name} | 大小: {file_size}字节 | MD5: {checksum}'
@@ -10840,8 +13440,11 @@ def find_translation_file(lyrics_path, translation_hint: Optional[str] = None):
     return None
 
 
-def lys_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
-    """将LYS格式转换为TTML格式（Apple风格）"""
+def lys_to_ttml_text(input_path, translation_hint: Optional[str] = None):
+    """Convert LYS to a TTML XML string without writing disk.
+
+    Returns (True, xml_text) or (False, error_message).
+    """
     try:
         with open(input_path, 'r', encoding='utf-8') as f:
             lys_content = f.read()
@@ -11057,15 +13660,26 @@ def lys_to_ttml(input_path, output_path, translation_hint: Optional[str] = None)
 
                 prev_main_p.appendChild(bg_span)
 
-        # 单行输出
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(dom.documentElement.toxml())
-
-        return True, None
+        return True, dom.documentElement.toxml()
 
     except Exception as e:
         app.logger.error(f"无法转换LYS到TTML: {input_path}. 错误: {str(e)}")
         return False, str(e)
+
+
+def lys_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
+    """将LYS格式转换为TTML格式（Apple风格）并写入 output_path。"""
+    success, payload = lys_to_ttml_text(input_path, translation_hint)
+    if not success:
+        return False, payload
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(payload)
+        return True, None
+    except Exception as e:
+        app.logger.error(f"无法写入TTML: {output_path}. 错误: {str(e)}")
+        return False, str(e)
+
 
 def create_ttml_document(has_duet=False,
                          author_name: Optional[str] = None,
@@ -11492,8 +14106,11 @@ def calculate_lrc_end_time(begin_time_str, next_begin_time_str=None, default_dur
     return f"{end_min:02d}:{end_sec:02d}.{end_ms_part:03d}"
 
 
-def lrc_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
-    """将LRC格式转换为TTML格式（Apple风格）"""
+def lrc_to_ttml_text(input_path, translation_hint: Optional[str] = None):
+    """Convert LRC to a TTML XML string without writing disk.
+
+    Returns (True, xml_text) or (False, error_message).
+    """
     try:
         with open(input_path, 'r', encoding='utf-8') as f:
             lrc_content = f.read()
@@ -11695,14 +14312,25 @@ def lrc_to_ttml(input_path, output_path, translation_hint: Optional[str] = None)
                         div.appendChild(p)
                         prev_main_p = p
 
-        # 写入TTML文件（单行格式，无换行符和缩进）
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(dom.documentElement.toxml())
-
-        return True, None
+        return True, dom.documentElement.toxml()
     except Exception as e:
         app.logger.error(f"无法转换LRC到TTML: {input_path}. 错误: {str(e)}")
         return False, str(e)
+
+
+def lrc_to_ttml(input_path, output_path, translation_hint: Optional[str] = None):
+    """将LRC格式转换为TTML格式（Apple风格）并写入 output_path。"""
+    success, payload = lrc_to_ttml_text(input_path, translation_hint)
+    if not success:
+        return False, payload
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(payload)
+        return True, None
+    except Exception as e:
+        app.logger.error(f"无法写入TTML: {output_path}. 错误: {str(e)}")
+        return False, str(e)
+
 
 @app.route('/convert_ttml', methods=['POST'])
 def convert_ttml():
@@ -14775,7 +17403,11 @@ def get_json_data():
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             json_data = json.load(f)
-        response = jsonify({'status': 'success', 'jsonData': json_data})
+        response = jsonify({
+            'status': 'success',
+            'jsonData': json_data,
+            'contentHash': compute_static_json_content_hash(json_data),
+        })
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
@@ -15024,17 +17656,13 @@ def _generate_beat_curve_file(
 
 
 def _update_song_json_with_curve(json_path: Path, curve_relative: str) -> None:
-    with BEAT_CURVE_LOCK:
-        with open(json_path, 'r', encoding='utf-8') as handle:
-            data = json.load(handle)
-        if not isinstance(data, dict):
-            raise RuntimeError('json 格式不正确')
+    def _mutator(data: Dict[str, Any]) -> None:
         meta = data.setdefault('meta', {})
         if not isinstance(meta, dict):
             raise RuntimeError('meta 格式不正确')
         meta['background_beat_curve'] = curve_relative
-        with open(json_path, 'w', encoding='utf-8') as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
+
+    mutate_static_json_file(json_path, _mutator)
 
 
 def _beat_curve_task_key(json_path: Path, song_relative: str) -> str:
@@ -16260,6 +18888,20 @@ def _guess_audio_mimetype(path: Path) -> str:
     return _MEDIA_AUDIO_MIMETYPES.get(path.suffix.lower(), 'application/octet-stream')
 
 
+_IMAGE_MIMETYPES = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.bmp': 'image/bmp',
+}
+
+
+def _guess_image_mimetype(path: Path) -> str:
+    return _IMAGE_MIMETYPES.get(path.suffix.lower(), 'application/octet-stream')
+
+
 def _append_media_audit(entry: Dict[str, Any]) -> None:
     entry = dict(entry)
     entry.setdefault('ts', now_iso())
@@ -17356,38 +19998,54 @@ def amll_create_song():
     base_stem_raw = sanitize_filename(f"{title} - {artists_part}")
     if not base_stem_raw:
         base_stem_raw = sanitize_filename(title) or sanitize_filename(artists_part) or "AMLL_Song"
-    json_filename = _ensure_unique_filename(STATIC_DIR, f"{base_stem_raw}.json")
-    base_stem = os.path.splitext(json_filename)[0]
 
+    claims: List[StaticPathClaim] = []
+    written_paths: List[Path] = []
     try:
+        json_claim = claim_unique_static_path(STATIC_DIR, f"{base_stem_raw}.json")
+        claims.append(json_claim)
+        json_path = json_claim.path
+        json_filename = json_path.name
+        base_stem = json_path.stem
+
         lyrics_filename = None
         lyrics_url = "!"
 
-        # 写入 LYS
         if lines:
-            lyrics_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}.lys")
-            lyrics_path = SONGS_DIR / lyrics_filename
-            lyrics_path.write_text(_amll_lines_to_lys(lines), encoding="utf-8-sig")
+            lyrics_claim = claim_unique_static_path(SONGS_DIR, f"{base_stem}.lys")
+            claims.append(lyrics_claim)
+            lyrics_path = lyrics_claim.path
+            lyrics_filename = lyrics_path.name
+            lyrics_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text_atomically(lyrics_path, _amll_lines_to_lys(lines), encoding="utf-8-sig")
+            written_paths.append(lyrics_path)
             lyrics_url = build_public_url('songs', lyrics_filename)
 
-        # 写入翻译 LRC（可选）
         translation_filename = None
         translation_url = "!"
         if lines and use_translation and any(str(line.get("translatedLyric") or "").strip() for line in lines):
-            translation_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}_trans.lrc")
-            translation_path = SONGS_DIR / translation_filename
-            translation_path.write_text(_amll_lines_to_lrc(lines), encoding="utf-8-sig")
+            translation_claim = claim_unique_static_path(SONGS_DIR, f"{base_stem}_trans.lrc")
+            claims.append(translation_claim)
+            translation_path = translation_claim.path
+            translation_filename = translation_path.name
+            translation_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text_atomically(translation_path, _amll_lines_to_lrc(lines), encoding="utf-8-sig")
+            written_paths.append(translation_path)
             translation_url = build_public_url('songs', translation_filename)
 
-        # 处理封面（优先 data:URL）
         cover_source = snapshot_song.get("cover_data_url") or snapshot_song.get("cover") or ""
         cover_url = ""
         cover_filename = None
         data_bytes, data_ext = _decode_data_url(cover_source)
         if data_bytes:
             cover_ext = data_ext or ".jpg"
-            cover_filename = _ensure_unique_filename(SONGS_DIR, f"{base_stem}{cover_ext}")
-            (SONGS_DIR / cover_filename).write_bytes(data_bytes)
+            cover_claim = claim_unique_static_path(SONGS_DIR, f"{base_stem}{cover_ext}")
+            claims.append(cover_claim)
+            cover_path = cover_claim.path
+            cover_filename = cover_path.name
+            cover_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_bytes_atomically(cover_path, data_bytes)
+            written_paths.append(cover_path)
             cover_url = build_public_url('songs', cover_filename)
         elif cover_source:
             cover_url = cover_source
@@ -17404,30 +20062,37 @@ def amll_create_song():
                 "duration_ms": duration_ms,
                 "lyrics": lyrics_field
             },
-            # 默认填占位空音乐，避免播放出错
             "song": placeholder_song
         }
         if album:
             json_content["meta"]["album"] = album
 
-        json_path = STATIC_DIR / json_filename
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(json_content, f, ensure_ascii=False, indent=2)
+        with _get_static_json_write_lock(json_path):
+            if json_path.exists():
+                _rollback_import_writes(written_paths)
+                return jsonify({'status': 'error', 'message': '目标 JSON 文件已存在'}), 409
+            _write_json_atomically(json_path, json_content)
+        written_paths.append(json_path)
 
-        upsert_song_search_index_for_path(json_path)
-
-        return jsonify({
-            'status': 'success',
+        index_fields = _song_index_warning_fields(json_path)
+        response = {
+            'status': 'warning' if index_fields else 'success',
             'jsonFile': json_filename,
             'lyricsFile': lyrics_filename,
             'translationFile': translation_filename,
             'coverFile': cover_filename,
             'coverUrl': cover_url,
-            'message': '已从 AMLL 源创建新歌曲'
-        })
+            'message': '已从 AMLL 源创建新歌曲',
+        }
+        response.update(index_fields)
+        return jsonify(response)
     except Exception as exc:
+        _rollback_import_writes(written_paths)
         app.logger.error(f"AMLL 创建歌曲失败: {exc}", exc_info=True)
         return jsonify({'status': 'error', 'message': f'创建失败: {exc}'})
+    finally:
+        for claim in reversed(claims):
+            claim.release()
 
 def _resolve_media_audio_delivery_mode() -> str:
     policy = resolve_effective_media_playback_policy()
@@ -17689,6 +20354,287 @@ def media_audit_recent():
 
 
 # Mount static directory at root to mirror Flask static_url_path=''
+# Subsonic /rest must be registered before this catch-all mount.
+
+def _copy_subsonic_index_snapshot():
+    with _song_search_index_lock:
+        songs = {}
+        for filename, row in _song_search_index.items():
+            if not isinstance(row, dict):
+                continue
+            summary = row.get('summary')
+            if isinstance(summary, dict):
+                songs[filename] = dict(summary)
+        artist_index = {}
+        for key, filenames in _artist_playlist_index.items():
+            artist_index[key] = set(filenames)
+        return {
+            'song_revision': _song_search_index_revision,
+            'artist_revision': _artist_playlist_index_revision,
+            'songs': songs,
+            'artist_index': artist_index,
+        }
+
+
+def _subsonic_artist_entries(summary):
+    if not isinstance(summary, dict):
+        return [('__unknown_artist__', 'Unknown artist')]
+    artists_raw = summary.get('artists')
+    names = []
+    if isinstance(artists_raw, list):
+        names = [str(item) for item in artists_raw if item]
+    elif artists_raw:
+        names = [str(artists_raw)]
+    expanded = []
+    for name in names:
+        expanded.extend(_expand_composite_artist_string(name))
+    if not expanded:
+        expanded = [UNKNOWN_ARTIST_LEGACY_FALLBACK]
+    rows = []
+    for display in expanded:
+        key = _normalize_artist_name_for_match(display)
+        rows.append((key, display))
+    return rows
+
+
+def _resolve_subsonic_json_filename(filename: str) -> Path:
+    name = str(filename or '')
+    if not name or '/' in name or '\\' in name or name in {'.', '..'}:
+        raise ValueError('invalid json filename')
+    target = (STATIC_DIR / name).resolve()
+    target.relative_to(STATIC_DIR.resolve())
+    if target.suffix.lower() != '.json':
+        raise ValueError('not a json file')
+    return target
+
+
+def _read_subsonic_static_json(filename: str):
+    try:
+        path = _resolve_subsonic_json_filename(filename)
+    except ValueError:
+        return None
+    if not path.is_file():
+        return None
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except Exception:
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _subsonic_anchor_path(anchor_id: str) -> Path:
+    return BACKUP_DIR / 'anchors' / f'{anchor_id}.json'
+
+
+def _subsonic_anchor_exists(anchor_id: str) -> bool:
+    if not re.fullmatch(r'[0-9a-f]{64}', str(anchor_id or '')):
+        return False
+    return _subsonic_anchor_path(anchor_id).is_file()
+
+
+def _read_subsonic_anchor(anchor_id: str):
+    if not _subsonic_anchor_exists(anchor_id):
+        return None
+    path = _subsonic_anchor_path(anchor_id)
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            content = json.load(handle)
+    except Exception:
+        return None
+    if not isinstance(content, dict):
+        return None
+    payload = content.get('payload') if isinstance(content.get('payload'), dict) else {}
+    data = payload.get('data') if isinstance(payload.get('data'), dict) else {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0
+    return {
+        'data': data,
+        'mtime': mtime,
+        'saved_at': content.get('saved_at'),
+    }
+
+
+def _mutate_subsonic_anchor(anchor_id: str, mutator):
+    """Apply mutator under the same process lock as backup_client_state.
+
+    mutator(data) -> bool where True means a real change. Fail-closed on corrupt
+    envelopes: bytes unchanged. No write when changed is False.
+    On change: stamp zero tombstones and bump revision = diskRevision + 1.
+    """
+    from subsonic import anchor_merge as _am
+
+    if not re.fullmatch(r'[0-9a-f]{64}', str(anchor_id or '')):
+        return False, 'anchor missing'
+    path = _subsonic_anchor_path(anchor_id)
+    if not path.is_file():
+        return False, 'anchor missing'
+    lock = _get_backup_write_lock(path)
+    with lock:
+        try:
+            raw = path.read_bytes()
+            content = json.loads(raw.decode('utf-8'))
+        except Exception:
+            return False, 'invalid anchor'
+        if not isinstance(content, dict):
+            return False, 'invalid anchor'
+        payload = content.get('payload')
+        if not isinstance(payload, dict):
+            return False, 'invalid anchor'
+        data = payload.get('data')
+        if not isinstance(data, dict):
+            return False, 'invalid anchor'
+        env_anchor = content.get('anchor_id')
+        if env_anchor is not None and str(env_anchor).strip().lower() != str(anchor_id).lower():
+            return False, 'invalid anchor'
+        try:
+            disk_revision = _am.get_revision(data)
+            if disk_revision >= _am.MAX_SAFE_INTEGER:
+                return False, 'revision exhausted'
+            changed = bool(mutator(data))
+        except _am.RevisionExhaustedError:
+            return False, 'revision exhausted'
+        except Exception:
+            return False, 'invalid anchor'
+        if not changed:
+            return True, 'noop'
+        try:
+            _am.finalize_changed_data(data, disk_revision)
+            payload['data'] = _normalize_backup_payload_data(data)
+            content['payload'] = payload
+            content['saved_at'] = datetime.now().isoformat()
+            _write_json_atomically(path, content)
+        except _am.RevisionExhaustedError:
+            return False, 'revision exhausted'
+        except Exception as exc:
+            if isinstance(exc, (TypeError, ValueError, KeyError)):
+                return False, 'invalid anchor'
+            return False, 'io error'
+        return True, 'ok'
+
+
+def _subsonic_credentials_path() -> Path:
+    return BASE_PATH / '.cache' / 'subsonic_users.json'
+
+
+def _subsonic_secret_bytes() -> bytes:
+    return _get_media_signing_secret().encode('utf-8')
+
+
+def _build_subsonic_deps():
+    from subsonic.deps import SubsonicDeps
+    return SubsonicDeps(
+        get_query=lambda: request.args,
+        get_remote_addr=lambda: request.remote_addr,
+        get_header=lambda name: request.headers.get(name),
+        copy_index_snapshot=_copy_subsonic_index_snapshot,
+        normalize_audio_ref=_normalize_song_audio_reference,
+        resolve_songs_path=lambda value: resolve_resource_path(value, 'songs'),
+        resolve_static_json=_resolve_subsonic_json_filename,
+        read_static_json=_read_subsonic_static_json,
+        artist_entries=_subsonic_artist_entries,
+        lys_to_ttml_text=lys_to_ttml_text,
+        lrc_to_ttml_text=lrc_to_ttml_text,
+        read_anchor=_read_subsonic_anchor,
+        anchor_exists=_subsonic_anchor_exists,
+        mutate_anchor=_mutate_subsonic_anchor,
+        credentials_path=_subsonic_credentials_path(),
+        get_secret=_subsonic_secret_bytes,
+        logger=app.logger,
+        guess_audio_mimetype=_guess_audio_mimetype,
+        guess_image_mimetype=_guess_image_mimetype,
+    )
+
+
+def _require_subsonic_admin():
+    if not _can_manage_media_config():
+        return abort(403)
+    return None
+
+
+@app.route('/api/subsonic/users', methods=['GET'])
+def list_subsonic_users_route():
+    blocked = _require_subsonic_admin()
+    if blocked:
+        return blocked
+    from subsonic import credentials as subsonic_credentials
+    return jsonify({
+        'status': 'success',
+        'users': subsonic_credentials.list_users(_subsonic_credentials_path()),
+    })
+
+
+@app.route('/api/subsonic/users', methods=['POST'])
+def create_subsonic_user_route():
+    blocked = _require_subsonic_admin()
+    if blocked:
+        return blocked
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get('username') or '').strip()
+    app_password = str(payload.get('app_password') or '')
+    anchor_id = str(payload.get('anchor_id') or '').strip().lower()
+    if not _subsonic_anchor_exists(anchor_id):
+        return jsonify({'status': 'error', 'message': 'anchor does not exist'}), 400
+    from subsonic import credentials as subsonic_credentials
+    ok, message, user = subsonic_credentials.create_user(
+        _subsonic_credentials_path(),
+        _subsonic_secret_bytes(),
+        username,
+        app_password,
+        anchor_id,
+        now_iso(),
+    )
+    if not ok:
+        status = 409 if message == 'username already exists' else 400
+        return jsonify({'status': 'error', 'message': message}), status
+    return jsonify({'status': 'success', 'user': user})
+
+
+@app.route('/api/subsonic/users/rotate', methods=['POST'])
+def rotate_subsonic_user_route():
+    blocked = _require_subsonic_admin()
+    if blocked:
+        return blocked
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get('username') or '').strip()
+    app_password = str(payload.get('app_password') or '')
+    from subsonic import credentials as subsonic_credentials
+    ok, message, user = subsonic_credentials.rotate_user(
+        _subsonic_credentials_path(),
+        _subsonic_secret_bytes(),
+        username,
+        app_password,
+        now_iso(),
+    )
+    if not ok:
+        status = 404 if message == 'user not found' else 400
+        return jsonify({'status': 'error', 'message': message}), status
+    return jsonify({'status': 'success', 'user': user})
+
+
+@app.route('/api/subsonic/users/revoke', methods=['POST'])
+def revoke_subsonic_user_route():
+    blocked = _require_subsonic_admin()
+    if blocked:
+        return blocked
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get('username') or '').strip()
+    from subsonic import credentials as subsonic_credentials
+    ok, message = subsonic_credentials.revoke_user(_subsonic_credentials_path(), username)
+    if not ok:
+        status = 404 if message == 'user not found' else 400
+        return jsonify({'status': 'error', 'message': message}), status
+    return jsonify({'status': 'success', 'message': message})
+
+
+from subsonic import register_subsonic_routes
+_SUBSONIC_DEPS = _build_subsonic_deps()
+register_subsonic_routes(app, _SUBSONIC_DEPS)
+
 app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ===== AMLL CSV 导出功能 =====
@@ -18694,7 +21640,7 @@ def _store_cover_bytes(payload: bytes, mime: Optional[str] = None) -> tuple[str,
     mime_type = (mime or "").lower()
     ext = _guess_ext_from_mime(mime_type)
     fname = _ensure_unique_filename(SONGS_DIR, f"amll_cover_{int(time.time())}{ext}")
-    (SONGS_DIR / fname).write_bytes(payload)
+    write_static_resource_bytes(SONGS_DIR / fname, payload)
     return build_public_url('songs', fname), fname
 
 def _detect_image_mime(data: bytes) -> Optional[str]:
@@ -19344,12 +22290,73 @@ def start_ws_server_once():
 init_song_search_index_on_startup()
 init_artist_playlist_index_on_startup()
 
+
+def _run_self_test_subsonic() -> int:
+    """Frozen/source smoke test: import subsonic, assert /rest/ping auth envelope.
+
+    Does not bind a port, open a browser, or start the updater. Intended for CI
+    against a temp copy of the release tree (FAMYLIAM_SKIP_INDEX_INIT=1).
+    """
+    try:
+        import subsonic  # noqa: F401
+        import subsonic.handler  # noqa: F401
+        import subsonic.mutations  # noqa: F401
+        import subsonic.anchor_merge  # noqa: F401
+        from starlette.testclient import TestClient
+    except Exception as exc:
+        print(f'SELF_TEST_SUBSONIC_FAIL import: {exc}', file=sys.stderr)
+        return 1
+
+    rest_paths = []
+    for route in getattr(app, 'routes', []):
+        path = getattr(route, 'path', None) or getattr(route, 'path_format', None)
+        if path and '/rest' in str(path):
+            rest_paths.append(str(path))
+    if not rest_paths:
+        print('SELF_TEST_SUBSONIC_FAIL: /rest routes not registered', file=sys.stderr)
+        return 1
+
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                '/rest/ping',
+                params={'u': 'self-test-invalid', 'p': 'self-test-invalid'},
+            )
+            payload = response.json()
+    except Exception as exc:
+        print(f'SELF_TEST_SUBSONIC_FAIL request: {exc}', file=sys.stderr)
+        return 1
+
+    body = payload.get('subsonic-response') if isinstance(payload, dict) else None
+    error = body.get('error') if isinstance(body, dict) else None
+    code = error.get('code') if isinstance(error, dict) else None
+    if response.status_code == 404 or code is None:
+        print(
+            f'SELF_TEST_SUBSONIC_FAIL: expected Subsonic auth error, '
+            f'status={response.status_code} payload={payload!r}',
+            file=sys.stderr,
+        )
+        return 1
+    if int(code) != 40:
+        print(
+            f'SELF_TEST_SUBSONIC_FAIL: expected error.code == 40, got {code!r}',
+            file=sys.stderr,
+        )
+        return 1
+
+    print('SELF_TEST_SUBSONIC_OK')
+    return 0
+
+
 if __name__ == '__main__':
     """主函数入口
 
     处理命令行参数，启动WebSocket服务器和FastAPI应用。
     支持指定端口，如果默认端口被占用会自动切换到随机端口。
     """
+    if '--self-test-subsonic' in sys.argv:
+        raise SystemExit(_run_self_test_subsonic())
+
     import random
     def try_run(port):
         """尝试在指定端口启动应用
